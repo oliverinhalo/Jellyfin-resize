@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Media Optimizer</title></head>
+<body>
+<div id="MediaOptimizerQueuePage" data-role="page" class="page type-interior pluginConfigurationPage">
+  <div data-role="content">
+    <div class="content-primary">
+      <div class="verticalSection">
+        <h2 class="sectionTitle">Conversion queue</h2>
+        <div id="moptCapabilities" class="fieldDescription" style="margin-bottom:1.5em"></div>
+        <div id="moptJobs"></div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .moptJob{border:1px solid rgba(128,128,128,.35);border-radius:5px;padding:12px 14px;margin-bottom:10px}
+    .moptJobHead{display:flex;gap:12px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+    .moptJobName{font-weight:600}
+    .moptJobStatus{font-size:12px;text-transform:uppercase;letter-spacing:.07em;opacity:.75}
+    .moptJobMeta{font-size:13px;opacity:.7;margin-top:5px}
+    .moptBar{height:5px;border-radius:3px;background:rgba(128,128,128,.3);overflow:hidden;margin-top:8px}
+    .moptBar i{display:block;height:100%;background:#00a4dc;transition:width .3s ease}
+    .moptActions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+    .moptEmpty{opacity:.65;padding:22px 0}
+    .moptErr{color:#f09b93;margin-top:5px;font-size:13px}
+    .moptOk{color:#7fe0b0}
+  </style>
+
+  <script type="text/javascript">
+    (function () {
+      var page = document.querySelector('#MediaOptimizerQueuePage');
+      var timer = null;
+
+      function bytes(n) {
+        if (n === null || n === undefined) { return '—'; }
+        if (n < 1024) { return n + ' B'; }
+        var u = ['KiB', 'MiB', 'GiB', 'TiB'], v = n / 1024, i = 0;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return v.toFixed(v < 10 ? 2 : 1) + ' ' + u[i];
+      }
+
+      function api(method, path, body) {
+        var opts = { type: method, url: ApiClient.getUrl(path), headers: { accept: 'application/json' } };
+        if (body !== undefined) { opts.data = JSON.stringify(body); opts.contentType = 'application/json'; }
+        return ApiClient.ajax(opts).then(function (r) {
+          return typeof r === 'string' ? (r.length ? JSON.parse(r) : null) : r;
+        });
+      }
+
+      function renderCapabilities() {
+        api('GET', 'MediaOptimizer/Capabilities').then(function (c) {
+          var host = page.querySelector('#moptCapabilities');
+          var video = (c.VideoEncoders || []).map(function (e) { return e.Name; }).join(', ') || 'none detected';
+          host.textContent = 'FFmpeg ' + (c.FfmpegVersion || 'unknown') + ' at ' + (c.FfmpegPath || '?') +
+            ' · video encoders: ' + video +
+            ' · hardware acceleration: ' + (c.HardwareAcceleration || 'none');
+        }).catch(function () {
+          page.querySelector('#moptCapabilities').textContent = 'Could not read FFmpeg capabilities.';
+        });
+      }
+
+      function render(jobs) {
+        var host = page.querySelector('#moptJobs');
+        host.innerHTML = '';
+
+        if (!jobs || !jobs.length) {
+          var empty = document.createElement('div');
+          empty.className = 'moptEmpty';
+          empty.textContent = 'Nothing queued. Open any movie or episode in the web client, choose "Optimize file…" from its menu, and the job will appear here.';
+          host.appendChild(empty);
+          return;
+        }
+
+        jobs.forEach(function (j) {
+          var box = document.createElement('div');
+          box.className = 'moptJob';
+
+          var head = document.createElement('div');
+          head.className = 'moptJobHead';
+          var name = document.createElement('span');
+          name.className = 'moptJobName';
+          name.textContent = j.ItemName || j.ItemId;
+          var status = document.createElement('span');
+          status.className = 'moptJobStatus';
+          status.textContent = j.Status;
+          head.appendChild(name);
+          head.appendChild(status);
+          box.appendChild(head);
+
+          var meta = document.createElement('div');
+          meta.className = 'moptJobMeta';
+          var bits = [j.OutputPolicy];
+          if (j.SourceSizeBytes) {
+            bits.push(bytes(j.SourceSizeBytes) + (j.OutputSizeBytes ? ' → ' + bytes(j.OutputSizeBytes) : ''));
+          }
+          if (j.Speed) { bits.push(j.Speed.toFixed(2) + '× realtime'); }
+          if (j.IsLossless) { bits.push('lossless'); }
+          if (j.LosslessVerified === true) { bits.push('hash verified'); }
+          meta.textContent = bits.join(' · ');
+          box.appendChild(meta);
+
+          if (j.Status === 'Encoding' || j.Status === 'Verifying') {
+            var bar = document.createElement('div');
+            bar.className = 'moptBar';
+            var fill = document.createElement('i');
+            fill.style.width = Math.round(j.ProgressPercent || 0) + '%';
+            bar.appendChild(fill);
+            box.appendChild(bar);
+          }
+
+          if (j.Error) {
+            var err = document.createElement('div');
+            err.className = 'moptErr';
+            err.textContent = j.Error;
+            box.appendChild(err);
+          }
+
+          var actions = document.createElement('div');
+          actions.className = 'moptActions';
+
+          function button(label, handler, danger) {
+            var b = document.createElement('button');
+            b.setAttribute('is', 'emby-button');
+            b.type = 'button';
+            b.className = 'raised ' + (danger ? 'button-delete' : '') + ' emby-button';
+            b.textContent = label;
+            b.addEventListener('click', function () {
+              b.disabled = true;
+              handler().then(refresh).catch(function (e) {
+                b.disabled = false;
+                Dashboard.alert({ message: (e && e.statusText) || 'That did not work.' });
+              });
+            });
+            actions.appendChild(b);
+          }
+
+          var active = ['Queued', 'Preflight', 'Encoding', 'Verifying', 'Applying'].indexOf(j.Status) >= 0;
+          if (active) {
+            button('Cancel', function () { return api('DELETE', 'MediaOptimizer/Jobs/' + j.Id); }, true);
+          } else {
+            if (j.QuarantinePath) {
+              button('Restore original', function () {
+                return Dashboard.confirm('Restore the original file and discard the converted one?', 'Revert conversion')
+                  .then(function () { return api('POST', 'MediaOptimizer/Jobs/' + j.Id + '/Revert'); });
+              }, true);
+            }
+            if (j.Status === 'Failed' || j.Status === 'Interrupted' || j.Status === 'Cancelled') {
+              button('Try again', function () { return api('POST', 'MediaOptimizer/Jobs/' + j.Id + '/Requeue'); });
+            }
+            if (!j.QuarantinePath) {
+              button('Remove from history', function () { return api('DELETE', 'MediaOptimizer/Jobs/' + j.Id + '/History'); });
+            }
+          }
+
+          if (actions.children.length) { box.appendChild(actions); }
+          host.appendChild(box);
+        });
+      }
+
+      function refresh() {
+        return api('GET', 'MediaOptimizer/Jobs').then(render).catch(function () {});
+      }
+
+      page.addEventListener('pageshow', function () {
+        renderCapabilities();
+        refresh();
+        clearInterval(timer);
+        timer = setInterval(refresh, 2000);
+      });
+
+      page.addEventListener('pagehide', function () { clearInterval(timer); });
+    })();
+  </script>
+</div>
+</body>
+</html>

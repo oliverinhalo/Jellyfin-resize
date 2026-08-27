@@ -1,0 +1,20 @@
+---
+name: "Media Optimizer"
+guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
+version: "1.0.0.0"
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+owner: "oliverinhalo"
+overview: "Inspect and convert media files from inside the Jellyfin interface."
+description: >
+  Adds a file information and conversion dialog to Jellyfin. Shows resolution, codec, bit depth,
+  bitrate, frame rate, HDR type, audio tracks and container for any item, then converts it with
+  FFmpeg using resolution, codec, bit depth, quality and audio presets. Includes a genuinely
+  lossless mode whose bit-exactness is verified by hash after encoding. Conversions run in a
+  background queue; the original file is never modified until the result passes verification.
+category: "General"
+artifacts:
+  - "Jellyfin.Plugin.MediaOptimizer.dll"
+changelog: |
+  ### 1.0.0.0
+  - Initial release.

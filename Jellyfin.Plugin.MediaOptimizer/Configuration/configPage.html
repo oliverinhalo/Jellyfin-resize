@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Media Optimizer</title></head>
+<body>
+<div id="MediaOptimizerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-controller="__plugin/MediaOptimizerConfigPage.js">
+  <div data-role="content">
+    <div class="content-primary">
+      <form id="MediaOptimizerConfigForm">
+
+        <div class="verticalSection">
+          <h2 class="sectionTitle">In-app interface</h2>
+          <div class="selectContainer">
+            <label class="selectLabel" for="Injection">How the dialog reaches the web client</label>
+            <select is="emby-select" id="Injection" name="Injection" class="emby-select-withcolor emby-select">
+              <option value="FileTransformation">File Transformation plugin (recommended)</option>
+              <option value="PatchIndexHtml">Patch index.html on disk</option>
+              <option value="Disabled">Off — dashboard only</option>
+            </select>
+            <div class="fieldDescription">
+              Jellyfin has no supported plugin API for its web client, so the dialog has to be injected.
+              The File Transformation plugin does this without touching any files; install it from
+              github.com/IAmParadox27/jellyfin-plugin-file-transformation. Patching index.html works
+              without it but is undone by every Jellyfin update and fails on read-only containers.
+              Either way, the buttons only appear in browser-based clients — never on Android TV, Roku,
+              Kodi or Swiftfin. Everything here works regardless.
+            </div>
+          </div>
+        </div>
+
+        <div class="verticalSection">
+          <h2 class="sectionTitle">Output</h2>
+          <div class="selectContainer">
+            <label class="selectLabel" for="DefaultOutputPolicy">Default output policy</label>
+            <select is="emby-select" id="DefaultOutputPolicy" name="DefaultOutputPolicy" class="emby-select-withcolor emby-select">
+              <option value="Sidecar">New file, original untouched</option>
+              <option value="AlternateVersion">Add as an alternate version</option>
+              <option value="Replace">Replace the original</option>
+            </select>
+            <div class="fieldDescription">What the dialog pre-selects. Every policy can still be chosen per conversion.</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="SidecarDirectory">Directory for new files</label>
+            <input is="emby-input" type="text" id="SidecarDirectory" name="SidecarDirectory" />
+            <div class="fieldDescription">Leave empty to write next to the original file.</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="TempDirectory">Working directory</label>
+            <input is="emby-input" type="text" id="TempDirectory" name="TempDirectory" />
+            <div class="fieldDescription">
+              Where encodes are written before verification. Put this on the same filesystem as your
+              library if you can — the final move is then atomic instead of a copy. Empty uses the plugin data folder.
+            </div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="QuarantineDirectory">Quarantine directory</label>
+            <input is="emby-input" type="text" id="QuarantineDirectory" name="QuarantineDirectory" />
+            <div class="fieldDescription">Where originals are kept after a Replace, so they can be restored.</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="QuarantineRetentionDays">Keep originals for (days)</label>
+            <input is="emby-input" type="number" id="QuarantineRetentionDays" name="QuarantineRetentionDays" min="0" max="365" />
+            <div class="fieldDescription">A replaced original can be restored for this long. After that the housekeeping task deletes it.</div>
+          </div>
+        </div>
+
+        <div class="verticalSection">
+          <h2 class="sectionTitle">Encoding</h2>
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="MaxConcurrentJobs">Concurrent conversions</label>
+            <input is="emby-input" type="number" id="MaxConcurrentJobs" name="MaxConcurrentJobs" min="1" max="8" />
+            <div class="fieldDescription">Keep this at 1 unless the server does nothing else. Encoding competes with live transcoding.</div>
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="PauseWhilePlaybackActive" name="PauseWhilePlaybackActive" />
+            <span>Pause the queue while anyone is streaming</span>
+          </label>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="LowProcessPriority" name="LowProcessPriority" />
+            <span>Run FFmpeg at below-normal priority</span>
+          </label>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="EncodingThreadCount">FFmpeg thread limit</label>
+            <input is="emby-input" type="number" id="EncodingThreadCount" name="EncodingThreadCount" min="0" max="64" />
+            <div class="fieldDescription">0 lets FFmpeg decide.</div>
+          </div>
+        </div>
+
+        <div class="verticalSection">
+          <h2 class="sectionTitle">Safety</h2>
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="DeepVerifyBeforeReplace" name="DeepVerifyBeforeReplace" />
+            <span>Fully decode the result before replacing an original</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Catches corruption that a container probe would miss. Roughly doubles the time a job takes,
+            and is the difference between "probably fine" and "checked".
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="FileStabilitySeconds">File must be unchanged for (seconds)</label>
+            <input is="emby-input" type="number" id="FileStabilitySeconds" name="FileStabilitySeconds" min="0" max="3600" />
+            <div class="fieldDescription">Stops the plugin grabbing a file that is still downloading.</div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="FreeSpaceSafetyFactor">Free space safety factor</label>
+            <input is="emby-input" type="number" id="FreeSpaceSafetyFactor" name="FreeSpaceSafetyFactor" min="1" max="5" step="0.1" />
+            <div class="fieldDescription">A job will not start unless free space is at least this multiple of the estimated output size.</div>
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="AllowNonAdminAnalysis" name="AllowNonAdminAnalysis" />
+            <span>Let non-admin users open the read-only file information view</span>
+          </label>
+          <div class="fieldDescription">Starting, cancelling and reverting conversions always requires an administrator.</div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="JobHistoryLimit">Jobs kept in history</label>
+            <input is="emby-input" type="number" id="JobHistoryLimit" name="JobHistoryLimit" min="10" max="5000" />
+          </div>
+        </div>
+
+        <div>
+          <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+            <span>Save</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="text/javascript">
+    (function () {
+      var pluginId = '919929b2-0857-4c61-8647-c05fbbdc62fa';
+      var fields = ['Injection', 'DefaultOutputPolicy', 'SidecarDirectory', 'TempDirectory',
+        'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
+        'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit'];
+      var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
+        'AllowNonAdminAnalysis'];
+
+      document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
+        Dashboard.showLoadingMsg();
+        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+          var page = document.querySelector('#MediaOptimizerConfigPage');
+          fields.forEach(function (name) {
+            var input = page.querySelector('#' + name);
+            if (input && config[name] !== undefined && config[name] !== null) { input.value = config[name]; }
+          });
+          checkboxes.forEach(function (name) {
+            var input = page.querySelector('#' + name);
+            if (input) { input.checked = !!config[name]; }
+          });
+          Dashboard.hideLoadingMsg();
+        });
+      });
+
+      document.querySelector('#MediaOptimizerConfigForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        Dashboard.showLoadingMsg();
+        var page = document.querySelector('#MediaOptimizerConfigPage');
+        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+          fields.forEach(function (name) {
+            var input = page.querySelector('#' + name);
+            if (!input) { return; }
+            config[name] = input.type === 'number' ? Number(input.value) : input.value;
+          });
+          checkboxes.forEach(function (name) {
+            var input = page.querySelector('#' + name);
+            if (input) { config[name] = input.checked; }
+          });
+          ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+            Dashboard.processPluginConfigurationUpdateResult(result);
+          });
+        });
+        return false;
+      });
+    })();
+  </script>
+</div>
+</body>
+</html>

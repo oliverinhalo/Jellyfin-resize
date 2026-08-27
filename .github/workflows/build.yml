@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # The integration tests drive a real ffmpeg; without it they skip rather than fail,
+      # but the lossless guarantees are only actually proven when it is present.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build --verbosity normal
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Guards the selectors the injected UI depends on. jellyfin-web has no plugin API, so
+      # these are private and will move between releases; this is the early warning.
+      - name: DOM integration tests
+        run: cd web-tests && npm install && npm test
+
+      - name: Package
+        run: |
+          mkdir -p artifacts
+          cp Jellyfin.Plugin.MediaOptimizer/bin/Release/net9.0/Jellyfin.Plugin.MediaOptimizer.dll artifacts/
+          cd artifacts && zip -r media-optimizer.zip Jellyfin.Plugin.MediaOptimizer.dll
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-optimizer
+          path: artifacts/media-optimizer.zip
