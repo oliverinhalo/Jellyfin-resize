@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.1.0.0"
+version: "1.2.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,21 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.2.0.0
+  - Fixed the dialog's two panes rendering on top of each other. It now lives in a shadow root,
+    so no stylesheet on the page can reposition it.
+  - Fixed every default predicting a bigger file. Size is now estimated from the source's own
+    bitrate, and a container that mis-tags the video stream no longer skews it.
+  - New presets: Standard (better codec), Medium (one resolution step down), High reduction
+    (a step down plus a lower bitrate). The dialog opens on whichever actually helps the file.
+  - Removed the invented encode time. A real one appears once the server has measured itself.
+  - Subtitle warnings are collapsed into one line with a "Use MKV instead" button.
+  - Select several files on the dashboard and convert them all with one preset.
+  - Sort and filter the dashboard list by size, resolution, bitrate, watched state, container
+    and codec.
+  - MP4 and Replace are now the defaults; files whose subtitles MP4 cannot carry stay MKV.
+  - Reworded the options that were unclear.
+
   ### 1.1.0.0
   - Conversions can now be started from the dashboard page, so the plugin is fully usable
     without the in-app buttons.

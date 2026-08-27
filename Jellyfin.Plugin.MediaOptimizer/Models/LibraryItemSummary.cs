@@ -23,6 +23,24 @@ public class LibraryItemSummary
     /// <summary>Gets or sets the duration in ticks.</summary>
     public long? RunTimeTicks { get; set; }
 
+    /// <summary>Gets or sets the container extension.</summary>
+    public string? Container { get; set; }
+
+    /// <summary>Gets or sets the video width.</summary>
+    public int? Width { get; set; }
+
+    /// <summary>Gets or sets the video height.</summary>
+    public int? Height { get; set; }
+
+    /// <summary>Gets or sets the video codec.</summary>
+    public string? VideoCodec { get; set; }
+
+    /// <summary>Gets or sets the video bitrate, when the container reports one.</summary>
+    public int? BitrateBps { get; set; }
+
+    /// <summary>Gets or sets whether the calling user has watched this, when known.</summary>
+    public bool? IsWatched { get; set; }
+
     /// <summary>Gets or sets a value indicating whether a conversion is already queued or running.</summary>
     public bool HasActiveJob { get; set; }
 }

@@ -31,13 +31,29 @@
         <div class="verticalSection">
           <h2 class="sectionTitle">Output</h2>
           <div class="selectContainer">
+            <label class="selectLabel" for="DefaultContainer">Default container</label>
+            <select is="emby-select" id="DefaultContainer" name="DefaultContainer" class="emby-select-withcolor emby-select">
+              <option value="mp4">MP4 — plays on the most devices</option>
+              <option value="mkv">MKV — keeps every subtitle and font</option>
+            </select>
+            <div class="fieldDescription">
+              Files that carry image-based subtitles (PGS, VOBSUB) or embedded fonts are switched to
+              MKV automatically, because MP4 cannot store either and they would be silently lost.
+            </div>
+          </div>
+
+          <div class="selectContainer">
             <label class="selectLabel" for="DefaultOutputPolicy">Default output policy</label>
             <select is="emby-select" id="DefaultOutputPolicy" name="DefaultOutputPolicy" class="emby-select-withcolor emby-select">
-              <option value="Sidecar">New file, original untouched</option>
-              <option value="AlternateVersion">Add as an alternate version</option>
-              <option value="Replace">Replace the original</option>
+              <option value="Replace">Replace the original (undoable for the retention period)</option>
+              <option value="Sidecar">Keep the original, save a new file alongside</option>
+              <option value="AlternateVersion">Keep the original, add as another version</option>
             </select>
-            <div class="fieldDescription">What the dialog pre-selects. Every policy can still be chosen per conversion.</div>
+            <div class="fieldDescription">
+              What the dialog pre-selects; every policy can still be chosen per conversion.
+              "Replace" moves the original to the quarantine folder below and can be undone from
+              Dashboard → Media Optimizer until the retention period expires.
+            </div>
           </div>
 
           <div class="inputContainer">
@@ -140,7 +156,7 @@
   <script type="text/javascript">
     (function () {
       var pluginId = '919929b2-0857-4c61-8647-c05fbbdc62fa';
-      var fields = ['Injection', 'DefaultOutputPolicy', 'SidecarDirectory', 'TempDirectory',
+      var fields = ['Injection', 'DefaultContainer', 'DefaultOutputPolicy', 'SidecarDirectory', 'TempDirectory',
         'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
         'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit'];
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',

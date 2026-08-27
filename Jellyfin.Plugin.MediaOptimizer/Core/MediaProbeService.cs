@@ -181,7 +181,7 @@ public class MediaProbeService : IMediaProbeService
             analysis.OverallBitrate.Source = ValueSource.Derived;
         }
 
-        if (analysis.Video is null || analysis.Video.Bitrate.Bps is not null)
+        if (analysis.Video is null)
         {
             return;
         }
@@ -196,7 +196,22 @@ public class MediaProbeService : IMediaProbeService
         }
 
         var remaining = overall - known;
-        if (remaining > 0)
+        if (remaining <= 0)
+        {
+            return;
+        }
+
+        if (analysis.Video.Bitrate.Bps is null)
+        {
+            analysis.Video.Bitrate.Bps = remaining;
+            analysis.Video.Bitrate.Source = ValueSource.Derived;
+            return;
+        }
+
+        // Some muxers tag the video stream with the file's overall bitrate. Taken at face value
+        // that makes video plus audio exceed the whole file, which then predicts that any
+        // re-encode grows it. Trust the arithmetic over the tag when they disagree.
+        if (analysis.Video.Bitrate.Bps > remaining)
         {
             analysis.Video.Bitrate.Bps = remaining;
             analysis.Video.Bitrate.Source = ValueSource.Derived;

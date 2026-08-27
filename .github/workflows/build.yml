@@ -36,8 +36,14 @@ jobs:
 
       # Guards the selectors the injected UI depends on. jellyfin-web has no plugin API, so
       # these are private and will move between releases; this is the early warning.
-      - name: DOM integration tests
-        run: cd web-tests && npm install && npm test
+      # Guards the selectors the injected UI depends on, proves the dialog stays laid out under
+      # hostile host CSS, and renders it in a real browser to catch layout regressions.
+      - name: Web UI tests
+        run: |
+          cd web-tests
+          npm install
+          npx playwright install --with-deps chromium
+          npm test
 
       - name: Package
         run: |

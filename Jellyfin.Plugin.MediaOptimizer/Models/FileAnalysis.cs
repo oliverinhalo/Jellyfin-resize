@@ -212,6 +212,12 @@ public class FileAnalysis
     /// <summary>Gets or sets a value indicating whether a job for this item is already queued or running.</summary>
     public bool HasActiveJob { get; set; }
 
+    /// <summary>
+    /// Gets or sets the strategy that actually helps this file, so the dialog does not open on
+    /// an option that would save nothing.
+    /// </summary>
+    public string RecommendedStrategy { get; set; } = "Standard";
+
     /// <summary>Gets or sets notes about prior optimisation of this item by this plugin.</summary>
     public string? OptimizationHistory { get; set; }
 }

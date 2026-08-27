@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.2.0.0",
+                "changelog": "- Fixed the dialog's two panes rendering on top of each other. It now lives in a shadow root,\nso no stylesheet on the page can reposition it.\n- Fixed every default predicting a bigger file. Size is now estimated from the source's own\nbitrate, and a container that mis-tags the video stream no longer skews it.\n- New presets: Standard (better codec), Medium (one resolution step down), High reduction\n(a step down plus a lower bitrate). The dialog opens on whichever actually helps the file.\n- Removed the invented encode time. A real one appears once the server has measured itself.\n- Subtitle warnings are collapsed into one line with a \"Use MKV instead\" button.\n- Select several files on the dashboard and convert them all with one preset.\n- Sort and filter the dashboard list by size, resolution, bitrate, watched state, container\nand codec.\n- MP4 and Replace are now the defaults; files whose subtitles MP4 cannot carry stay MKV.\n- Reworded the options that were unclear.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.2.0.0.zip",
+                "checksum": "6ca0fb04409554020e40c879315e3722",
+                "timestamp": "2026-08-27T23:10:43Z"
+            },
+            {
                 "version": "1.1.0.0",
                 "changelog": "- Conversions can now be started from the dashboard page, so the plugin is fully usable\nwithout the in-app buttons.\n- Fixed the in-app buttons never appearing: File Transformation 2.5 added admin auth to its\nHTTP registration endpoint, so registration now goes through its in-process service instead.\n- Added a status panel that reports each part of the plugin separately.",
                 "targetAbi": "10.11.0.0",

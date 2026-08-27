@@ -285,6 +285,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
 
             job.Status = JobStatus.Completed;
             job.FinishedAt = DateTime.UtcNow;
+            job.PixelsPerSecond = MeasureThroughput(job, analysis);
             _store.Update(job);
 
             _logger.LogInformation(
@@ -408,6 +409,41 @@ public class JobQueueService : BackgroundService, IJobQueueService
             _logger.LogDebug(ex, "[MediaOptimizer] Could not read active sessions");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Records how many output pixels this server encoded per second, so the next job's time
+    /// estimate is based on measured hardware rather than a guess.
+    /// </summary>
+    /// <param name="job">The finished job.</param>
+    /// <param name="analysis">The source analysis.</param>
+    /// <returns>Pixels per second, or null when it cannot be derived.</returns>
+    private static double? MeasureThroughput(EncodeJob job, FileAnalysis analysis)
+    {
+        if (job.Request.Video != VideoAction.Encode
+            || job.StartedAt is null
+            || job.FinishedAt is null
+            || analysis.Video is null
+            || analysis.DurationSeconds is not > 0)
+        {
+            return null;
+        }
+
+        var elapsed = (job.FinishedAt.Value - job.StartedAt.Value).TotalSeconds;
+        if (elapsed <= 1d)
+        {
+            return null;
+        }
+
+        var sourceHeight = analysis.Video.Height ?? 1080;
+        var sourceWidth = analysis.Video.Width ?? 1920;
+        var targetHeight = EncodePlanner.ResolveTargetHeight(sourceWidth, sourceHeight, job.Request.TargetHeight)
+            ?? sourceHeight;
+        var targetWidth = sourceHeight > 0 ? sourceWidth * targetHeight / sourceHeight : sourceWidth;
+        var fps = analysis.Video.FrameRate ?? 24f;
+
+        var pixels = (double)targetWidth * targetHeight * fps * analysis.DurationSeconds.Value;
+        return pixels / elapsed;
     }
 
     private void Fail(EncodeJob job, string error)

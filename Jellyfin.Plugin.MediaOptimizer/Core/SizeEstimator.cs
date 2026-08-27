@@ -1,6 +1,6 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Core;
@@ -19,19 +19,21 @@ public interface ISizeEstimator
 /// <inheritdoc />
 public class SizeEstimator : ISizeEstimator
 {
-    // Bits per pixel per frame at each codec's reference CRF, from typical live-action encodes.
-    // Deliberately coarse: the result is always presented as a range, never a precise number.
-    private static readonly Dictionary<string, (int RefCrf, double Bpp)> CodecBaselines =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["h264"] = (23, 0.090d),
-            ["hevc"] = (28, 0.045d),
-            ["av1"] = (32, 0.035d),
-            ["vp9"] = (31, 0.042d)
-        };
-
-    // Each CRF step changes bitrate by roughly this factor.
+    // Each CRF step changes bitrate by roughly this factor, in both directions.
     private const double CrfStepFactor = 1.12d;
+
+    // Bitrate does not scale linearly with pixel count: half the pixels needs rather more than
+    // half the bitrate. This exponent is the usual rule of thumb.
+    private const double ResolutionExponent = 0.75d;
+
+    private readonly IJobStore _store;
+
+    /// <summary>Initializes a new instance of the <see cref="SizeEstimator"/> class.</summary>
+    /// <param name="store">Job store, used to learn this server's real encoding speed.</param>
+    public SizeEstimator(IJobStore store)
+    {
+        _store = store;
+    }
 
     /// <inheritdoc />
     public EstimateResult Estimate(FileAnalysis analysis, EncodeRequest request, PlanResult plan)
@@ -50,6 +52,7 @@ public class SizeEstimator : ISizeEstimator
             result.EstimatedSizeBytes = analysis.SizeBytes ?? 0;
             result.EstimatedSizeLowBytes = result.EstimatedSizeBytes;
             result.EstimatedSizeHighBytes = result.EstimatedSizeBytes;
+            result.Confidence = EstimateConfidence.Unknown;
             return result;
         }
 
@@ -57,29 +60,99 @@ public class SizeEstimator : ISizeEstimator
         var audioBits = EstimateAudioBitrate(analysis, request) * duration;
 
         // Container overhead is around 1% for both MKV and MP4 at these bitrates.
-        var totalBytes = (long)((videoBits + audioBits) / 8d * 1.01d);
-        totalBytes = Math.Max(totalBytes, 1024);
-
+        var totalBytes = (long)Math.Max(1024d, (videoBits + audioBits) / 8d * 1.01d);
         result.EstimatedSizeBytes = totalBytes;
 
-        // A stream-copy of everything is predictable; a re-encode is not.
+        // Defence in depth against a source whose reported stream bitrates do not add up: a
+        // re-encode that asks for no more quality, no more pixels and no less efficient a codec
+        // cannot legitimately produce a bigger file than it started from.
+        if (IsNonExpanding(analysis, request) && totalBytes > result.CurrentSizeBytes)
+        {
+            totalBytes = result.CurrentSizeBytes;
+            result.EstimatedSizeBytes = totalBytes;
+        }
+
         var uncertainty = request.Video == VideoAction.Encode ? 0.25d : 0.03d;
         result.EstimatedSizeLowBytes = (long)(totalBytes * (1d - uncertainty));
         result.EstimatedSizeHighBytes = (long)(totalBytes * (1d + uncertainty));
+        result.SavingFraction = 1d - ((double)totalBytes / result.CurrentSizeBytes);
 
-        if (result.CurrentSizeBytes > 0)
+        result.Confidence = request.Video switch
         {
-            result.SavingFraction = 1d - ((double)totalBytes / result.CurrentSizeBytes);
-        }
+            VideoAction.Copy => EstimateConfidence.High,
+            VideoAction.Encode when analysis.Video?.Bitrate.Bps is > 0 => EstimateConfidence.Medium,
+            _ => EstimateConfidence.Low
+        };
 
-        result.EstimatedSeconds = EstimateEncodeSeconds(analysis, request, duration);
+        ApplyTimeEstimate(analysis, request, duration, result);
+        AddSavingNote(analysis, request, result);
 
         return result;
     }
 
     /// <summary>
-    /// Predicts the video bitrate the encoder will land on. Constant-quality modes have no
-    /// knowable output size in advance, so this is a bits-per-pixel model, not a measurement.
+    /// True when nothing about the target asks for more bits than the source already spends.
+    /// </summary>
+    /// <param name="analysis">Source analysis.</param>
+    /// <param name="request">Requested settings.</param>
+    /// <returns>Whether the output cannot legitimately be larger.</returns>
+    internal static bool IsNonExpanding(FileAnalysis analysis, EncodeRequest request)
+    {
+        var video = analysis.Video;
+        if (video is null || request.Video != VideoAction.Encode)
+        {
+            return request.Video == VideoAction.Drop;
+        }
+
+        if (request.RateControl != RateControlMode.ConstantQuality)
+        {
+            return false;
+        }
+
+        var targetFamily = StrategyResolver.CodecFamilyOf(request.VideoCodec);
+        if (StrategyResolver.EfficiencyOf(targetFamily) > StrategyResolver.EfficiencyOf(video.Codec))
+        {
+            return false;
+        }
+
+        var targetHeight = EncodePlanner.ResolveTargetHeight(video.Width, video.Height, request.TargetHeight);
+        if (targetHeight is not null && video.Height is > 0 && targetHeight > video.Height)
+        {
+            return false;
+        }
+
+        var reference = StrategyResolver.ReferenceCrfOf(targetFamily);
+        if ((request.Quality ?? reference) < reference)
+        {
+            return false;
+        }
+
+        // Re-encoding lossy audio to a lossless codec genuinely can grow the file.
+        foreach (var track in request.AudioTracks)
+        {
+            if (track.Action != AudioAction.Encode
+                || !string.Equals(track.Codec, "flac", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var source = analysis.Audio.FirstOrDefault(a => a.Index == track.Index);
+            if (source is not null && !source.IsLossless)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Predicts the video bitrate the encoder will land on.
+    /// <para>
+    /// Anchored on the source's own bitrate rather than an absolute bits-per-pixel table. That
+    /// matters: an absolute model has no idea whether the source was already efficiently encoded,
+    /// so it happily predicts that re-encoding a lean 4K HEVC file makes it bigger.
+    /// </para>
     /// </summary>
     /// <param name="analysis">Source analysis.</param>
     /// <param name="request">Requested settings.</param>
@@ -104,63 +177,57 @@ public class SizeEstimator : ISizeEstimator
             return request.VideoBitrateBps.Value;
         }
 
-        if (request.RateControl == RateControlMode.TargetSize
-            && request.TargetSizeBytes is > 0
-            && analysis.DurationSeconds is > 0)
+        if (request.RateControl == RateControlMode.TargetSize)
         {
-            return request.TargetSizeBytes.Value * 8d / analysis.DurationSeconds.Value;
+            return EncodePlanner.ComputeTargetVideoBitrate(analysis, request) ?? sourceBitrate;
         }
 
         if (request.RateControl == RateControlMode.Lossless)
         {
-            // Lossless re-encoding only makes sense from a lossless source, where roughly
-            // half the size is typical for FFV1/x265-lossless over uncompressed or FFV1 input.
+            // Only reachable from a lossless source, where roughly half is typical.
             return sourceBitrate * 0.5d;
         }
 
-        var width = video.Width ?? 1920;
-        var height = video.Height ?? 1080;
-        var targetHeight = EncodePlanner.ResolveTargetHeight(width, height, request.TargetHeight);
-        if (targetHeight is not null && height > 0)
-        {
-            var scale = (double)targetHeight.Value / height;
-            width = (int)(width * scale);
-            height = targetHeight.Value;
-        }
+        var sourceHeight = video.Height ?? 1080;
+        var sourceWidth = video.Width ?? 1920;
+        var targetHeight = EncodePlanner.ResolveTargetHeight(sourceWidth, sourceHeight, request.TargetHeight)
+            ?? sourceHeight;
 
-        var fps = video.FrameRate ?? 24f;
-        var codec = CodecFamilyOf(request.VideoCodec);
-        if (!CodecBaselines.TryGetValue(codec, out var baseline))
-        {
-            baseline = CodecBaselines["h264"];
-        }
+        var resolutionFactor = sourceHeight > 0
+            ? Math.Pow((double)targetHeight / sourceHeight, 2d * ResolutionExponent)
+            : 1d;
 
-        var crf = request.Quality ?? baseline.RefCrf;
-        var bpp = baseline.Bpp * Math.Pow(CrfStepFactor, baseline.RefCrf - crf);
+        var targetFamily = StrategyResolver.CodecFamilyOf(request.VideoCodec);
+        var codecFactor = StrategyResolver.EfficiencyOf(targetFamily)
+            / Math.Max(0.01d, StrategyResolver.EfficiencyOf(video.Codec));
 
-        // 10-bit encoding costs a little more bitrate at the same CRF, but compresses
-        // slightly better on gradients; treat it as roughly neutral with a small penalty.
-        if ((request.BitDepth ?? video.BitDepth ?? 8) >= 10)
-        {
-            bpp *= 1.05d;
-        }
-
-        var estimate = bpp * width * height * fps;
+        var reference = StrategyResolver.ReferenceCrfOf(targetFamily);
+        var crf = request.Quality ?? reference;
+        var qualityFactor = Math.Pow(CrfStepFactor, reference - crf);
 
         // Hardware encoders need meaningfully more bitrate for the same perceived quality.
-        if (request.UseHardware)
+        var hardwareFactor = request.UseHardware ? 1.5d : 1d;
+
+        if (sourceBitrate <= 0d)
         {
-            estimate *= 1.5d;
+            // No source bitrate to anchor on; fall back to a coarse absolute model.
+            var fps = video.FrameRate ?? 24f;
+            var targetWidth = sourceHeight > 0 ? sourceWidth * targetHeight / sourceHeight : sourceWidth;
+            var bpp = 0.09d * StrategyResolver.EfficiencyOf(targetFamily);
+            return bpp * targetWidth * targetHeight * fps * qualityFactor * hardwareFactor;
         }
 
-        // A re-encode that lands above the source bitrate would be pointless; the encoder
-        // will not invent detail that is not there, so cap at the source rate when known.
-        if (sourceBitrate > 0d && estimate > sourceBitrate && targetHeight is null)
+        var estimate = sourceBitrate * codecFactor * resolutionFactor * qualityFactor * hardwareFactor;
+
+        // A re-encode cannot recover detail the source never had. When nothing about the target
+        // asks for more bits than the source already spends, refuse to predict growth — that was
+        // the bug that made every default look like it inflated the file.
+        if (codecFactor <= 1d && resolutionFactor <= 1d && qualityFactor <= 1d)
         {
-            estimate = sourceBitrate;
+            estimate = Math.Min(estimate, sourceBitrate);
         }
 
-        return estimate;
+        return Math.Max(estimate, 50_000d);
     }
 
     /// <summary>Predicts the combined audio bitrate of the kept tracks.</summary>
@@ -199,79 +266,105 @@ public class SizeEstimator : ISizeEstimator
                 continue;
             }
 
-            if (req.BitrateBps is > 0)
-            {
-                total += req.BitrateBps.Value;
-                continue;
-            }
-
-            total += Math.Min(sourceRate, (track.Channels ?? 2) * 64_000d);
+            total += req.BitrateBps is > 0
+                ? req.BitrateBps.Value
+                : Math.Min(sourceRate, (track.Channels ?? 2) * 64_000d);
         }
 
         return total;
     }
 
-    private static string CodecFamilyOf(string? encoder)
-    {
-        if (string.IsNullOrEmpty(encoder))
-        {
-            return "h264";
-        }
-
-        if (encoder.Contains("265", StringComparison.OrdinalIgnoreCase)
-            || encoder.Contains("hevc", StringComparison.OrdinalIgnoreCase))
-        {
-            return "hevc";
-        }
-
-        if (encoder.Contains("av1", StringComparison.OrdinalIgnoreCase))
-        {
-            return "av1";
-        }
-
-        if (encoder.Contains("vp9", StringComparison.OrdinalIgnoreCase))
-        {
-            return "vp9";
-        }
-
-        return "h264";
-    }
-
-    private static double? EstimateEncodeSeconds(FileAnalysis analysis, EncodeRequest request, double duration)
+    /// <summary>
+    /// Attaches an encode-time estimate only when this server has actually measured its own
+    /// throughput. Guessing produced numbers like "11h 40m" for jobs that finished far sooner,
+    /// so no number is offered until there is evidence for one.
+    /// </summary>
+    /// <param name="analysis">Source analysis.</param>
+    /// <param name="request">Requested settings.</param>
+    /// <param name="duration">Source duration in seconds.</param>
+    /// <param name="result">The estimate being built.</param>
+    private void ApplyTimeEstimate(
+        FileAnalysis analysis,
+        EncodeRequest request,
+        double duration,
+        EstimateResult result)
     {
         if (request.Video != VideoAction.Encode)
         {
-            // Stream copy is I/O bound; roughly a hundredth of realtime on any modern disk.
-            return duration * 0.01d;
+            // A stream copy is I/O bound and reliably quick; this one is safe to state.
+            result.EstimatedSeconds = Math.Max(5d, duration * 0.02d);
+            result.TimeBasis = "stream copy";
+            return;
         }
 
-        if (request.UseHardware)
+        var measured = AverageThroughput(request.UseHardware);
+        if (measured is not > 0)
         {
-            return duration / 8d;
+            result.EstimatedSeconds = null;
+            result.TimeBasis = "unmeasured";
+            return;
         }
 
-        // Very rough CPU speed multipliers relative to realtime at 1080p.
-        var codec = CodecFamilyOf(request.VideoCodec);
-        var speed = codec switch
-        {
-            "hevc" => 0.6d,
-            "av1" => 0.35d,
-            "vp9" => 0.4d,
-            _ => 1.5d
-        };
+        var video = analysis.Video;
+        var sourceHeight = video?.Height ?? 1080;
+        var sourceWidth = video?.Width ?? 1920;
+        var targetHeight = EncodePlanner.ResolveTargetHeight(sourceWidth, sourceHeight, request.TargetHeight)
+            ?? sourceHeight;
+        var targetWidth = sourceHeight > 0 ? sourceWidth * targetHeight / sourceHeight : sourceWidth;
+        var fps = video?.FrameRate ?? 24f;
 
-        var height = EncodePlanner.ResolveTargetHeight(
-            analysis.Video?.Width,
-            analysis.Video?.Height,
-            request.TargetHeight) ?? analysis.Video?.Height ?? 1080;
+        var pixels = (double)targetWidth * targetHeight * fps * duration;
+        result.EstimatedSeconds = pixels / measured.Value;
+        result.TimeBasis = "measured on this server";
+    }
 
-        // Cost scales with pixel count against the 1080p baseline.
-        var pixelFactor = Math.Pow((double)height / 1080d, 2d);
-        if (pixelFactor > 0d)
+    /// <summary>Average encoded pixels per second across recent completed encodes on this server.</summary>
+    /// <param name="hardware">Whether to look at hardware-encoded jobs.</param>
+    /// <returns>Pixels per second, or null when nothing comparable has run yet.</returns>
+    private double? AverageThroughput(bool hardware)
+    {
+        var samples = _store.GetAll()
+            .Where(j => j.Status == JobStatus.Completed
+                && j.PixelsPerSecond is > 0
+                && j.Request.UseHardware == hardware)
+            .OrderByDescending(j => j.FinishedAt ?? j.QueuedAt)
+            .Take(10)
+            .Select(j => j.PixelsPerSecond!.Value)
+            .ToList();
+
+        return samples.Count == 0 ? null : samples.Average();
+    }
+
+    /// <summary>
+    /// Explains a disappointing prediction rather than leaving the user to wonder why a
+    /// "reduce my library" preset saved nothing.
+    /// </summary>
+    /// <param name="analysis">Source analysis.</param>
+    /// <param name="request">Requested settings.</param>
+    /// <param name="result">The estimate being built.</param>
+    private static void AddSavingNote(FileAnalysis analysis, EncodeRequest request, EstimateResult result)
+    {
+        if (request.Video != VideoAction.Encode || result.SavingFraction >= 0.10d)
         {
-            speed /= pixelFactor;
+            return;
         }
 
-        return speed > 0d ? duration / speed : null;
+        var video = analysis.Video;
+        if (video is null)
+        {
+            return;
+        }
+
+        var targetFamily = StrategyResolver.CodecFamilyOf(request.VideoCodec);
+        var sameFamily = string.Equals(
+            StrategyResolver.CodecFamilyOf(video.Codec),
+            targetFamily,
+            StringComparison.OrdinalIgnoreCase);
+
+        result.SavingNote = sameFamily && request.TargetHeight is null
+            ? "This file is already " + (video.Codec ?? "efficiently").ToUpperInvariant()
+                + " at this resolution, so re-encoding it to the same codec and size saves very little. "
+                + "Reducing the resolution is the only change that will meaningfully shrink it."
+            : "This configuration saves very little on this file. Try a lower resolution or a higher CRF.";
     }
 }

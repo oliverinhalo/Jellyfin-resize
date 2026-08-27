@@ -5,9 +5,13 @@
   "type": "module",
   "description": "Verifies the injected client script against real jellyfin-web markup.",
   "scripts": {
-    "test": "node dom.test.mjs"
+    "test": "node dom.test.mjs && node hostile.mjs && node render.mjs"
   },
   "devDependencies": {
-    "jsdom": "^25.0.0"
+    "jsdom": "^25.0.0",
+    "playwright": "^1.48.0"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
   }
 }

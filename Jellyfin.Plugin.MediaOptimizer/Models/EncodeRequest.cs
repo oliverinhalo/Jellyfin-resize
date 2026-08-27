@@ -10,14 +10,14 @@ public enum OptimizationStrategy
     /// <summary>User-specified settings.</summary>
     Custom = 0,
 
-    /// <summary>Sensible size reduction at near-transparent quality.</summary>
-    Balanced = 1,
+    /// <summary>Keep the resolution, re-encode to a more efficient codec.</summary>
+    Standard = 1,
 
-    /// <summary>Smallest reasonable file, accepting visible quality loss.</summary>
-    MaximumCompression = 2,
+    /// <summary>Standard, plus one step down the resolution ladder.</summary>
+    Medium = 2,
 
-    /// <summary>Preserve quality, modernise the codec.</summary>
-    Archive = 3,
+    /// <summary>Medium, plus a lower bitrate and leaner audio.</summary>
+    HighReduction = 3,
 
     /// <summary>Bit-exact operations only. No lossy re-encoding anywhere.</summary>
     LosslessOnly = 4

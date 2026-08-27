@@ -34,6 +34,8 @@ const ok = (condition, message) => {
 };
 const tick = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms));
 
+const itemId = '0f9e8d7c6b5a49382716253443210fed';
+
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
     runScripts: 'outside-only',
     pretendToBeVisual: true,
@@ -50,6 +52,19 @@ window.ApiClient = {
     serverInfo: () => ({ Id: 'srv' }),
     ajax: options => {
         calls.push(options);
+        if (options.url.includes('Analyze')) {
+            return Promise.resolve(JSON.stringify({
+                ItemId: itemId, Name: 'Test', Path: '/m/t.mkv', Container: 'mkv',
+                SizeBytes: 1000, DurationSeconds: 60, IsEligible: true, IsWritable: true,
+                OverallBitrate: {}, Audio: [], Subtitles: [], RecommendedStrategy: 'Standard',
+                Video: { Index: 0, Codec: 'h264', Width: 1920, Height: 1080, Bitrate: {} }
+            }));
+        }
+        if (options.url.includes('Capabilities')) {
+            return Promise.resolve(JSON.stringify({
+                VideoEncoders: [], AudioEncoders: [], Containers: ['mkv'], CanConvert: true
+            }));
+        }
         return Promise.resolve('{}');
     }
 };
@@ -72,7 +87,6 @@ sheet.innerHTML =
 
 // The sheet does not carry the item it was opened against, so the script captures the id from
 // the element that was clicked. Simulate that click first.
-const itemId = '0f9e8d7c6b5a49382716253443210fed';
 const card = doc.createElement('div');
 card.setAttribute('data-id', itemId);
 doc.body.appendChild(card);
@@ -114,13 +128,16 @@ calls.length = 0;
 entry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
 await tick(80);
 
-ok(!!doc.querySelector('.mopt-overlay'), 'clicking the entry opens the dialog');
+// The dialog renders inside a shadow root, which is what makes it immune to jellyfin-web's CSS.
+const shadow = window.MediaOptimizer.shadowRoot();
+ok(!!shadow, 'dialog is rendered inside a shadow root, isolated from host styles');
+ok(!!shadow?.querySelector('.mopt-overlay'), 'clicking the entry opens the dialog');
 ok(calls.some(c => c.url.includes('MediaOptimizer/Analyze/' + itemId)), 'analysis is requested for the clicked item');
 ok(calls.some(c => c.url.includes('MediaOptimizer/Capabilities')), 'server ffmpeg capabilities are requested');
 
 doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 await tick(40);
-ok(!doc.querySelector('.mopt-overlay'), 'Escape closes the dialog');
+ok(!window.MediaOptimizer.shadowRoot(), 'Escape closes the dialog');
 
 console.log(failures === 0 ? '\nAll DOM checks passed.' : `\n${failures} DOM check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

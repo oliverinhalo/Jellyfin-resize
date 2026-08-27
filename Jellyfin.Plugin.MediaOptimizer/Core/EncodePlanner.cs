@@ -667,6 +667,7 @@ public class EncodePlanner : IEncodePlanner
         var keep = request.KeepSubtitleIndexes;
         var embedded = analysis.Subtitles.Where(s => !s.IsExternal).ToList();
 
+        var incompatible = 0;
         foreach (var sub in embedded)
         {
             if (keep is not null && !keep.Contains(sub.Index))
@@ -676,15 +677,22 @@ public class EncodePlanner : IEncodePlanner
 
             if (container == "mp4" && sub.IsGraphical)
             {
-                warnings.Add(new PlanWarning(
-                    WarningLevel.Warning,
-                    "SUBTITLE_INCOMPATIBLE",
-                    FormattableString.Invariant($"MP4 cannot carry {sub.Codec} subtitles. That track will be dropped — choose MKV to keep it.")));
+                incompatible++;
                 continue;
             }
 
             args.Add("-map");
             args.Add(FormattableString.Invariant($"0:{sub.Index}"));
+        }
+
+        // One message for the whole set: a Blu-ray rip can carry a dozen image-based tracks and
+        // a warning each would drown out everything that matters.
+        if (incompatible > 0)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Warning,
+                "SUBTITLE_INCOMPATIBLE",
+                FormattableString.Invariant($"MP4 cannot store image-based subtitles, so {incompatible} track(s) will be dropped. Switch the container to MKV to keep them.")));
         }
 
         if (embedded.Count > 0)

@@ -35,7 +35,14 @@ public class PluginConfiguration : BasePluginConfiguration
     public InjectionMode Injection { get; set; } = InjectionMode.FileTransformation;
 
     /// <summary>Gets or sets the default output policy offered in the dialog.</summary>
-    public OutputPolicy DefaultOutputPolicy { get; set; } = OutputPolicy.Sidecar;
+    public OutputPolicy DefaultOutputPolicy { get; set; } = OutputPolicy.Replace;
+
+    /// <summary>
+    /// Gets or sets the container the dialog opens on. MP4 plays on the widest range of devices;
+    /// files carrying image-based subtitles or font attachments are switched to MKV automatically,
+    /// because MP4 cannot hold either.
+    /// </summary>
+    public string DefaultContainer { get; set; } = "mp4";
 
     /// <summary>Gets or sets the directory used for Sidecar output. Empty means "beside the original".</summary>
     public string SidecarDirectory { get; set; } = string.Empty;

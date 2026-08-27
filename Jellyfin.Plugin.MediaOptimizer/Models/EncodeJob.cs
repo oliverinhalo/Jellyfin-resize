@@ -101,6 +101,12 @@ public class EncodeJob
     /// <summary>Gets or sets the result of the lossless hash comparison, when one ran.</summary>
     public bool? LosslessVerified { get; set; }
 
+    /// <summary>
+    /// Gets or sets encoded pixels per second measured on this job. Feeds the time estimate for
+    /// later jobs, so predictions come from this server's real speed rather than a guess.
+    /// </summary>
+    public double? PixelsPerSecond { get; set; }
+
     /// <summary>Gets or sets the policy that was applied.</summary>
     public OutputPolicy OutputPolicy { get; set; }
 

@@ -8,3 +8,4 @@ artifacts/
 TestResults/
 node_modules/
 package-lock.json
+web-tests/shots/
