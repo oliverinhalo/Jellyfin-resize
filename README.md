@@ -4,8 +4,19 @@ Inspect any media file from inside Jellyfin and convert it with FFmpeg — resol
 depth, bitrate, audio — plus a genuinely lossless mode whose bit-exactness is verified by hash
 after every encode.
 
-Built for **Jellyfin 10.11.x**. Requires .NET 9. Licensed GPL-3.0, matching the official Jellyfin
-plugin template.
+Built for **Jellyfin 10.11.x**. Licensed GPL-3.0, matching the official Jellyfin plugin template.
+
+## Install
+
+Add this as a plugin repository in Jellyfin (**Dashboard → Plugins → Repositories → `+`**):
+
+```
+https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/manifest.json
+```
+
+Then install **Media Optimizer** from **Dashboard → Plugins → Catalog** and restart Jellyfin.
+Full step-by-step, including the extra plugin needed for the in-app buttons, is
+[below](#installing).
 
 ---
 
@@ -85,16 +96,79 @@ Every endpoint that starts, cancels or reverts a conversion requires `RequiresEl
 
 ## Installing
 
-1. Install [File Transformation](https://github.com/IAmParadox27/jellyfin-plugin-file-transformation).
-   This is how the dialog reaches the web client without modifying any files. Without it the
-   dashboard still works; the in-app buttons will not appear.
-2. Build (`dotnet publish -c Release`) and drop `Jellyfin.Plugin.MediaOptimizer.dll` into a
-   `plugins/MediaOptimizer` folder in your Jellyfin data directory, then restart.
-3. Configure under **Dashboard → Plugins → Media Optimizer**.
+### 1. Add the plugin repository
 
-The alternative injection mode patches `jellyfin-web/index.html` on disk. It works without the
-File Transformation plugin but is undone by every Jellyfin update and fails on read-only or
-rootless containers. It is off by default for those reasons.
+In Jellyfin: **Dashboard → Plugins → Repositories → `+`**
+
+| Field | Value |
+|---|---|
+| Repository Name | `Media Optimizer` |
+| Repository URL | `https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/manifest.json` |
+
+Press **Save**. If Jellyfin says the repository is invalid, the URL is wrong — it must end in
+`manifest.json` and be the **raw** GitHub URL, not the page you see when browsing the repo.
+
+### 2. Install the plugin
+
+**Dashboard → Plugins → Catalog** → find **Media Optimizer** under *General* → **Install**.
+
+### 3. Restart Jellyfin
+
+Required. The plugin will not load until you do. After restarting, check
+**Dashboard → Plugins → My Plugins** — Media Optimizer should show as *Active*.
+
+### 4. Add File Transformation, for the in-app buttons
+
+The 3-dot menu entry and the player button need a second plugin to get their script into the web
+client. Repeat step 1 with:
+
+| Field | Value |
+|---|---|
+| Repository Name | `IAmParadox` |
+| Repository URL | `https://www.iamparadox.dev/jellyfin/plugins/manifest.json` |
+
+Install **File Transformation** from the catalog, then restart Jellyfin again. No configuration
+needed.
+
+**This step is optional.** Without it everything still works from
+**Dashboard → Media Optimizer** — you just do not get the in-app buttons.
+
+### Requirements
+
+- **Jellyfin 10.11.x.** The plugin will show as *Not Supported* on 10.10 or earlier; the plugin
+  ABI is pinned per Jellyfin minor version.
+- FFmpeg — already bundled with Jellyfin. The plugin uses the server's own binary and never
+  ships its own.
+
+### Where things are afterwards
+
+- **Dashboard → Media Optimizer** — the queue: progress, history, cancel, restore an original.
+- **Dashboard → Plugins → Media Optimizer** — settings: output policy, directories, concurrency,
+  safety options.
+- **In the web client** (with File Transformation installed) — "Optimize file…" in any movie or
+  episode's 3-dot menu, and a tune icon in the video player.
+
+### Updating
+
+Jellyfin checks the repository automatically. When a new version appears, **Dashboard → Plugins**
+offers the update; restart afterwards.
+
+### Uninstalling
+
+**Dashboard → Plugins → Media Optimizer → Uninstall**, then restart. Files it already converted
+are left exactly as they are. If you used *Replace* and want an original back, restore it from the
+queue page **before** uninstalling — the quarantine folder is tracked in the plugin's own job
+history, which uninstalling leaves behind on disk but the UI can no longer read.
+
+### Building it yourself instead
+
+```bash
+dotnet publish -c Release
+```
+
+Copy `Jellyfin.Plugin.MediaOptimizer/bin/Release/net9.0/Jellyfin.Plugin.MediaOptimizer.dll` into a
+`plugins/MediaOptimizer` folder inside your Jellyfin **data** directory (not the install
+directory), then restart.
 
 ## Development
 

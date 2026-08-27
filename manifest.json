@@ -1,0 +1,20 @@
+[
+    {
+        "guid": "919929b2-0857-4c61-8647-c05fbbdc62fa",
+        "name": "Media Optimizer",
+        "description": "Inspect any media file from inside Jellyfin and convert it with FFmpeg: resolution, codec, bit depth, bitrate and audio presets, plus a genuinely lossless mode whose bit-exactness is verified by hash after every encode. Conversions run in a background queue and the original file is never modified until the result passes verification.",
+        "overview": "Inspect and convert media files from inside the Jellyfin interface.",
+        "owner": "oliverinhalo",
+        "category": "General",
+        "versions": [
+            {
+                "version": "1.0.0.0",
+                "changelog": "Initial release.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.0.0.0.zip",
+                "checksum": "f520c416bb001871a8b48dcd01a85cb9",
+                "timestamp": "2026-08-27T17:34:58Z"
+            }
+        ]
+    }
+]
