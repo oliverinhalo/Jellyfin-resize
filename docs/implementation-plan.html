@@ -1,0 +1,847 @@
+<title>Jellyfin Media Optimizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+:root{
+  --bg:#F2F5F7; --surface:#FFFFFF; --surface-2:#E9EEF2;
+  --ink:#0F161B; --ink-2:#33424E; --muted:#61707C;
+  --line:#D6DFE6; --line-strong:#B9C6D0;
+  --accent:#12707F; --accent-soft:#E2F0F2;
+  --warn:#8A5A00; --warn-soft:#FBF0DA;
+  --danger:#A8261C; --danger-soft:#FBE6E3;
+  --good:#1B6B47; --good-soft:#DFF0E7;
+  --shadow:0 1px 2px rgba(15,22,27,.06),0 8px 24px -16px rgba(15,22,27,.28);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0C1216; --surface:#141D23; --surface-2:#1B262E;
+    --ink:#E6ECF1; --ink-2:#BCC9D3; --muted:#8698A5;
+    --line:#25333C; --line-strong:#384A56;
+    --accent:#54C2D4; --accent-soft:#11313A;
+    --warn:#E2AC4F; --warn-soft:#33280F;
+    --danger:#F0857B; --danger-soft:#3A1B18;
+    --good:#5FC493; --good-soft:#12301F;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0C1216; --surface:#141D23; --surface-2:#1B262E;
+  --ink:#E6ECF1; --ink-2:#BCC9D3; --muted:#8698A5;
+  --line:#25333C; --line-strong:#384A56;
+  --accent:#54C2D4; --accent-soft:#11313A;
+  --warn:#E2AC4F; --warn-soft:#33280F;
+  --danger:#F0857B; --danger-soft:#3A1B18;
+  --good:#5FC493; --good-soft:#12301F;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.62; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+*,*::before,*::after{box-sizing:border-box}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.wrap{max-width:80rem;margin-inline:auto;padding-inline:clamp(1rem,4vw,3.25rem)}
+
+/* ---------- masthead ---------- */
+.mast{padding:clamp(3rem,7vw,5.5rem) 0 2rem;border-bottom:1px solid var(--line)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 1.1rem;
+}
+.mast h1{
+  font-family:Archivo,system-ui,sans-serif;font-weight:700;
+  font-size:clamp(2.1rem,5.4vw,3.6rem);line-height:1.04;
+  letter-spacing:-.024em;margin:0;text-wrap:balance;max-width:19ch;
+}
+.thesis{
+  font-size:clamp(1.02rem,1.9vw,1.2rem);color:var(--ink-2);
+  max-width:62ch;margin:1.35rem 0 0;
+}
+.metastrip{
+  display:flex;flex-wrap:wrap;gap:.45rem;margin-top:2rem;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.74rem;
+}
+.metastrip span{
+  border:1px solid var(--line-strong);padding:.3rem .6rem;border-radius:2px;
+  color:var(--muted);background:var(--surface);
+}
+.metastrip span b{color:var(--ink);font-weight:500}
+
+/* ---------- verdict ---------- */
+.verdict{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin:2.75rem 0 0}
+@media (max-width:820px){.verdict{grid-template-columns:minmax(0,1fr)}}
+.vcard{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:1.15rem 1.2rem 1.3rem;box-shadow:var(--shadow)}
+.vcard h3{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.72rem;
+  letter-spacing:.14em;text-transform:uppercase;margin:0 0 .75rem;font-weight:600;
+}
+.vcard.ok h3{color:var(--good)} .vcard.mid h3{color:var(--warn)} .vcard.no h3{color:var(--danger)}
+.vcard ul{margin:0;padding-left:1.05rem;font-size:.92rem;color:var(--ink-2)}
+.vcard li{margin-bottom:.42rem}
+.vcard li::marker{color:var(--muted)}
+
+/* ---------- contents ---------- */
+.toc{margin:3rem 0 0;border-top:1px solid var(--line);padding-top:1.5rem}
+.toc ol{
+  list-style:none;margin:0;padding:0;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));gap:.15rem .5rem;
+}
+.toc a{
+  display:flex;gap:.7rem;text-decoration:none;color:var(--ink-2);
+  padding:.4rem .5rem;border-radius:2px;font-size:.9rem;
+}
+.toc a:hover{background:var(--surface);color:var(--ink)}
+.toc a i{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-style:normal;
+  color:var(--accent);font-size:.78rem;padding-top:.16rem;
+}
+
+/* ---------- sections ---------- */
+.section{
+  display:grid;grid-template-columns:7.5rem minmax(0,1fr);gap:2.75rem;
+  padding:3.5rem 0;border-top:1px solid var(--line);
+}
+@media (max-width:900px){.section{grid-template-columns:minmax(0,1fr);gap:1.1rem;padding:2.5rem 0}}
+.rail{position:sticky;top:1.5rem;align-self:start;height:max-content}
+@media (max-width:900px){.rail{position:static}}
+.rail .num{
+  font-family:Archivo,sans-serif;font-weight:700;font-size:1.5rem;
+  color:var(--accent);letter-spacing:-.02em;display:block;line-height:1;
+}
+.rail .tag{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.68rem;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  display:block;margin-top:.5rem;
+}
+.col{min-width:0}
+.col > *{max-width:70ch}
+.col > .wide,.col > figure,.col > .tablewrap,.col > .grid2,.col > .phases{max-width:none}
+
+h2{
+  font-family:Archivo,sans-serif;font-weight:600;font-size:clamp(1.5rem,3vw,2rem);
+  line-height:1.14;letter-spacing:-.02em;margin:0 0 1.1rem;text-wrap:balance;
+}
+h3{
+  font-family:Archivo,sans-serif;font-weight:600;font-size:1.06rem;
+  letter-spacing:-.01em;margin:2.2rem 0 .65rem;
+}
+h4{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-weight:600;
+  font-size:.75rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--muted);margin:1.9rem 0 .6rem;
+}
+p{margin:0 0 1rem}
+.col ul,.col ol{margin:0 0 1rem;padding-left:1.25rem}
+.col li{margin-bottom:.4rem}
+.col li::marker{color:var(--muted)}
+strong{font-weight:600;color:var(--ink)}
+em.lede{font-style:normal;color:var(--ink-2)}
+a{color:var(--accent)}
+
+code{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.86em;
+  background:var(--surface-2);padding:.1em .35em;border-radius:2px;
+  color:var(--ink);word-break:break-word;
+}
+pre{
+  background:var(--surface);border:1px solid var(--line);border-left:2px solid var(--accent);
+  border-radius:2px;padding:1rem 1.1rem;overflow-x:auto;margin:0 0 1.2rem;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.8rem;line-height:1.65;
+}
+pre code{background:none;padding:0;font-size:inherit}
+.cmt{color:var(--muted)}
+
+/* callouts */
+.note{
+  background:var(--surface);border:1px solid var(--line);border-radius:3px;
+  padding:1rem 1.1rem;margin:0 0 1.2rem;font-size:.93rem;color:var(--ink-2);
+}
+.note.warn{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 32%,transparent)}
+.note.danger{background:var(--danger-soft);border-color:color-mix(in srgb,var(--danger) 32%,transparent)}
+.note.good{background:var(--good-soft);border-color:color-mix(in srgb,var(--good) 32%,transparent)}
+.note .lbl{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.68rem;
+  letter-spacing:.13em;text-transform:uppercase;font-weight:600;
+  margin-right:.6rem;color:var(--ink);
+}
+.note.warn .lbl{color:var(--warn)}
+.note.danger .lbl{color:var(--danger)}
+.note.good .lbl{color:var(--good)}
+.note p{margin:0 0 .6rem} .note p:last-child{margin:0}
+.note ul{margin:.5rem 0 0;padding-left:1.2rem}
+
+/* tables */
+.tablewrap{overflow-x:auto;margin:0 0 1.4rem;border:1px solid var(--line);border-radius:3px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.87rem;min-width:34rem}
+th,td{text-align:left;padding:.62rem .85rem;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.68rem;
+  letter-spacing:.11em;text-transform:uppercase;color:var(--muted);font-weight:600;
+  background:var(--surface-2);white-space:nowrap;
+}
+tbody tr:last-child td{border-bottom:none}
+td.mono,th.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.8rem;font-variant-numeric:tabular-nums}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.yes{color:var(--good);font-weight:600} .no{color:var(--danger);font-weight:600} .part{color:var(--warn);font-weight:600}
+
+/* figures */
+figure{margin:1.6rem 0 1.6rem;background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:1.4rem 1.2rem 1rem}
+figure svg{display:block;width:100%;max-width:100%;height:auto;color:var(--ink-2)}
+figcaption{
+  font-size:.83rem;color:var(--muted);margin-top:1rem;padding-top:.8rem;
+  border-top:1px solid var(--line);max-width:76ch;
+}
+figcaption b{color:var(--ink);font-weight:600}
+
+/* two-col grid */
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin:0 0 1.3rem}
+@media (max-width:760px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.pane{background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:1rem 1.1rem}
+.pane h5{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.7rem;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;margin:0 0 .6rem;color:var(--accent);
+}
+.pane ul{margin:0;padding-left:1.1rem;font-size:.88rem;color:var(--ink-2)}
+.pane li{margin-bottom:.35rem}
+
+/* phases */
+.phases{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);border-radius:3px;overflow:hidden;background:var(--surface);margin:0 0 1.3rem}
+.phase{display:grid;grid-template-columns:4.5rem minmax(0,1fr);gap:1rem;padding:.85rem 1rem;border-bottom:1px solid var(--line)}
+.phase:last-child{border-bottom:none}
+.phase .pid{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.78rem;font-weight:600;color:var(--accent);padding-top:.1rem}
+.phase .pbody{font-size:.9rem;color:var(--ink-2);min-width:0}
+.phase .pbody b{display:block;color:var(--ink);font-weight:600;margin-bottom:.15rem;font-size:.95rem}
+
+footer.end{border-top:1px solid var(--line);padding:2.5rem 0 4rem;color:var(--muted);font-size:.85rem}
+footer.end p{max-width:70ch}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Technical plan · pre-implementation</p>
+  <h1>Media Optimizer for Jellyfin</h1>
+  <p class="thesis">An in-interface file analyser and FFmpeg conversion engine, built as a server plugin. The encoding half is straightforward and safe to build. The <em class="lede">in-player UI half has no supported extension point in Jellyfin</em> and must be grafted onto the web client's private DOM — this document is mostly about being precise on which half is which.</p>
+  <div class="metastrip">
+    <span>target <b>Jellyfin 10.11.x</b></span>
+    <span>runtime <b>.NET 8.0</b></span>
+    <span>licence <b>GPLv3 (forced)</b></span>
+    <span>encoder <b>jellyfin-ffmpeg</b></span>
+    <span>status <b>plan only — no code written</b></span>
+  </div>
+</header>
+
+<section class="verdict" aria-label="Feasibility verdict">
+  <div class="vcard ok">
+    <h3>Clean to build</h3>
+    <ul>
+      <li>Server plugin, DI services, custom REST endpoints, admin config page</li>
+      <li>Full file analysis — every field you listed is already in Jellyfin's model or ffprobe</li>
+      <li>Persistent job queue, background worker, progress reporting, cancellation</li>
+      <li>All preset and custom conversion options via FFmpeg</li>
+      <li>Genuinely lossless strategies, with bit-exactness provable by hash</li>
+      <li>Safe output policies: sidecar, alternate version, verified replace with revert</li>
+    </ul>
+  </div>
+  <div class="vcard mid">
+    <h3>Works, but unsupported</h3>
+    <ul>
+      <li>The 3-dot menu item and the player button — DOM injection, no official API</li>
+      <li>Delivery depends on the third-party File&nbsp;Transformation plugin, or on patching <code>index.html</code> on disk</li>
+      <li>Selectors are private and <em class="lede">did move between 10.11.0 and current master</em> — expect per-release fixes</li>
+      <li>HDR10 survives a re-encode only if metadata is re-injected by hand</li>
+      <li>No way to coordinate CPU/GPU use with Jellyfin's own live transcoder</li>
+    </ul>
+  </div>
+  <div class="vcard no">
+    <h3>Not possible</h3>
+    <ul>
+      <li>Any UI on native clients — Android&nbsp;TV, Roku, Kodi, Swiftfin, the Android app's native player</li>
+      <li>Lossless shrinking of an already-lossy video stream. No tool does this; the UI must refuse it</li>
+      <li>Preserving Dolby&nbsp;Vision RPU through an FFmpeg re-encode</li>
+      <li>One plugin binary across Jellyfin minor versions — ABI is pinned</li>
+      <li>Replacing files in place on read-only or network-mounted libraries</li>
+    </ul>
+  </div>
+</section>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#s1"><i>01</i><span>What the research actually says</span></a></li>
+    <li><a href="#s2"><i>02</i><span>Architecture</span></a></li>
+    <li><a href="#s3"><i>03</i><span>Jellyfin integration points</span></a></li>
+    <li><a href="#s4"><i>04</i><span>The UI, and why it is a graft</span></a></li>
+    <li><a href="#s5"><i>05</i><span>Reading the current file</span></a></li>
+    <li><a href="#s6"><i>06</i><span>Planner and FFmpeg workflow</span></a></li>
+    <li><a href="#s7"><i>07</i><span>Lossless mode, honestly</span></a></li>
+    <li><a href="#s8"><i>08</i><span>Queue and background processing</span></a></li>
+    <li><a href="#s9"><i>09</i><span>File handling and safety</span></a></li>
+    <li><a href="#s10"><i>10</i><span>Risk register</span></a></li>
+    <li><a href="#s11"><i>11</i><span>Build and delivery phases</span></a></li>
+  </ol>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section class="section" id="s1">
+  <div class="rail"><span class="num">01</span><span class="tag">Findings</span></div>
+  <div class="col">
+    <h2>What the research actually says</h2>
+    <p>Two separate systems are in play, and they have opposite maturity levels. Getting this distinction right is the whole basis of the plan.</p>
+
+    <h4>The server plugin API is a real, supported API</h4>
+    <p>Jellyfin plugins are .NET 8/9 assemblies loaded into the server process with full access to the dependency injection container. A plugin can register hosted services, expose its own ASP.NET Core controllers on the main API surface, add scheduled tasks visible in the dashboard, and read or write library items. Everything on the conversion side of this feature lives here and is well-supported.</p>
+
+    <h4>The web client has no plugin API at all</h4>
+    <p>This is the finding that shapes the design. <code>jellyfin-web</code> is a webpack bundle; its modules are not exposed on <code>window</code>. The 3-dot menu is built in <code>src/components/itemContextMenu.js</code> by pushing entries onto a hard-coded <code>commands</code> array inside <code>getCommands()</code>, and the module's only export surface is <code>{ getCommands, show }</code> — reachable from other bundled modules, not from an injected script. There is no registry, no hook, no event to subscribe to.</p>
+    <p>So the only way to add the menu item and the player button is to observe the DOM and insert elements into markup the Jellyfin team considers private. That works — several popular plugins do exactly this — but it is unsupported by definition.</p>
+
+    <div class="note warn"><span class="lbl">Churn evidence</span>Between the <code>v10.11.0</code> tag and current <code>master</code>, <code>src/components/actionSheet/actionSheet.js</code> became <code>.ts</code>, and the video OSD moved out of <code>src/controllers/playback/video/</code> entirely. Both are files this plugin's UI depends on. Treat the selector layer as something you re-verify every Jellyfin minor release, not something you write once.</div>
+
+    <h4>Script delivery has one good option and one bad one</h4>
+    <p>The plugin needs a <code>&lt;script&gt;</code> tag in the served <code>index.html</code>. The clean route is <a href="https://github.com/IAmParadox27/jellyfin-plugin-file-transformation">IAmParadox27/jellyfin-plugin-file-transformation</a>, which intercepts web files as they are served and hands them to registered callbacks. Its current contract (v2.2.x) is a POST:</p>
+<pre><code>POST /FileTransformation/RegisterTransformation
+{ "id": "&lt;plugin guid&gt;",
+  "fileNamePattern": "index.html",
+  "transformationEndpoint": "/MediaOptimizer/Transform" }</code></pre>
+    <p>with an in-process alternative via its <code>IWebFileTransformationWriteService.AddTransformation(Guid, string, TransformFile)</code>. The fallback route — editing <code>jellyfin-web/index.html</code> on disk — is destructive, is undone by every server update, and fails outright in read-only or rootless containers. Support it as a last resort with a loud warning; do not make it the default.</p>
+
+    <h4>Prior art worth reading before writing anything</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Project</th><th>What it proves</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">mugurc/jellyfin-plugin-pre-transcode</td><td>The server half is viable end-to-end on 10.11: persistent queue, ffmpeg capability probing, three output policies, item repointing after container change. It has no custom in-app UI — configuration lives on the dashboard page. That gap is exactly what this plugin adds.</td></tr>
+          <tr><td class="mono">n00bcodr/Jellyfin-JavaScript-Injector</td><td>The File Transformation registration dance, plus the on-disk fallback, in production.</td></tr>
+          <tr><td class="mono">n00bcodr/Jellyfin-Enhanced</td><td>Large-scale DOM grafting into the player and menus; also a case study in per-version breakage — it dropped support for everything below 10.11.</td></tr>
+          <tr><td class="mono">IAmParadox27/jellyfin-plugin-pages</td><td>Adding whole routed pages to the web UI, if the modal is later outgrown.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section class="section" id="s2">
+  <div class="rail"><span class="num">02</span><span class="tag">Architecture</span></div>
+  <div class="col">
+    <h2>Architecture</h2>
+    <p>One assembly, <code>Jellyfin.Plugin.MediaOptimizer</code>, with a strict internal split: an <strong>encoding core</strong> that has no idea a UI exists, and a <strong>web graft</strong> that is pure delivery. If the graft breaks on a Jellyfin update, the core keeps working and the feature degrades to the dashboard page rather than dying.</p>
+
+<pre><code>Jellyfin.Plugin.MediaOptimizer/
+├─ Plugin.cs                  <span class="cmt">BasePlugin&lt;PluginConfiguration&gt;, IHasWebPages</span>
+├─ PluginServiceRegistrator.cs <span class="cmt">IPluginServiceRegistrator — DI wiring</span>
+├─ Api/
+│  ├─ MediaOptimizerController.cs   <span class="cmt">analyse / estimate / jobs  (authorized)</span>
+│  └─ ClientAssetController.cs      <span class="cmt">client.js + client.css (anonymous)</span>
+├─ Core/
+│  ├─ MediaProbeService.cs     <span class="cmt">IMediaEncoder → ffprobe → FileAnalysis</span>
+│  ├─ CapabilityService.cs     <span class="cmt">ffmpeg -encoders/-filters, cached at startup</span>
+│  ├─ EncodePlanner.cs         <span class="cmt">request → validated arg vector + warnings</span>
+│  ├─ SizeEstimator.cs         <span class="cmt">heuristic + optional sample-probe</span>
+│  └─ FfmpegRunner.cs          <span class="cmt">process, -progress parsing, cancellation</span>
+├─ Jobs/
+│  ├─ JobStore.cs              <span class="cmt">SQLite in DataFolderPath, restart-safe</span>
+│  ├─ JobQueueService.cs       <span class="cmt">BackgroundService worker(s)</span>
+│  └─ SweepTask.cs             <span class="cmt">IScheduledTask — cleanup, quarantine expiry</span>
+├─ Output/
+│  ├─ VerificationService.cs   <span class="cmt">the gate: probe, duration, streams, decode</span>
+│  ├─ OutputPolicyService.cs   <span class="cmt">sidecar | alternate version | replace</span>
+│  └─ LibraryReconciler.cs     <span class="cmt">repoint item, refresh, invalidate trickplay</span>
+└─ Web/
+   ├─ WebInjectionHostedService.cs  <span class="cmt">IHostedService — registers transform</span>
+   └─ Resources/  client.js · client.css · dashboard.html</code></pre>
+
+    <figure>
+      <svg viewBox="0 0 880 372" role="img" aria-label="The UI injection path: the plugin registers a transformation with the File Transformation plugin, which inserts a script tag into index.html; the browser loads that script, which calls the plugin's REST API and grafts buttons into private DOM containers.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <rect x="14" y="44" width="216" height="62" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="122" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Media Optimizer</text>
+        <text x="122" y="88" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72">server plugin (yours)</text>
+
+        <rect x="326" y="44" width="216" height="62" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 3"/>
+        <text x="434" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">File Transformation</text>
+        <text x="434" y="88" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72">third-party dependency</text>
+
+        <rect x="638" y="44" width="228" height="62" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="752" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">index.html</text>
+        <text x="752" y="88" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72">as served to the client</text>
+
+        <line x1="230" y1="75" x2="318" y2="75" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="274" y="32" text-anchor="middle" font-size="11" fill="currentColor">registers</text>
+        <text x="274" y="123" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">POST /RegisterTransformation</text>
+
+        <line x1="542" y1="75" x2="630" y2="75" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="586" y="32" text-anchor="middle" font-size="11" fill="currentColor">inserts</text>
+        <text x="586" y="123" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">&lt;script&gt; before &lt;/body&gt;</text>
+
+        <line x1="752" y1="106" x2="752" y2="176" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="762" y="147" font-size="11" fill="currentColor">loads client.js</text>
+
+        <rect x="638" y="178" width="228" height="62" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="752" y="204" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Browser DOM</text>
+        <text x="752" y="222" text-anchor="middle" font-size="11" fill="currentColor" opacity=".72">jellyfin-web runtime</text>
+
+        <polyline points="638,209 470,209 470,152 236,152" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="452" y="171" text-anchor="end" font-size="11" fill="currentColor">REST /MediaOptimizer/* (token auth)</text>
+
+        <line x1="752" y1="240" x2="752" y2="286" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#arA)"/>
+
+        <rect x="446" y="288" width="420" height="66" rx="3" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-dasharray="5 3"/>
+        <text x="656" y="312" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">MutationObserver grafts into private DOM</text>
+        <text x="656" y="330" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".92">.actionSheetScroller  ·  .videoOsdBottom .buttons</text>
+        <text x="656" y="346" text-anchor="middle" font-size="10.5" fill="var(--accent)" opacity=".92">no supported API — re-verify each release</text>
+      </svg>
+      <figcaption><b>Every hop but one is a documented interface.</b> Registration, script delivery and the REST calls are all stable contracts. The accented box is the single unsupported step, and it is deliberately isolated at the far end of the chain so that when it breaks, nothing upstream of it does.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="section" id="s3">
+  <div class="rail"><span class="num">03</span><span class="tag">Integration</span></div>
+  <div class="col">
+    <h2>Jellyfin integration points</h2>
+
+    <h4>Services consumed from DI</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Service</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">IMediaEncoder</td><td><code>EncoderPath</code> / <code>ProbePath</code> give the server's own jellyfin-ffmpeg binaries — never ship your own. <code>GetMediaInfo()</code> for a fresh probe; <code>SupportsEncoder/Decoder/Filter/Hwaccel</code> for capability gating.</td></tr>
+          <tr><td class="mono">ILibraryManager</td><td>Resolve item by id, read <code>MediaSources</code>, update <code>Path</code> after a container change, link alternate versions.</td></tr>
+          <tr><td class="mono">IServerConfigurationManager</td><td><code>GetEncodingOptions()</code> — hardware accel type, VAAPI/QSV device, thread count, transcode temp path, CRF defaults, and the <code>AllowHevcEncoding</code> / <code>AllowAv1Encoding</code> switches (both <em class="lede">false</em> by default).</td></tr>
+          <tr><td class="mono">ISessionManager</td><td>Refuse to touch a file that is currently being played, and optionally pause the queue while any session is active.</td></tr>
+          <tr><td class="mono">ILibraryMonitor</td><td><code>ReportFileSystemChanged</code> so the watcher does not fight the swap.</td></tr>
+          <tr><td class="mono">IProviderManager</td><td>Queue a metadata/image refresh after replacement.</td></tr>
+          <tr><td class="mono">IApplicationPaths</td><td>Temp and quarantine directories; plugin data folder for the job database.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>REST surface</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th class="mono">Method</th><th>Route</th><th>Auth</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">GET</td><td class="mono">/MediaOptimizer/Analyze/{itemId}</td><td>Default</td><td>Full current-file report</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/MediaOptimizer/Capabilities</td><td>Default</td><td>Encoders, filters, HW devices actually present</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/MediaOptimizer/Estimate</td><td>Default</td><td>Predicted size, saving, runtime, warnings</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/MediaOptimizer/Jobs</td><td class="no">Elevation</td><td>Enqueue a conversion</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/MediaOptimizer/Jobs</td><td>Default</td><td>Queue state and progress (poll 1–2 s)</td></tr>
+          <tr><td class="mono">DELETE</td><td class="mono">/MediaOptimizer/Jobs/{id}</td><td class="no">Elevation</td><td>Cancel, kill process, clean temp</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/MediaOptimizer/Jobs/{id}/Revert</td><td class="no">Elevation</td><td>Restore original from quarantine</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/MediaOptimizer/client.js</td><td>Anonymous</td><td>Injected UI bundle</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note danger"><span class="lbl">Non-negotiable</span>Every mutating endpoint carries <code>[Authorize(Policy = Policies.RequiresElevation)]</code>. This feature permanently rewrites and deletes files in someone's library; an ordinary user account must never be able to trigger it. The injected UI hides the convert controls for non-admins, but the server is what enforces it.</div>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section class="section" id="s4">
+  <div class="rail"><span class="num">04</span><span class="tag">Interface</span></div>
+  <div class="col">
+    <h2>The UI, and why it is a graft</h2>
+    <p>Three entry points, all created by observing the DOM. <code>client.js</code> waits for <code>window.ApiClient</code>, then runs a single <code>MutationObserver</code> on <code>document.body</code> with a debounce, matching on the containers below.</p>
+
+    <h4>Entry point 1 — the 3-dot / right-click menu</h4>
+    <p>Jellyfin renders it as a dialog with class <code>actionSheet</code> containing <code>.actionSheetScroller</code>. Append a button matching the surrounding markup exactly, and it inherits every theme in the ecosystem for free:</p>
+<pre><code>&lt;button is="emby-button" type="button"
+        class="listItem listItem-button actionSheetMenuItem"
+        data-id="mediaoptimizer"&gt;
+  &lt;span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent
+               material-icons tune" aria-hidden="true"&gt;&lt;/span&gt;
+  &lt;div class="listItemBody actionsheetListItemBody"&gt;
+    &lt;div class="listItemBodyText actionSheetItemText"&gt;Optimize file…&lt;/div&gt;
+  &lt;/div&gt;
+&lt;/button&gt;</code></pre>
+    <p>The item id has to be recovered from the element the sheet was opened against — read <code>data-id</code> from the nearest <code>[data-id]</code> ancestor of the click target and cache it on <code>pointerdown</code>, because the sheet itself does not carry it.</p>
+
+    <h4>Entry point 2 — the player button</h4>
+    <p>The OSD bar is <code>.videoOsdBottom .buttons</code>. Insert before <code>.btnVideoOsdSettings</code> so it lands next to Settings rather than at the end of the row:</p>
+<pre><code>&lt;button is="paper-icon-button-light" class="btnMediaOptimizer autoSize" title="Optimize file"&gt;
+  &lt;span class="largePaperIconButton material-icons tune" aria-hidden="true"&gt;&lt;/span&gt;
+&lt;/button&gt;</code></pre>
+    <div class="note"><span class="lbl">Detail</span><code>is="paper-icon-button-light"</code> is a customised built-in element, so it only upgrades when the parser creates it. Use <code>insertAdjacentHTML</code>, not <code>createElement</code> + <code>className</code>. If the custom element is undefined in a future version, a plain <code>&lt;button&gt;</code> carrying the same classes still renders correctly — degrade to that rather than throwing.</div>
+
+    <h4>Entry point 3 — the dashboard page</h4>
+    <p>A standard <code>IHasWebPages</code> config page holds global settings and the full queue view. This is the supported surface and the fallback: if injection fails entirely, the plugin is still fully usable from here. Say so in the plugin description.</p>
+
+    <h4>The dialog itself</h4>
+    <p>Rendered by the plugin, not by Jellyfin, into a full-screen overlay. Styling reuses Jellyfin's own CSS custom properties so user themes carry through, with everything else namespaced <code>.mopt-*</code> to avoid colliding with the host stylesheet. Two panes:</p>
+    <div class="grid2">
+      <div class="pane">
+        <h5>Left — current file</h5>
+        <ul>
+          <li>Container, file size, duration, overall bitrate</li>
+          <li>Video: codec + profile + level, resolution, bit depth, frame rate (and VFR flag), pixel format</li>
+          <li>Range: SDR / HDR10 / HLG / HDR10+ / Dolby Vision, with profile</li>
+          <li>Every audio track: codec, channels, layout, sample rate, bitrate, language, default flag</li>
+          <li>Subtitle and attachment inventory with per-stream sizes</li>
+          <li>Path, and whether the file sits on writable storage</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h5>Right — target</h5>
+        <ul>
+          <li>Strategy chips: Balanced · Maximum compression · Archive · <b>Lossless only</b> · Custom</li>
+          <li>Resolution: 720p / 1080p / 1440p / 4K / Original / Custom, always aspect-locked and never upscaling</li>
+          <li>Codec, bit depth, CRF-or-bitrate, encoder preset, HW toggle</li>
+          <li>Per-track audio: keep / re-encode / drop, with codec and bitrate</li>
+          <li>Subtitles, chapters, attachments: keep or drop</li>
+          <li>Output policy and the destructive-action confirmation</li>
+        </ul>
+      </div>
+    </div>
+    <p>A persistent estimate bar sits at the foot: predicted size, delta against current, predicted runtime, and any warnings the planner raised — recomputed on every change via <code>/Estimate</code>.</p>
+
+    <div class="note warn"><span class="lbl">Client coverage</span>This UI exists in browsers, in Jellyfin Media Player on desktop (which embeds the same web client), and in the Android app's web-view surfaces. It does <strong>not</strong> exist on Android TV, Roku, Kodi, tvOS, Swiftfin, or in the Android app's native ExoPlayer view — those are separate native codebases a server plugin cannot reach. On those clients the feature is dashboard-only, and there is no workaround short of writing each client yourself.</div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section class="section" id="s5">
+  <div class="rail"><span class="num">05</span><span class="tag">Analysis</span></div>
+  <div class="col">
+    <h2>Reading the current file</h2>
+    <p>Every field requested maps to something Jellyfin already models. Source of truth is a fresh <code>IMediaEncoder.GetMediaInfo()</code> probe — the library's cached values can be stale or incomplete — falling back to the cached <code>MediaSourceInfo</code> if the probe fails.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Panel field</th><th>Source</th><th>Reliability</th></tr></thead>
+        <tbody>
+          <tr><td>File size</td><td class="mono">MediaSourceInfo.Size</td><td class="yes">exact</td></tr>
+          <tr><td>Resolution</td><td class="mono">MediaStream.Width / .Height</td><td class="yes">exact</td></tr>
+          <tr><td>Video codec</td><td class="mono">.Codec, .Profile, .Level</td><td class="yes">exact</td></tr>
+          <tr><td>Bit depth</td><td class="mono">.BitDepth (or derive from .PixelFormat)</td><td class="yes">exact</td></tr>
+          <tr><td>Audio codec</td><td class="mono">.Codec, .Channels, .ChannelLayout, .SampleRate</td><td class="yes">exact</td></tr>
+          <tr><td>Frame rate</td><td class="mono">.RealFrameRate / .AverageFrameRate</td><td class="part">flag VFR when they differ</td></tr>
+          <tr><td>HDR / SDR</td><td class="mono">.VideoRange, .VideoRangeType, .ColorTransfer</td><td class="yes">exact</td></tr>
+          <tr><td>Container</td><td class="mono">MediaSourceInfo.Container</td><td class="yes">exact</td></tr>
+          <tr><td>Bitrate (per stream)</td><td class="mono">MediaStream.BitRate</td><td class="no">often absent in MKV</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note"><span class="lbl">The bitrate problem</span>Matroska frequently carries no per-stream bitrate tag, so <code>MediaStream.BitRate</code> comes back null on a large share of real libraries. Three-tier fallback: (1) the tag if present; (2) subtract known audio/subtitle bitrates from <code>Size × 8 / Duration</code> to derive video bitrate; (3) on demand, an exact count via <code>ffprobe -select_streams v:0 -show_entries packet=size</code>, which is accurate but reads the whole file — offer it as a "measure precisely" button, never on dialog open. Any derived figure renders with a <code>≈</code> so the number is never misrepresented as measured.</div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section class="section" id="s6">
+  <div class="rail"><span class="num">06</span><span class="tag">Encoding</span></div>
+  <div class="col">
+    <h2>Planner and FFmpeg workflow</h2>
+
+    <h4>Build your own argument vector</h4>
+    <p>Jellyfin's <code>EncodingHelper</code> is tempting and wrong for this. It is built around <code>EncodingJobInfo</code> for live streaming sessions — HLS segmenting, client device profiles, throttling, seek handling. Archival re-encoding shares almost none of that. Use <code>IMediaEncoder</code> for the binary paths and capability queries, and construct arguments directly as a <code>string[]</code> (never a concatenated shell string — paths contain quotes, spaces and Unicode).</p>
+
+    <h4>Capabilities are discovered, never assumed</h4>
+    <p>At startup, run <code>ffmpeg -hide_banner -encoders</code> and <code>-filters</code> once and cache the result alongside <code>SupportsEncoder()</code> checks. The UI then only offers what this server's build can actually do. jellyfin-ffmpeg builds vary by platform and distribution; hard-coding <code>libsvtav1</code> or <code>hevc_vaapi</code> availability guarantees failures on someone's machine.</p>
+
+    <h4>Representative command</h4>
+<pre><code>ffmpeg -nostdin -hide_banner -loglevel error -progress pipe:1 -nostats \
+  -i INPUT \
+  -map 0:v:0 -map 0:a:0 -map 0:s? -map 0:t? \
+  -c:v libx265 -crf 24 -preset medium -pix_fmt yuv420p10le \
+  -vf scale=-2:1080:flags=lanczos \
+  -fps_mode passthrough \
+  -x265-params "hdr10=1:repeat-headers=1:master-display=...:max-cll=..." \
+  -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc \
+  -c:a:0 libopus -b:a:0 256k -ac 6 \
+  -c:s copy -c:t copy -map_metadata 0 -map_chapters 0 \
+  -movflags +faststart \
+  TEMP_OUTPUT</code></pre>
+
+    <h4>Points that matter</h4>
+    <ul>
+      <li><strong>Scaling</strong> uses <code>-2</code> on the free axis to keep aspect and stay mod-2. Never upscale — clamp the target to the source and tell the user why.</li>
+      <li><strong>Frame rate</strong> defaults to <code>-fps_mode passthrough</code>. Forcing CFR on VFR content is a classic way to desync audio an hour in.</li>
+      <li><strong>Quality</strong> defaults to CRF/CQ, seeded from the server's own <code>H264Crf</code> (23) and <code>H265Crf</code> (28). Two-pass ABR is offered only for an explicit target file size, since that is the one case it wins.</li>
+      <li><strong>Progress</strong> comes from parsing <code>out_time_us</code>, <code>frame</code> and <code>speed</code> off <code>pipe:1</code>, against the probed duration. This gives a real percentage and a real ETA rather than a spinner.</li>
+      <li><strong>Hardware encoding</strong> reads <code>EncodingOptions.HardwareAccelerationType</code> and the VAAPI/QSV device. Opt-in, clearly labelled: much faster, meaningfully worse quality per bit than a CPU encode at the same size. Note that <code>AllowHevcEncoding</code> and <code>AllowAv1Encoding</code> both default to <em class="lede">false</em> server-side — the plugin should surface that rather than silently failing.</li>
+      <li><strong>Preservation</strong> is explicit: chapters, metadata, stream languages and dispositions, subtitles and font attachments all carried over by default. Silently dropping a user's fonts is a bug report waiting to happen.</li>
+    </ul>
+
+    <h4>HDR, honestly</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Source</th><th>Through an FFmpeg re-encode</th></tr></thead>
+        <tbody>
+          <tr><td>SDR</td><td class="yes">Fine. Nothing to preserve.</td></tr>
+          <tr><td>HLG</td><td class="yes">Survives on colour tags alone.</td></tr>
+          <tr><td>HDR10</td><td class="part">Only if mastering-display and MaxCLL/MaxFALL are re-injected via <code>-x265-params</code> and the colour tags are set explicitly. Read them from the source probe and pass them through — otherwise output plays washed-out. x265 is the reliable path here; AV1 encoders are weaker at it.</td></tr>
+          <tr><td>HDR10+</td><td class="part">Dynamic metadata needs a build with HDR10+ support and a JSON extract/inject round trip. Treat as out of scope for v1; warn that it degrades to base HDR10.</td></tr>
+          <tr><td>Dolby Vision</td><td class="no">The RPU does not survive. FFmpeg can parse DV metadata but cannot re-inject it on encode; that requires <code>dovi_tool</code> and a raw x265 pipeline. Profile 5 content re-encoded this way plays with badly wrong colour on DV displays.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note danger"><span class="lbl">Hard block</span>When <code>VideoRangeType</code> is DOVI, the planner refuses any video re-encode by default. It offers exactly two paths: keep the video stream untouched and optimise audio/streams only, or an explicit, separately-confirmed "convert to HDR10 and discard Dolby Vision". No silent degradation.</div>
+
+    <h4>Estimating output size</h4>
+    <p>CRF has no knowable output size in advance, which makes naive estimates useless. Two tiers: a heuristic table keyed on codec, resolution and CRF, displayed as a range with a stated ±25%; and an opt-in <strong>sample probe</strong> that encodes three 15-second segments taken from 25/50/75% of the runtime with the real settings, measures actual bitrate, and extrapolates. The probe costs about a minute and turns a guess into a defensible number.</p>
+  </div>
+</section>
+
+<!-- ============ 7 ============ -->
+<section class="section" id="s7">
+  <div class="rail"><span class="num">07</span><span class="tag">Lossless</span></div>
+  <div class="col">
+    <h2>Lossless mode, honestly</h2>
+    <p>Yes, a genuine lossless mode is possible — but almost none of its savings come from the video stream, and the single most common expectation about it is wrong. Getting this right in the UI is the difference between a trustworthy tool and one that quietly destroys libraries.</p>
+
+    <div class="note danger"><span class="lbl">The core misconception</span>You cannot losslessly re-compress an already-lossy video stream. Encoding an existing H.264/H.265 file with <code>-qp 0</code> or to FFV1 preserves the <em class="lede">decoded pixels</em>, and decoded pixels carry far more entropy than the compressed bitstream they came from. The result is typically <strong>3–20× larger</strong> than the input. No tool avoids this; it is information theory, not a missing feature. The plugin should not offer this option at all for lossy sources — offering it and letting the user discover the 40 GB output is a design failure.</div>
+
+    <p>What genuinely does reduce size with bit-exact output:</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Technique</th><th>Bit-exact</th><th class="num">Typical saving</th><th>When it actually helps</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>Drop unwanted streams</b><br><span style="color:var(--muted)">stream selection via <code>-map</code></span></td>
+            <td class="yes">yes</td><td class="num">10–50%</td>
+            <td>The big one. Remuxes routinely carry a 3–6 GB TrueHD 7.1 track, a commentary track, and five dubs. Keeping two tracks instead of eight is a huge, zero-quality-cost win on the streams you keep.</td>
+          </tr>
+          <tr>
+            <td><b>Lossless audio → FLAC</b><br><span style="color:var(--muted)">TrueHD · DTS-HD MA · LPCM</span></td>
+            <td class="yes">yes</td><td class="num">10–35%<br>50%+ from LPCM</td>
+            <td>FFmpeg decodes TrueHD and DTS-HD MA losslessly, so FLAC re-encoding is bit-exact on the PCM. Real savings, especially from LPCM Blu-ray rips.</td>
+          </tr>
+          <tr>
+            <td><b>Strip filler NAL units</b><br><span style="color:var(--muted)"><code>-bsf:v filter_units</code></span></td>
+            <td class="yes">yes</td><td class="num">0%, or 10–20%</td>
+            <td>All-or-nothing. Broadcast captures and some camera output pad to constant bitrate with filler data; removing it is free. On a normal encode there is no filler and this does nothing.</td>
+          </tr>
+          <tr>
+            <td><b>Remux container</b><br><span style="color:var(--muted)"><code>-c copy</code></span></td>
+            <td class="yes">yes</td><td class="num">&lt; 1%</td>
+            <td>Effectively never a size strategy — container overhead is noise. Worth doing for compatibility and <code>+faststart</code>, but the UI must not sell it as compression.</td>
+          </tr>
+          <tr>
+            <td><b>Lossless video re-encode</b><br><span style="color:var(--muted)">FFV1 · x265 <code>-x265-params lossless=1</code></span></td>
+            <td class="yes">yes</td><td class="num">40–70%<br><b>only</b> from a lossless source</td>
+            <td>Only unlocked when the source video codec is itself lossless or uncompressed — FFV1, HuffYUV, MagicYUV, v210, rawvideo. Genuinely excellent for camera and archival material; irrelevant to a normal movie library. Gate it on a detected source codec, greyed out with an explanation otherwise.</td>
+          </tr>
+          <tr>
+            <td><b>Drop attachments &amp; cover art</b></td>
+            <td class="yes">yes</td><td class="num">&lt; 1%</td>
+            <td>Marginal. Listed for completeness, and because embedded fonts matter for ASS subtitles — dropping them is a visible regression, not free.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note warn"><span class="lbl">Audio caveats</span>FLAC has no object-audio container, so converting a TrueHD Atmos or DTS:X track keeps the lossless channel bed and <strong>discards the height objects</strong>. The audio is bit-exact for the bed and unquestionably a downgrade for anyone with an Atmos setup. Label it that way. FLAC also caps at 8 channels, and FLAC-in-MP4 has poor client support — steer these conversions to Matroska.</div>
+
+    <div class="note good"><span class="lbl">Provable, not asserted</span>Because the lossless claim is falsifiable, prove it. After a lossless-mode job, hash the decoded output of each retained stream on both files and compare:<br>
+    <code>ffmpeg -i FILE -map 0:a:0 -f hash -hash md5 -</code><br>
+    Matching hashes are displayed in the job result as a verification badge. Any mismatch fails the job and leaves the original in place. This is a small amount of work and it is the feature's main credibility.</div>
+
+    <h4>What the UI must say</h4>
+    <p>Three clearly separated tiers, never blurred:</p>
+    <ul>
+      <li><strong>Lossless</strong> — output decodes bit-identically. Only the techniques above. Hash-verified.</li>
+      <li><strong>Visually lossless</strong> — CRF 16–18. Looks the same to most people at normal viewing distance. It is still lossy, still accumulates generation loss on repeat passes, and must never be labelled lossless.</li>
+      <li><strong>Lossy</strong> — everything else, with the estimated saving shown up front.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section class="section" id="s8">
+  <div class="rail"><span class="num">08</span><span class="tag">Queue</span></div>
+  <div class="col">
+    <h2>Queue and background processing</h2>
+    <p>A <code>BackgroundService</code> draining a persisted queue, with a default concurrency of 1. Jobs live in SQLite under <code>Plugin.Instance.DataFolderPath</code>, so a server restart mid-encode is recoverable: anything left in <code>Running</code> at startup is marked <code>Interrupted</code>, its temp file deleted, and it is either requeued or surfaced for the user to decide.</p>
+
+    <h4>Job lifecycle</h4>
+<pre><code>Queued → Probing → Encoding → Verifying → Applying → Completed
+                       ↓           ↓          ↓
+                   Cancelled    Failed    Failed (original untouched)</code></pre>
+
+    <ul>
+      <li><strong>Cancellation</strong> propagates a <code>CancellationToken</code> to the runner, which kills the FFmpeg process tree and removes the temp file. Cancelling is always safe because nothing has touched the original yet.</li>
+      <li><strong>Progress</strong> is polled by the dialog at 1–2 s. SSE is a nice-to-have; polling is the version that reliably survives reverse proxies.</li>
+      <li><strong>Scheduled task</strong> (<code>IScheduledTask</code>, visible in the dashboard) handles quarantine expiry, orphaned temp cleanup, and optional bulk sweeps over a library against a saved profile.</li>
+    </ul>
+
+    <div class="note warn"><span class="lbl">Resource contention — a real limitation</span>Jellyfin exposes no resource governor to plugins. A four-hour AV1 encode competes directly with live transcoding sessions, and nothing in the API will arbitrate. The available mitigations are all crude: keep concurrency at 1 by default, drop the process priority via <code>ProcessPriorityClass</code>, cap <code>-threads</code> below core count, and offer "pause the queue while anyone is watching" backed by <code>ISessionManager</code>. Be upfront in the plugin description that heavy encoding on the same box as playback will be felt.</div>
+  </div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section class="section" id="s9">
+  <div class="rail"><span class="num">09</span><span class="tag">Safety</span></div>
+  <div class="col">
+    <h2>File handling and safety</h2>
+    <p>This is the part that decides whether the plugin is trustworthy. The governing rule: <strong>the original file is not touched until a verified replacement exists on disk.</strong></p>
+
+    <figure>
+      <svg viewBox="0 0 880 250" role="img" aria-label="Job pipeline showing that encoding writes to a temporary file and passes a verification gate before any output policy touches the original; a failed verification discards the temp file and leaves the original untouched.">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ar2A" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <rect x="10" y="58" width="120" height="52" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="70" y="80" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">Preflight</text>
+        <text x="70" y="97" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">space · locks · idle</text>
+
+        <line x1="130" y1="84" x2="168" y2="84" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+        <rect x="170" y="58" width="140" height="52" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="240" y="80" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">FFmpeg</text>
+        <text x="240" y="97" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">writes temp file</text>
+
+        <line x1="310" y1="84" x2="348" y2="84" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+        <rect x="350" y="50" width="152" height="68" rx="3" fill="none" stroke="var(--accent)" stroke-width="2"/>
+        <text x="426" y="74" text-anchor="middle" font-size="12" font-weight="600" fill="var(--accent)">Verification gate</text>
+        <text x="426" y="90" text-anchor="middle" font-size="10" fill="var(--accent)" opacity=".9">probe · duration · streams</text>
+        <text x="426" y="105" text-anchor="middle" font-size="10" fill="var(--accent)" opacity=".9">decode scan · hash</text>
+
+        <polyline points="502,70 556,70 556,44" fill="none" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#ar2A)"/>
+        <text x="512" y="62" font-size="10.5" fill="var(--accent)" font-weight="600">pass</text>
+
+        <rect x="470" y="0" width="172" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="556" y="18" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">Output policy</text>
+        <text x="556" y="33" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">sidecar · alt version · replace</text>
+
+        <line x1="642" y1="21" x2="700" y2="21" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <rect x="702" y="0" width="168" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="786" y="18" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">Library reconcile</text>
+        <text x="786" y="33" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">repoint · refresh · trickplay</text>
+
+        <polyline points="502,98 556,98 556,140" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <text x="512" y="120" font-size="10.5" fill="currentColor" font-weight="600">fail</text>
+
+        <rect x="470" y="142" width="172" height="42" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text x="556" y="160" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">Discard temp</text>
+        <text x="556" y="175" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">job marked failed</text>
+
+        <line x1="240" y1="110" x2="240" y2="196" stroke="currentColor" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <rect x="140" y="198" width="420" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3"/>
+        <text x="350" y="223" text-anchor="middle" font-size="11.5" fill="currentColor">Original file — untouched everywhere left of the gate</text>
+      </svg>
+      <figcaption><b>The gate is the whole safety story.</b> Cancellation, crashes, power loss and failed encodes all land on the left of it, where the only casualty is a temp file. Only a verified output reaches a policy that can modify the library — and even then, "replace" moves the original to quarantine rather than deleting it.</figcaption>
+    </figure>
+
+    <h4>Preflight, before a single frame is encoded</h4>
+    <ul>
+      <li>Free space on the temp volume ≥ estimated output × 1.5</li>
+      <li>Source mtime stable over a configurable window — never grab an in-progress download</li>
+      <li>No active playback session on this item (<code>ISessionManager</code>)</li>
+      <li>Target directory writable; skip if the library is on a read-only mount</li>
+      <li>Item is a plain single file — exclude ISO, BDMV/VIDEO_TS folder rips, <code>.strm</code>, and multi-part stacked versions</li>
+    </ul>
+
+    <h4>The verification gate</h4>
+    <ul>
+      <li>Output non-zero and ffprobe-parseable</li>
+      <li>Duration within ±0.5% or ±1 s of source</li>
+      <li>Expected stream count and types present</li>
+      <li>Full decode scan (<code>-v error -f null -</code>) for corruption — optional, doubles the job time, on by default for replace policy</li>
+      <li>For lossless mode, matching per-stream decoded hashes</li>
+    </ul>
+
+    <h4>Output policies</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Policy</th><th>Behaviour</th><th>Risk</th></tr></thead>
+        <tbody>
+          <tr><td><b>Sidecar</b> <span style="color:var(--muted)">(default)</span></td><td>Writes to a separate directory. Original never modified.</td><td class="yes">none</td></tr>
+          <tr><td><b>Alternate version</b></td><td>Links the new file to the same item via <code>LinkedAlternateVersions</code>, so both appear under one entry and the user picks at playback.</td><td class="part">low — uses more disk, not less</td></tr>
+          <tr><td><b>Replace</b></td><td>Atomic move into place, original moved to a quarantine folder with a retention period, deleted only after it expires. Revert available until then.</td><td class="no">destructive — admin-only, explicit confirm</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Library reconciliation after a replace</h4>
+    <div class="note danger"><span class="lbl">Easy to get catastrophically wrong</span>If the container changes, the file extension changes, so the path changes. Update <code>BaseItem.Path</code> and call <code>ILibraryManager.UpdateItemAsync</code> on the <em class="lede">existing</em> item — never let a rescan create a new one. Watched state, playback position, favourites, playlist and collection membership, and user ratings are all keyed on the item's <code>Id</code>. Letting the old item be removed and a new one created silently wipes every one of those, across every user on the server, with no undo. Also rename <code>.nfo</code>, artwork and external subtitle sidecars alongside; call <code>ILibraryMonitor.ReportFileSystemChanged</code> so the watcher does not race the swap; and invalidate trickplay tiles and chapter images, which are now stale.</div>
+
+    <h4>Atomicity</h4>
+    <p>Prefer <code>File.Move</code> within one filesystem. If temp and library are on different volumes — common in Docker — that is a copy, not an atomic rename, so copy to a hidden sibling file in the target directory first, flush, then rename within the directory. Never leave a window where neither file is complete.</p>
+  </div>
+</section>
+
+<!-- ============ 10 ============ -->
+<section class="section" id="s10">
+  <div class="rail"><span class="num">10</span><span class="tag">Risks</span></div>
+  <div class="col">
+    <h2>Risk register</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Risk</th><th>Severity</th><th>Position</th></tr></thead>
+        <tbody>
+          <tr><td>Web client updates break the injected selectors</td><td class="part">high likelihood</td><td>Accepted and designed around. Feature-detect everything, fail silently to dashboard-only, pin a tested Jellyfin range, expect a patch release per Jellyfin minor.</td></tr>
+          <tr><td>Native clients get no UI</td><td class="no">unfixable</td><td>Document it plainly. A server plugin cannot reach Roku, Kodi, Android TV or Swiftfin.</td></tr>
+          <tr><td>File Transformation not installed</td><td class="part">medium</td><td>Detect at startup, surface a clear dashboard warning, offer the on-disk fallback as an explicit opt-in with its drawbacks spelled out.</td></tr>
+          <tr><td>Data loss on replace</td><td class="no">catastrophic</td><td>Verification gate, quarantine with retention, revert endpoint, sidecar as the default policy. Replace is never the out-of-box behaviour.</td></tr>
+          <tr><td>Watched state / playlists wiped by rescan</td><td class="no">catastrophic, silent</td><td>Repoint the existing item; never allow item recreation. Worth an integration test of its own.</td></tr>
+          <tr><td>Dolby Vision destroyed</td><td class="no">high</td><td>Hard block by default, opt-in HDR10 downgrade with separate confirmation.</td></tr>
+          <tr><td>Users expect lossless video shrinking</td><td class="part">certain</td><td>Do not offer the option for lossy sources; explain it in the UI where they look for it.</td></tr>
+          <tr><td>Generation loss from repeated passes</td><td class="part">medium</td><td>Record optimisation history per item; warn when re-encoding something the plugin already encoded.</td></tr>
+          <tr><td>Encoding starves live playback</td><td class="part">medium</td><td>Concurrency 1, low process priority, pause-while-watching option. No real fix available.</td></tr>
+          <tr><td>Plugin ABI pinned per Jellyfin minor</td><td class="part">certain</td><td>Multi-ABI build matrix via jprm; one release per supported server version.</td></tr>
+          <tr><td>GPLv3 by linkage</td><td>fixed</td><td>Linking <code>Jellyfin.Controller</code> forces GPLv3 on the plugin. Not a problem, but not optional either.</td></tr>
+          <tr><td>Hardware plans are host-specific</td><td class="part">low</td><td>Saved profiles record the encoder; re-validate against <code>CapabilityService</code> and fall back to CPU rather than failing the job.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 11 ============ -->
+<section class="section" id="s11">
+  <div class="rail"><span class="num">11</span><span class="tag">Delivery</span></div>
+  <div class="col">
+    <h2>Build and delivery phases</h2>
+    <p>Ordered so that something honest and useful exists early, and every destructive capability arrives only after the machinery that makes it safe.</p>
+
+    <div class="phases">
+      <div class="phase"><span class="pid">M0</span><div class="pbody"><b>Skeleton</b>Project targeting <code>net8.0</code>, <code>Jellyfin.Controller</code> 10.11.x with <code>&lt;ExcludeAssets&gt;runtime&lt;/ExcludeAssets&gt;</code>, plugin GUID, config class, dashboard page, <code>build.yaml</code> + jprm packaging, GitHub Actions release into a manifest repo.</div></div>
+      <div class="phase"><span class="pid">M1</span><div class="pbody"><b>Analysis, read-only</b>Probe service, <code>/Analyze</code> and <code>/Capabilities</code>. Injection pipeline and the info dialog. Ships as a genuinely useful "what is this file" tool with zero risk attached — and proves the fragile layer works before anything depends on it.</div></div>
+      <div class="phase"><span class="pid">M2</span><div class="pbody"><b>Encoding core</b>Planner, runner with progress, job store, background worker, verification gate. Sidecar output only. Presets and custom options wired to the dialog.</div></div>
+      <div class="phase"><span class="pid">M3</span><div class="pbody"><b>Lossless mode</b>Stream selection, lossless-audio detection and FLAC path, filler stripping, source-codec gating for lossless video, hash verification badge.</div></div>
+      <div class="phase"><span class="pid">M4</span><div class="pbody"><b>Destructive policies</b>Alternate version linking, replace with quarantine and revert, library reconciliation, sidecar and trickplay handling. Only now, on top of a proven gate.</div></div>
+      <div class="phase"><span class="pid">M5</span><div class="pbody"><b>Polish</b>Sample-probe estimates, hardware encoder support, saved profiles, bulk sweep task, HDR10 metadata pass-through, per-item optimisation history.</div></div>
+    </div>
+
+    <div class="note"><span class="lbl">Open decisions for you</span>
+      <ul>
+        <li>Take a hard dependency on File Transformation, or ship the on-disk fallback too? The fallback widens compatibility and adds the plugin's only real footgun.</li>
+        <li>Is replace-in-place in scope at all for v1, or is sidecar plus alternate-version enough? Dropping it removes most of the catastrophic risk surface.</li>
+        <li>Should non-admin users see the analysis dialog read-only, or nothing at all?</li>
+        <li>Which Jellyfin versions to support — 10.11.x only is much cheaper than 10.10 + 10.11 given the DOM churn.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer class="end">
+  <p>Plan only — no plugin code has been written. Findings verified against jellyfin-web at <code>v10.11.0</code> and current <code>master</code>, jellyfin-server <code>master</code> (<code>IMediaEncoder</code>, <code>MediaStream</code>, <code>EncodingOptions</code>), and jellyfin-plugin-file-transformation <code>v2.2.0.0</code>. Current Jellyfin stable at time of writing: 10.11.11.</p>
+</footer>
+
+</div>
