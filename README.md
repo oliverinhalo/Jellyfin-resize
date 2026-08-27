@@ -14,9 +14,9 @@ Add this as a plugin repository in Jellyfin (**Dashboard → Plugins → Reposit
 https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/manifest.json
 ```
 
-Then install **Media Optimizer** from **Dashboard → Plugins → Catalog** and restart Jellyfin.
-Full step-by-step, including the extra plugin needed for the in-app buttons, is
-[below](#installing).
+Then go to **Dashboard → Plugins**, click the **Available** filter chip, install
+**Media Optimizer**, and restart Jellyfin. Full step-by-step, including the extra plugin needed
+for the in-app buttons, is [below](#installing).
 
 ---
 
@@ -110,7 +110,14 @@ Press **Save**. If Jellyfin says the repository is invalid, the URL is wrong —
 
 ### 2. Install the plugin
 
-**Dashboard → Plugins → Catalog** → find **Media Optimizer** under *General* → **Install**.
+Go to **Dashboard → Plugins** and click the **Available** chip at the top of the page.
+
+> **This is the step everyone gets stuck on.** In Jellyfin 10.11 the plugins page defaults to the
+> **Installed** filter, so a newly added repository looks like it did nothing. Nothing appears
+> until you switch to **Available** (or **All**). There is no separate "Catalog" page any more —
+> that was 10.10 and earlier.
+
+Find **Media Optimizer** (category *General*) and click **Install**.
 
 ### 3. Restart Jellyfin
 
@@ -127,8 +134,8 @@ client. Repeat step 1 with:
 | Repository Name | `IAmParadox` |
 | Repository URL | `https://www.iamparadox.dev/jellyfin/plugins/manifest.json` |
 
-Install **File Transformation** from the catalog, then restart Jellyfin again. No configuration
-needed.
+Then, again under **Dashboard → Plugins** with the **Available** chip selected, install
+**File Transformation** and restart Jellyfin again. No configuration needed.
 
 **This step is optional.** Without it everything still works from
 **Dashboard → Media Optimizer** — you just do not get the in-app buttons.
@@ -147,6 +154,18 @@ needed.
   safety options.
 - **In the web client** (with File Transformation installed) — "Optimize file…" in any movie or
   episode's 3-dot menu, and a tune icon in the video player.
+
+### If a plugin does not appear
+
+1. **Click the "Available" chip.** The page defaults to *Installed*. This is nearly always it.
+2. **Hard-refresh the browser** (Ctrl+Shift+R), then restart Jellyfin. Manifests are cached.
+3. **Check the server can reach the URL.** The manifest is fetched by the *Jellyfin server*, not
+   your browser, so pasting the URL into your own browser proves nothing. Look in
+   **Dashboard → Logs** for errors mentioning the repository host. A server without outbound
+   HTTPS, or behind a proxy, gets nothing and reports nothing in the UI.
+4. **Check your Jellyfin version.** Jellyfin only offers a plugin whose `targetAbi` is less than
+   or equal to the server version. Media Optimizer targets `10.11.0.0`, so it needs 10.11.0 or
+   newer and will not appear at all on 10.10.x.
 
 ### Updating
 
