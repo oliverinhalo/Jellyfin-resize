@@ -10,6 +10,8 @@
 (function () {
     'use strict';
 
+    // Publish the API before the re-entry guard: when File Transformation has already injected
+    // this script, the dashboard page's own <script> tag is a no-op but must still find the API.
     if (window.__mediaOptimizerLoaded) { return; }
     window.__mediaOptimizerLoaded = true;
 
@@ -984,19 +986,58 @@
 
     // ---------------------------------------------------------------- bootstrap
 
+    var startAttempts = 0;
+
     function start() {
         if (!apiClient()) {
+            // ApiClient appears a little after the bundle on a cold load. Give up after ~30s
+            // rather than polling forever, and say so, so the failure is visible in the console.
+            if (++startAttempts > 60) {
+                console.warn('[MediaOptimizer] ApiClient never appeared; in-app UI disabled. '
+                    + 'Use Dashboard \u2192 Media Optimizer.');
+                return;
+            }
             setTimeout(start, 500);
             return;
         }
-        var style = document.createElement('style');
-        style.textContent = CSS;
-        document.head.appendChild(style);
 
-        observer.observe(document.body, { childList: true, subtree: true });
-        scan();
+        try {
+            if (!document.getElementById('mopt-styles')) {
+                var style = document.createElement('style');
+                style.id = 'mopt-styles';
+                style.textContent = CSS;
+                document.head.appendChild(style);
+            }
+        } catch (e) {
+            warnOnce('style', 'Could not inject styles: ' + e.message);
+        }
+
+        // A failure to observe or graft must not stop window.MediaOptimizer.open from working.
+        try {
+            observer.observe(document.body, { childList: true, subtree: true });
+            scan();
+        } catch (e) {
+            warnOnce('observe', 'DOM integration unavailable: ' + e.message
+                + ' The dashboard page is unaffected.');
+        }
+
         console.log('[MediaOptimizer] client ready');
     }
+
+    // Exposed so the dashboard page can open the same dialog for an item the user picked there.
+    // Without this the plugin would be unusable whenever DOM injection fails, which is the whole
+    // reason the dashboard path exists.
+    window.MediaOptimizer = {
+        open: openDialog,
+        ready: true,
+        // Lets the dashboard tell "the script never loaded" apart from "the graft found no anchor".
+        grafted: function () {
+            return {
+                menu: !!document.querySelector('[data-id="mediaoptimizer"]'),
+                player: !!document.querySelector('.btnMediaOptimizer')
+            };
+        }
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);

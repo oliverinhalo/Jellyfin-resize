@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-1.0.0.0}"
+VERSION="${1:-$(grep -oP '^version:\s*"\K[^"]+' build.yaml)}"
 BRANCH="${2:-$(git rev-parse --abbrev-ref HEAD)}"
 REPO="oliverinhalo/Jellyfin-resize"
 ZIP="dist/media-optimizer_${VERSION}.zip"
@@ -27,13 +27,35 @@ TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 SOURCE_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${ZIP}"
 
 python3 - "$VERSION" "$CHECKSUM" "$TIMESTAMP" "$SOURCE_URL" <<'PY'
-import json, sys, os
+import json, sys, os, re
 
 version, checksum, timestamp, source_url = sys.argv[1:5]
 
+# Take the changelog for this version straight out of build.yaml so the manifest cannot
+# describe something different from what was actually built.
+CHANGELOG = "See the repository for details."
+try:
+    text = open("build.yaml").read()
+    block = re.search(r"^changelog:\s*\|\s*\n((?:[ \t]+.*\n?)+)", text, re.M)
+    if block:
+        lines = [l.strip() for l in block.group(1).splitlines()]
+        collected, capturing = [], False
+        for line in lines:
+            if line.startswith("### "):
+                if capturing:
+                    break
+                capturing = line[4:].strip() == version
+                continue
+            if capturing and line:
+                collected.append(line)
+        if collected:
+            CHANGELOG = "\n".join(collected)
+except OSError:
+    pass
+
 entry = {
     "version": version,
-    "changelog": "Initial release.",
+    "changelog": CHANGELOG,
     "targetAbi": "10.11.0.0",
     "sourceUrl": source_url,
     "checksum": checksum,

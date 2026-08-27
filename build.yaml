@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.0.0.0"
+version: "1.1.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,5 +16,12 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.1.0.0
+  - Conversions can now be started from the dashboard page, so the plugin is fully usable
+    without the in-app buttons.
+  - Fixed the in-app buttons never appearing: File Transformation 2.5 added admin auth to its
+    HTTP registration endpoint, so registration now goes through its in-process service instead.
+  - Added a status panel that reports each part of the plugin separately.
+
   ### 1.0.0.0
   - Initial release.

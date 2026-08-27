@@ -43,8 +43,9 @@ These are properties of Jellyfin and of video compression, not bugs.
 - **The in-app dialog only exists in browser-based clients.** Jellyfin has no plugin API for its
   web client, so the menu entry and player button are grafted onto private DOM. They appear in
   browsers, in Jellyfin Media Player, and in the Android app's web views. They do **not** appear on
-  Android TV, Roku, Kodi, tvOS or Swiftfin, and no server plugin can put them there. Everything is
-  also available from **Dashboard → Media Optimizer**, which works everywhere.
+  Android TV, Roku, Kodi, tvOS or Swiftfin, and no server plugin can put them there. **Dashboard →
+  Media Optimizer** provides the same conversion dialog behind a library search, so nothing is
+  lost apart from the convenience of starting from the item itself.
 - **The DOM hooks will break.** Between jellyfin-web `v10.11.0` and current `master`,
   `actionSheet.js` became `.ts` and the video OSD moved directories. Both are files this depends
   on. Every hook fails closed and logs once; expect to need a plugin update after a Jellyfin
@@ -137,8 +138,9 @@ client. Repeat step 1 with:
 Then, again under **Dashboard → Plugins** with the **Available** chip selected, install
 **File Transformation** and restart Jellyfin again. No configuration needed.
 
-**This step is optional.** Without it everything still works from
-**Dashboard → Media Optimizer** — you just do not get the in-app buttons.
+**This step is optional.** Without it you lose only the in-app buttons: **Dashboard → Media
+Optimizer** has its own file picker, so you can search your library, open the same conversion
+dialog and run everything from there.
 
 ### Requirements
 
@@ -149,11 +151,21 @@ Then, again under **Dashboard → Plugins** with the **Available** chip selected
 
 ### Where things are afterwards
 
-- **Dashboard → Media Optimizer** — the queue: progress, history, cancel, restore an original.
+- **Dashboard → Media Optimizer** — a status panel showing whether each part of the plugin is
+  working, a library search for starting conversions, and the queue with progress, history,
+  cancel and restore.
 - **Dashboard → Plugins → Media Optimizer** — settings: output policy, directories, concurrency,
   safety options.
 - **In the web client** (with File Transformation installed) — "Optimize file…" in any movie or
   episode's 3-dot menu, and a tune icon in the video player.
+
+### Is anything actually working?
+
+**Dashboard → Media Optimizer** opens with a status panel that checks each part independently:
+whether the plugin loaded, whether FFmpeg was found and what it can encode, whether the queue is
+readable, whether the in-app injection registered, and whether your account may start
+conversions. A failure in one is reported on its own line with what to do about it, and never
+hides the others. If that page renders at all, the plugin is loaded and its API is routed.
 
 ### If a plugin does not appear
 

@@ -9,6 +9,9 @@ using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
 using Jellyfin.Plugin.MediaOptimizer.Output;
+using Jellyfin.Data.Enums;
+using Jellyfin.Database.Implementations.Enums;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -71,6 +74,100 @@ public class MediaOptimizerController : ControllerBase
     }
 
     private bool IsAdmin => User.IsInRole("Administrator");
+
+    /// <summary>
+    /// Finds convertible library items, so a conversion can be started from the dashboard
+    /// without depending on the injected in-app UI.
+    /// </summary>
+    /// <param name="query">Optional search text. Empty returns the most recently added items.</param>
+    /// <param name="limit">Maximum results.</param>
+    /// <returns>Matching movies and episodes.</returns>
+    [HttpGet("Library/Search")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public ActionResult<IReadOnlyList<LibraryItemSummary>> SearchLibrary(
+        [FromQuery] string? query,
+        [FromQuery] int limit = 40)
+    {
+        var itemQuery = new InternalItemsQuery
+        {
+            IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.Video],
+            Recursive = true,
+            IsVirtualItem = false,
+            Limit = Math.Clamp(limit, 1, 200),
+            OrderBy = [(ItemSortBy.DateCreated, SortOrder.Descending)]
+        };
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            itemQuery.SearchTerm = query.Trim();
+        }
+
+        var results = new List<LibraryItemSummary>();
+
+        foreach (var item in _libraryManager.GetItemList(itemQuery))
+        {
+            if (string.IsNullOrEmpty(item.Path))
+            {
+                continue;
+            }
+
+            results.Add(new LibraryItemSummary
+            {
+                Id = item.Id,
+                Name = BuildDisplayName(item),
+                Type = item.GetType().Name,
+                Path = item.Path,
+                SizeBytes = TryGetSize(item.Path),
+                RunTimeTicks = item.RunTimeTicks,
+                HasActiveJob = _store.HasActiveJobForItem(item.Id)
+            });
+        }
+
+        return Ok(results);
+    }
+
+    /// <summary>Builds a name that identifies an episode, not just its title.</summary>
+    /// <param name="item">The library item.</param>
+    /// <returns>A display name.</returns>
+    private static string BuildDisplayName(BaseItem item)
+    {
+        if (item is MediaBrowser.Controller.Entities.TV.Episode episode)
+        {
+            var series = episode.SeriesName;
+            var season = episode.ParentIndexNumber;
+            var number = episode.IndexNumber;
+
+            if (!string.IsNullOrEmpty(series) && season is not null && number is not null)
+            {
+                return FormattableString.Invariant($"{series} — S{season:00}E{number:00} — {episode.Name}");
+            }
+
+            if (!string.IsNullOrEmpty(series))
+            {
+                return FormattableString.Invariant($"{series} — {episode.Name}");
+            }
+        }
+
+        if (item.ProductionYear is not null)
+        {
+            return FormattableString.Invariant($"{item.Name} ({item.ProductionYear})");
+        }
+
+        return item.Name ?? "Untitled";
+    }
+
+    private static long? TryGetSize(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? info.Length : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>Describes a file as it currently exists on disk.</summary>
     /// <param name="itemId">The library item.</param>

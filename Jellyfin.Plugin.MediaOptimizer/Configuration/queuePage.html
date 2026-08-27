@@ -5,15 +5,52 @@
 <div id="MediaOptimizerQueuePage" data-role="page" class="page type-interior pluginConfigurationPage">
   <div data-role="content">
     <div class="content-primary">
+
       <div class="verticalSection">
-        <h2 class="sectionTitle">Conversion queue</h2>
-        <div id="moptCapabilities" class="fieldDescription" style="margin-bottom:1.5em"></div>
+        <h2 class="sectionTitle">Status</h2>
+        <div id="moptDiag">Checking…</div>
+      </div>
+
+      <div class="verticalSection">
+        <h2 class="sectionTitle">Convert a file</h2>
+        <div class="fieldDescription" style="margin-bottom:1em">
+          Pick any movie or episode below. This works whether or not the in-app buttons are
+          available, so the plugin is fully usable from here alone.
+        </div>
+        <div class="inputContainer">
+          <input is="emby-input" type="text" id="moptSearch" placeholder="Search your library, or leave empty for recently added" />
+        </div>
+        <div id="moptResults"></div>
+      </div>
+
+      <div class="verticalSection">
+        <h2 class="sectionTitle">Queue and history</h2>
         <div id="moptJobs"></div>
       </div>
+
     </div>
   </div>
 
   <style>
+    .moptCheck{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid rgba(128,128,128,.22)}
+    .moptCheck:last-child{border-bottom:0}
+    .moptDot{flex:0 0 auto;width:10px;height:10px;border-radius:50%;margin-top:6px}
+    .moptDot.ok{background:#4caf50}
+    .moptDot.warning{background:#e6aa3c}
+    .moptDot.failed{background:#e05a50}
+    .moptDot.disabled{background:#8a8a8a}
+    .moptCheckBody{min-width:0}
+    .moptCheckName{font-weight:600}
+    .moptCheckDetail{font-size:13px;opacity:.75;margin-top:2px}
+    .moptBanner{padding:10px 13px;border-radius:5px;margin-bottom:12px;font-weight:600}
+    .moptBanner.ok{background:rgba(76,175,80,.16)}
+    .moptBanner.warning{background:rgba(230,170,60,.16)}
+    .moptBanner.failed{background:rgba(224,90,80,.18)}
+    .moptItem{display:flex;gap:12px;align-items:center;justify-content:space-between;
+      border:1px solid rgba(128,128,128,.3);border-radius:5px;padding:9px 12px;margin-bottom:7px}
+    .moptItemBody{min-width:0}
+    .moptItemName{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .moptItemMeta{font-size:12.5px;opacity:.68;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .moptJob{border:1px solid rgba(128,128,128,.35);border-radius:5px;padding:12px 14px;margin-bottom:10px}
     .moptJobHead{display:flex;gap:12px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
     .moptJobName{font-weight:600}
@@ -22,15 +59,15 @@
     .moptBar{height:5px;border-radius:3px;background:rgba(128,128,128,.3);overflow:hidden;margin-top:8px}
     .moptBar i{display:block;height:100%;background:#00a4dc;transition:width .3s ease}
     .moptActions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
-    .moptEmpty{opacity:.65;padding:22px 0}
-    .moptErr{color:#f09b93;margin-top:5px;font-size:13px}
-    .moptOk{color:#7fe0b0}
+    .moptEmpty{opacity:.65;padding:18px 0}
+    .moptErr{color:#e05a50;margin-top:5px;font-size:13px}
   </style>
 
   <script type="text/javascript">
     (function () {
       var page = document.querySelector('#MediaOptimizerQueuePage');
       var timer = null;
+      var searchTimer = null;
 
       function bytes(n) {
         if (n === null || n === undefined) { return '—'; }
@@ -48,48 +85,158 @@
         });
       }
 
-      function renderCapabilities() {
-        api('GET', 'MediaOptimizer/Capabilities').then(function (c) {
-          var host = page.querySelector('#moptCapabilities');
-          var video = (c.VideoEncoders || []).map(function (e) { return e.Name; }).join(', ') || 'none detected';
-          host.textContent = 'FFmpeg ' + (c.FfmpegVersion || 'unknown') + ' at ' + (c.FfmpegPath || '?') +
-            ' · video encoders: ' + video +
-            ' · hardware acceleration: ' + (c.HardwareAcceleration || 'none');
-        }).catch(function () {
-          page.querySelector('#moptCapabilities').textContent = 'Could not read FFmpeg capabilities.';
+      function el(tag, cls, text) {
+        var n = document.createElement(tag);
+        if (cls) { n.className = cls; }
+        if (text !== undefined && text !== null) { n.textContent = String(text); }
+        return n;
+      }
+
+      // ---- status -----------------------------------------------------------------------
+
+      function renderDiagnostics() {
+        var host = page.querySelector('#moptDiag');
+        api('GET', 'MediaOptimizer/Diagnostics').then(function (d) {
+          host.innerHTML = '';
+
+          var level = String(d.Overall || 'Ok').toLowerCase();
+          var banner = el('div', 'moptBanner ' + level, d.Summary);
+          host.appendChild(banner);
+
+          (d.Checks || []).forEach(function (c) {
+            var row = el('div', 'moptCheck');
+            row.appendChild(el('span', 'moptDot ' + String(c.Status).toLowerCase()));
+            var body = el('div', 'moptCheckBody');
+            body.appendChild(el('div', 'moptCheckName', c.Name));
+            body.appendChild(el('div', 'moptCheckDetail', c.Detail));
+            row.appendChild(body);
+            host.appendChild(row);
+          });
+
+          var foot = el('div', 'moptCheckDetail');
+          foot.style.marginTop = '10px';
+          foot.textContent = 'Plugin ' + d.PluginVersion + ' · Jellyfin ' + d.ServerVersion;
+          host.appendChild(foot);
+        }).catch(function (e) {
+          // Reaching this means the plugin's API is not answering at all, which is itself the
+          // most useful thing the page can say.
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptBanner failed',
+            'The plugin API is not responding. It may have failed to load — check Dashboard → Logs.'));
+          host.appendChild(el('div', 'moptCheckDetail', (e && e.statusText) || String(e)));
         });
       }
 
-      function render(jobs) {
+      // ---- file picker ------------------------------------------------------------------
+
+      function renderResults(items) {
+        var host = page.querySelector('#moptResults');
+        host.innerHTML = '';
+
+        if (!items || !items.length) {
+          host.appendChild(el('div', 'moptEmpty', 'No matching items.'));
+          return;
+        }
+
+        items.forEach(function (item) {
+          var row = el('div', 'moptItem');
+          var body = el('div', 'moptItemBody');
+          body.appendChild(el('div', 'moptItemName', item.Name));
+          var meta = [item.Type, bytes(item.SizeBytes), item.Path].filter(Boolean).join(' · ');
+          body.appendChild(el('div', 'moptItemMeta', meta));
+          row.appendChild(body);
+
+          var button = document.createElement('button');
+          button.setAttribute('is', 'emby-button');
+          button.type = 'button';
+          button.className = 'raised emby-button';
+          button.style.flex = '0 0 auto';
+
+          if (item.HasActiveJob) {
+            button.textContent = 'Queued';
+            button.disabled = true;
+          } else {
+            button.textContent = 'Optimize…';
+            button.addEventListener('click', function () { openFor(item.Id); });
+          }
+
+          row.appendChild(button);
+          host.appendChild(row);
+        });
+      }
+
+      function search() {
+        var query = page.querySelector('#moptSearch').value || '';
+        api('GET', 'MediaOptimizer/Library/Search?limit=40&query=' + encodeURIComponent(query))
+          .then(renderResults)
+          .catch(function (e) {
+            var host = page.querySelector('#moptResults');
+            host.innerHTML = '';
+            host.appendChild(el('div', 'moptErr', 'Search failed: ' + ((e && e.statusText) || e)));
+          });
+      }
+
+      // The dialog lives in the injected client bundle. Loading it here means the dashboard and
+      // the in-app buttons share one implementation, and the dashboard keeps working even when
+      // the injection into jellyfin-web is broken.
+      function withClient() {
+        if (window.MediaOptimizer && window.MediaOptimizer.ready) {
+          return Promise.resolve(window.MediaOptimizer);
+        }
+
+        return new Promise(function (resolve, reject) {
+          var existing = document.getElementById('moptClientScript');
+          if (!existing) {
+            var script = document.createElement('script');
+            script.id = 'moptClientScript';
+            script.src = ApiClient.getUrl('MediaOptimizer/client.js');
+            script.onerror = function () { reject(new Error('Could not load the plugin UI script.')); };
+            document.head.appendChild(script);
+          }
+
+          var waited = 0;
+          var poll = setInterval(function () {
+            if (window.MediaOptimizer && window.MediaOptimizer.ready) {
+              clearInterval(poll);
+              resolve(window.MediaOptimizer);
+            } else if ((waited += 100) > 10000) {
+              clearInterval(poll);
+              reject(new Error('The plugin UI script loaded but did not initialise.'));
+            }
+          }, 100);
+        });
+      }
+
+      function openFor(itemId) {
+        withClient().then(function (client) {
+          client.open(itemId);
+        }).catch(function (e) {
+          Dashboard.alert({
+            title: 'Could not open the optimizer',
+            message: e.message + ' Check Dashboard → Logs; the conversion queue below is unaffected.'
+          });
+        });
+      }
+
+      // ---- queue ------------------------------------------------------------------------
+
+      function renderJobs(jobs) {
         var host = page.querySelector('#moptJobs');
         host.innerHTML = '';
 
         if (!jobs || !jobs.length) {
-          var empty = document.createElement('div');
-          empty.className = 'moptEmpty';
-          empty.textContent = 'Nothing queued. Open any movie or episode in the web client, choose "Optimize file…" from its menu, and the job will appear here.';
-          host.appendChild(empty);
+          host.appendChild(el('div', 'moptEmpty', 'Nothing queued yet.'));
           return;
         }
 
         jobs.forEach(function (j) {
-          var box = document.createElement('div');
-          box.className = 'moptJob';
+          var box = el('div', 'moptJob');
 
-          var head = document.createElement('div');
-          head.className = 'moptJobHead';
-          var name = document.createElement('span');
-          name.className = 'moptJobName';
-          name.textContent = j.ItemName || j.ItemId;
-          var status = document.createElement('span');
-          status.className = 'moptJobStatus';
-          status.textContent = j.Status;
-          head.appendChild(name);
-          head.appendChild(status);
+          var head = el('div', 'moptJobHead');
+          head.appendChild(el('span', 'moptJobName', j.ItemName || j.ItemId));
+          head.appendChild(el('span', 'moptJobStatus', j.Status));
           box.appendChild(head);
 
-          var meta = document.createElement('div');
-          meta.className = 'moptJobMeta';
           var bits = [j.OutputPolicy];
           if (j.SourceSizeBytes) {
             bits.push(bytes(j.SourceSizeBytes) + (j.OutputSizeBytes ? ' → ' + bytes(j.OutputSizeBytes) : ''));
@@ -97,33 +244,24 @@
           if (j.Speed) { bits.push(j.Speed.toFixed(2) + '× realtime'); }
           if (j.IsLossless) { bits.push('lossless'); }
           if (j.LosslessVerified === true) { bits.push('hash verified'); }
-          meta.textContent = bits.join(' · ');
-          box.appendChild(meta);
+          box.appendChild(el('div', 'moptJobMeta', bits.join(' · ')));
 
           if (j.Status === 'Encoding' || j.Status === 'Verifying') {
-            var bar = document.createElement('div');
-            bar.className = 'moptBar';
-            var fill = document.createElement('i');
+            var bar = el('div', 'moptBar');
+            var fill = el('i');
             fill.style.width = Math.round(j.ProgressPercent || 0) + '%';
             bar.appendChild(fill);
             box.appendChild(bar);
           }
 
-          if (j.Error) {
-            var err = document.createElement('div');
-            err.className = 'moptErr';
-            err.textContent = j.Error;
-            box.appendChild(err);
-          }
+          if (j.Error) { box.appendChild(el('div', 'moptErr', j.Error)); }
 
-          var actions = document.createElement('div');
-          actions.className = 'moptActions';
-
-          function button(label, handler, danger) {
+          var actions = el('div', 'moptActions');
+          function button(label, handler) {
             var b = document.createElement('button');
             b.setAttribute('is', 'emby-button');
             b.type = 'button';
-            b.className = 'raised ' + (danger ? 'button-delete' : '') + ' emby-button';
+            b.className = 'raised emby-button';
             b.textContent = label;
             b.addEventListener('click', function () {
               b.disabled = true;
@@ -137,13 +275,13 @@
 
           var active = ['Queued', 'Preflight', 'Encoding', 'Verifying', 'Applying'].indexOf(j.Status) >= 0;
           if (active) {
-            button('Cancel', function () { return api('DELETE', 'MediaOptimizer/Jobs/' + j.Id); }, true);
+            button('Cancel', function () { return api('DELETE', 'MediaOptimizer/Jobs/' + j.Id); });
           } else {
             if (j.QuarantinePath) {
               button('Restore original', function () {
                 return Dashboard.confirm('Restore the original file and discard the converted one?', 'Revert conversion')
                   .then(function () { return api('POST', 'MediaOptimizer/Jobs/' + j.Id + '/Revert'); });
-              }, true);
+              });
             }
             if (j.Status === 'Failed' || j.Status === 'Interrupted' || j.Status === 'Cancelled') {
               button('Try again', function () { return api('POST', 'MediaOptimizer/Jobs/' + j.Id + '/Requeue'); });
@@ -159,17 +297,30 @@
       }
 
       function refresh() {
-        return api('GET', 'MediaOptimizer/Jobs').then(render).catch(function () {});
+        return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function () {
+          // Transient failures are ignored; the status panel above reports a real outage.
+        });
       }
 
       page.addEventListener('pageshow', function () {
-        renderCapabilities();
+        // Each section is independent: if one throws, the others still render.
+        renderDiagnostics();
+        search();
         refresh();
+
+        page.querySelector('#moptSearch').addEventListener('input', function () {
+          clearTimeout(searchTimer);
+          searchTimer = setTimeout(search, 300);
+        });
+
         clearInterval(timer);
         timer = setInterval(refresh, 2000);
       });
 
-      page.addEventListener('pagehide', function () { clearInterval(timer); });
+      page.addEventListener('pagehide', function () {
+        clearInterval(timer);
+        clearTimeout(searchTimer);
+      });
     })();
   </script>
 </div>

@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.1.0.0",
+                "changelog": "- Conversions can now be started from the dashboard page, so the plugin is fully usable\nwithout the in-app buttons.\n- Fixed the in-app buttons never appearing: File Transformation 2.5 added admin auth to its\nHTTP registration endpoint, so registration now goes through its in-process service instead.\n- Added a status panel that reports each part of the plugin separately.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.1.0.0.zip",
+                "checksum": "eaebfd7d62dae81c2fea7358547be8a9",
+                "timestamp": "2026-08-27T21:38:31Z"
+            },
+            {
                 "version": "1.0.0.0",
                 "changelog": "Initial release.",
                 "targetAbi": "10.11.0.0",
