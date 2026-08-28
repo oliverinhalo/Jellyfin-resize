@@ -140,10 +140,20 @@ public class EncodePlanner : IEncodePlanner
         var droppedAudio = analysis.Audio.Count - keptAudio;
         if (droppedAudio > 0)
         {
+            var droppedLanguages = analysis.Audio
+                .Where(a => audioRequests.TryGetValue(a.Index, out var r) && r.Action == AudioAction.Drop)
+                .Select(a => LanguageMatcher.Describe(a.Language))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var detail = droppedLanguages.Count > 0
+                ? FormattableString.Invariant($" ({string.Join(", ", droppedLanguages)})")
+                : string.Empty;
+
             warnings.Add(new PlanWarning(
                 WarningLevel.Info,
                 "AUDIO_DROPPED",
-                FormattableString.Invariant($"{droppedAudio} audio track(s) will be removed. Removing tracks is bit-exact for everything you keep and is usually the single largest saving available.")));
+                FormattableString.Invariant($"{droppedAudio} audio track(s) will be removed{detail}. Everything you keep stays bit-exact, and dropping tracks is usually the single largest saving available.")));
         }
 
         if (keptAudio == 0 && analysis.Audio.Count > 0)

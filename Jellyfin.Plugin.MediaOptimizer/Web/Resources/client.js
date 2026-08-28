@@ -623,6 +623,20 @@
         return select;
     }
 
+    function textField(host, label, value, onChange, placeholder) {
+        var field = el('div', 'mopt-field');
+        field.appendChild(el('label', null, label));
+        var input = document.createElement('input');
+        input.type = 'text';
+        if (placeholder) { input.placeholder = placeholder; }
+        input.value = value === null || value === undefined ? '' : value;
+        input.addEventListener('change', function () {
+            onChange(input.value.trim() === '' ? null : input.value.trim());
+        });
+        field.appendChild(input);
+        host.appendChild(field);
+    }
+
     function numberField(host, label, value, onChange, attrs) {
         var field = el('div', 'mopt-field');
         field.appendChild(el('label', null, label));
@@ -635,6 +649,43 @@
         });
         field.appendChild(input);
         host.appendChild(field);
+    }
+
+    // Mirrors the server's matcher closely enough for the form to update as you type; the server
+    // is still the authority when the job is actually queued.
+    function normalizeLanguage(value) {
+        if (!value) { return null; }
+        var v = String(value).trim().toLowerCase().split(/[-_]/)[0];
+        var map = { en: 'eng', english: 'eng', eng: 'eng', fr: 'fra', french: 'fra', fra: 'fra', fre: 'fra',
+            de: 'deu', german: 'deu', deu: 'deu', ger: 'deu', es: 'spa', spanish: 'spa', spa: 'spa',
+            it: 'ita', italian: 'ita', ita: 'ita', pt: 'por', portuguese: 'por', por: 'por',
+            ja: 'jpn', japanese: 'jpn', jpn: 'jpn', nl: 'nld', dutch: 'nld', nld: 'nld', dut: 'nld',
+            zh: 'zho', chinese: 'zho', zho: 'zho', chi: 'zho', ko: 'kor', korean: 'kor', kor: 'kor',
+            ru: 'rus', russian: 'rus', rus: 'rus', pl: 'pol', polish: 'pol', pol: 'pol' };
+        if (v === 'und' || v === 'unknown' || v === '') { return null; }
+        return map[v] || v;
+    }
+
+    function applyLanguageFilter(req, a) {
+        var keep = (req.KeepAudioLanguages || '').split(/[,;\s]+/)
+            .map(normalizeLanguage).filter(Boolean);
+
+        if (!keep.length) {
+            req.AudioTracks.forEach(function (t) { if (t.Action === 'Drop') { t.Action = 'Copy'; } });
+            return;
+        }
+
+        var survivors = 0;
+        req.AudioTracks.forEach(function (t) {
+            var source = (a.Audio || []).filter(function (x) { return x.Index === t.Index; })[0];
+            var lang = source ? normalizeLanguage(source.Language) : null;
+            var wanted = lang === null ? true : keep.indexOf(lang) >= 0;
+            t.Action = wanted ? (t.Action === 'Drop' ? 'Copy' : t.Action) : 'Drop';
+            if (wanted) { survivors++; }
+        });
+
+        // Never leave a file with no audio at all.
+        if (survivors === 0 && req.AudioTracks.length) { req.AudioTracks[0].Action = 'Copy'; }
     }
 
     function buildFields(host, req, a, caps, rebuild, setContainer) {
@@ -770,6 +821,18 @@
             });
         }
 
+        if (a.Audio && a.Audio.length > 1) {
+            host.appendChild(el('div', 'mopt-sec', 'Languages'));
+            var langRow2 = el('div', 'mopt-row');
+            textField(langRow2, 'Keep audio languages', req.KeepAudioLanguages,
+                function (v) { req.KeepAudioLanguages = v; applyLanguageFilter(req, a); rebuild(); },
+                'empty keeps all');
+            textField(langRow2, 'Keep subtitle languages', req.KeepSubtitleLanguages,
+                function (v) { req.KeepSubtitleLanguages = v; applyLanguageFilter(req, a); rebuild(); },
+                'empty keeps all');
+            host.appendChild(langRow2);
+        }
+
         host.appendChild(el('div', 'mopt-sec', 'Output'));
         var outRow = el('div', 'mopt-row');
         selectField(outRow, 'Container', [
@@ -823,7 +886,7 @@
 
         var batch = { ItemIds: items.map(function (i) { return i.Id; }), Strategy: 'Medium',
             TargetHeight: null, Container: null, OutputPolicy: null, UseHardware: false,
-            AcceptDolbyVisionLoss: false };
+            AcceptDolbyVisionLoss: false, KeepAudioLanguages: null, KeepSubtitleLanguages: null };
 
         pane.appendChild(el('div', 'mopt-sec', 'Files (' + items.length + ')'));
         var list = el('div', 'mopt-batch-list');
@@ -872,6 +935,17 @@
             { value: 'AlternateVersion', label: 'Keep them, add versions' }
         ], batch.OutputPolicy, function (v) { batch.OutputPolicy = v; });
         pane.appendChild(row);
+
+        pane.appendChild(el('div', 'mopt-sec', 'Tracks to keep'));
+        var langRow = el('div', 'mopt-row');
+        textField(langRow, 'Audio languages', batch.KeepAudioLanguages,
+            function (v) { batch.KeepAudioLanguages = v; }, 'Leave empty for the plugin default');
+        textField(langRow, 'Subtitle languages', batch.KeepSubtitleLanguages,
+            function (v) { batch.KeepSubtitleLanguages = v; }, 'Leave empty for the plugin default');
+        pane.appendChild(langRow);
+        pane.appendChild(el('div', 'mopt-preset-hint',
+            'Comma separated, e.g. "eng". Every other track is removed, which is bit-exact for the ' +
+            'ones you keep and is often the largest saving of all. A file is never left without audio.'));
 
         pane.appendChild(warningBox('info',
             'Each file is analysed on its own, so the preset adapts to what it actually is. ' +

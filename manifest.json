@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.3.0.0",
+                "changelog": "- Keep only the audio and subtitle languages you actually use; everything else is removed.\nThis is bit-exact for the tracks you keep and is often the largest saving available. A file\nis never left with no audio at all.\n- Optionally remove commentary and audio-description tracks.\n- The queue is now crash-safe: every change is written to disk before it is acknowledged, and\nan encode interrupted by a restart or a power cut is picked up again automatically.\n- Speed settings: fastest / balanced / smallest file, and a switch to use the graphics card,\nwhich is typically ten to twenty times faster than the CPU.\n- A status panel entry that measures this server's real encoding speed and names what is\nslowing it down.\n- Statistics: disk actually reclaimed, average reduction, and how much is still held for undo.\n- Pause the queue, run a job next, cancel everything pending, and free the space held by\noriginals awaiting undo.\n- Scrub previews are rebuilt after a file is replaced, instead of staying stale.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.3.0.0.zip",
+                "checksum": "6fdf16cc20ab49af89360eb0e23d883a",
+                "timestamp": "2026-08-28T17:02:27Z"
+            },
+            {
                 "version": "1.2.0.0",
                 "changelog": "- Fixed the dialog's two panes rendering on top of each other. It now lives in a shadow root,\nso no stylesheet on the page can reposition it.\n- Fixed every default predicting a bigger file. Size is now estimated from the source's own\nbitrate, and a container that mis-tags the video stream no longer skews it.\n- New presets: Standard (better codec), Medium (one resolution step down), High reduction\n(a step down plus a lower bitrate). The dialog opens on whichever actually helps the file.\n- Removed the invented encode time. A real one appears once the server has measured itself.\n- Subtitle warnings are collapsed into one line with a \"Use MKV instead\" button.\n- Select several files on the dashboard and convert them all with one preset.\n- Sort and filter the dashboard list by size, resolution, bitrate, watched state, container\nand codec.\n- MP4 and Replace are now the defaults; files whose subtitles MP4 cannot carry stay MKV.\n- Reworded the options that were unclear.",
                 "targetAbi": "10.11.0.0",

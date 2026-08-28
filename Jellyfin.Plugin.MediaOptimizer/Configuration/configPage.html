@@ -85,6 +85,70 @@
         </div>
 
         <div class="verticalSection">
+          <h2 class="sectionTitle">Tracks to keep</h2>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="KeepAudioLanguages">Audio languages</label>
+            <input is="emby-input" type="text" id="KeepAudioLanguages" name="KeepAudioLanguages" placeholder="eng" />
+            <div class="fieldDescription">
+              Comma separated. Every other audio track is removed, which is bit-exact for the ones
+              you keep and is usually the single largest saving available — a foreign-language
+              track on a Blu-ray rip can be a gigabyte on its own. "eng", "en" and "English" all
+              work. Leave empty to keep every track. A file is never left with no audio: if nothing
+              matches, the default track is kept.
+            </div>
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="KeepSubtitleLanguages">Subtitle languages</label>
+            <input is="emby-input" type="text" id="KeepSubtitleLanguages" name="KeepSubtitleLanguages" placeholder="eng" />
+            <div class="fieldDescription">Same rules. Leave empty to keep every subtitle track.</div>
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="KeepUntaggedTracks" name="KeepUntaggedTracks" />
+            <span>Keep tracks that have no language tag</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Recommended. An untagged track is usually the main one on a single-language release,
+            so removing it would take the audio you actually want.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="DropCommentaryTracks" name="DropCommentaryTracks" />
+            <span>Remove commentary and audio-description tracks</span>
+          </label>
+          <div class="fieldDescription">Detected from the track title, which is the only place most files record it.</div>
+        </div>
+
+        <div class="verticalSection">
+          <h2 class="sectionTitle">Speed</h2>
+
+          <div class="selectContainer">
+            <label class="selectLabel" for="Speed">Time against file size</label>
+            <select is="emby-select" id="Speed" name="Speed" class="emby-select-withcolor emby-select">
+              <option value="Fastest">Fastest — finish sooner, file a little larger</option>
+              <option value="Balanced">Balanced</option>
+              <option value="SmallestFile">Smallest file — several times slower</option>
+            </select>
+            <div class="fieldDescription">
+              Picks the encoder preset. Going from "smallest file" to "fastest" typically finishes
+              three to five times sooner for a file around 10% larger.
+            </div>
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="PreferHardwareEncoding" name="PreferHardwareEncoding" />
+            <span>Use the graphics card when one is available</span>
+          </label>
+          <div class="fieldDescription">
+            The single biggest speed lever: typically ten to twenty times faster than encoding on
+            the CPU. The trade is size — a GPU needs roughly 50% more bitrate to look as good.
+            Requires hardware acceleration to be set up under Dashboard → Playback → Transcoding.
+          </div>
+        </div>
+
+        <div class="verticalSection">
           <h2 class="sectionTitle">Encoding</h2>
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="MaxConcurrentJobs">Concurrent conversions</label>
@@ -101,6 +165,29 @@
             <input is="emby-checkbox" type="checkbox" id="LowProcessPriority" name="LowProcessPriority" />
             <span>Run FFmpeg at below-normal priority</span>
           </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Keeps the server responsive, but slows encoding whenever anything else wants the CPU.
+            Turn it off if the machine is otherwise idle and you want jobs to finish sooner.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="ResumeJobsAfterRestart" name="ResumeJobsAfterRestart" />
+            <span>Resume interrupted conversions after a restart</span>
+          </label>
+          <div class="fieldDescription">
+            Encoding only ever writes to a temporary file, so a job interrupted by a restart or a
+            power cut can safely start again. A job interrupted while moving the finished file into
+            place is always held for review instead.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="RegenerateTrickplayAfterReplace" name="RegenerateTrickplayAfterReplace" />
+            <span>Rebuild scrub previews after replacing a file</span>
+          </label>
+          <div class="fieldDescription">
+            Trickplay images are generated from the old file, so after a resolution change they are
+            both stale and the wrong size.
+          </div>
 
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="EncodingThreadCount">FFmpeg thread limit</label>
@@ -158,9 +245,11 @@
       var pluginId = '919929b2-0857-4c61-8647-c05fbbdc62fa';
       var fields = ['Injection', 'DefaultContainer', 'DefaultOutputPolicy', 'SidecarDirectory', 'TempDirectory',
         'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
-        'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit'];
+        'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit',
+        'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed'];
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
-        'AllowNonAdminAnalysis'];
+        'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
+        'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
         Dashboard.showLoadingMsg();

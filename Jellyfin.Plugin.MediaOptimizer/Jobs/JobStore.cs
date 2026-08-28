@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -36,7 +37,7 @@ public interface IJobStore
     IReadOnlyList<EncodeJob> GetActive();
 
     /// <summary>Takes the next queued job, marking it as claimed.</summary>
-    /// <returns>The next job, or null when the queue is empty.</returns>
+    /// <returns>The next job, or null when the queue is empty or paused.</returns>
     EncodeJob? TakeNextQueued();
 
     /// <summary>Returns true when an item already has a queued or running job.</summary>
@@ -50,40 +51,68 @@ public interface IJobStore
     bool Remove(Guid id);
 
     /// <summary>
-    /// Marks jobs that were mid-flight when the server stopped. Called once at startup.
+    /// Recovers jobs that were mid-flight when the server stopped. Called once at startup.
     /// </summary>
-    /// <returns>The jobs that were reset.</returns>
+    /// <returns>The jobs that were recovered, with their new status already applied.</returns>
     IReadOnlyList<EncodeJob> ReconcileInterrupted();
 }
 
-/// <inheritdoc />
+/// <summary>
+/// A crash-safe job store: every change is appended to a journal and flushed to disk before the
+/// call returns, and the journal is periodically folded into a snapshot.
+/// <para>
+/// This is deliberately not SQLite. Jellyfin loads a SQLite provider for its own database, but it
+/// is not part of the plugin dependency graph, so binding to it would risk the whole plugin
+/// failing to load on any server whose version differed. A journal gives the same guarantee that
+/// matters here — nothing acknowledged is ever lost, and a half-written record is discarded on
+/// read — without adding a dependency that could take the plugin down with it.
+/// </para>
+/// </summary>
 public class JobStore : IJobStore
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
-        WriteIndented = true,
+        WriteIndented = false,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private readonly string _path;
+    /// <summary>Fold the journal into a snapshot once it passes this many records.</summary>
+    private const int CompactionThreshold = 400;
+
+    private readonly string _directory;
+    private readonly string _snapshotPath;
+    private readonly string _journalPath;
     private readonly ILogger<JobStore> _logger;
     private readonly Lock _lock = new Lock();
     private readonly Dictionary<Guid, EncodeJob> _jobs = new Dictionary<Guid, EncodeJob>();
+
+    private int _journalRecords;
 
     /// <summary>Initializes a new instance of the <see cref="JobStore"/> class.</summary>
     /// <param name="appPaths">Application paths.</param>
     /// <param name="logger">Logger.</param>
     public JobStore(IApplicationPaths appPaths, ILogger<JobStore> logger)
+        : this(Path.Combine(appPaths.DataPath, "mediaoptimizer"), logger)
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="JobStore"/> class in a given directory.</summary>
+    /// <param name="directory">Where the snapshot and journal live.</param>
+    /// <param name="logger">Logger.</param>
+    internal JobStore(string directory, ILogger<JobStore> logger)
     {
         _logger = logger;
-
-        var dir = Path.Combine(appPaths.DataPath, "mediaoptimizer");
-        Directory.CreateDirectory(dir);
-        _path = Path.Combine(dir, "jobs.json");
+        _directory = directory;
+        Directory.CreateDirectory(_directory);
+        _snapshotPath = Path.Combine(_directory, "queue.snapshot.json");
+        _journalPath = Path.Combine(_directory, "queue.journal.jsonl");
 
         Load();
     }
+
+    /// <summary>Gets or sets a value indicating whether the worker may claim new jobs.</summary>
+    public static bool IsPaused { get; set; }
 
     /// <inheritdoc />
     public void Add(EncodeJob job)
@@ -91,8 +120,8 @@ public class JobStore : IJobStore
         lock (_lock)
         {
             _jobs[job.Id] = job;
+            AppendJournal("put", job);
             Trim();
-            Save();
         }
     }
 
@@ -102,7 +131,7 @@ public class JobStore : IJobStore
         lock (_lock)
         {
             _jobs[job.Id] = job;
-            Save();
+            AppendJournal("put", job);
         }
     }
 
@@ -129,18 +158,25 @@ public class JobStore : IJobStore
     {
         lock (_lock)
         {
-            return _jobs.Values.Where(j => j.IsActive).OrderBy(j => j.QueuedAt).ToList();
+            return _jobs.Values.Where(j => j.IsActive).OrderBy(j => j.Priority).ThenBy(j => j.QueuedAt).ToList();
         }
     }
 
     /// <inheritdoc />
     public EncodeJob? TakeNextQueued()
     {
+        if (IsPaused)
+        {
+            return null;
+        }
+
         lock (_lock)
         {
+            // Lower Priority numbers run first; ties fall back to arrival order.
             var next = _jobs.Values
                 .Where(j => j.Status == JobStatus.Queued)
-                .OrderBy(j => j.QueuedAt)
+                .OrderBy(j => j.Priority)
+                .ThenBy(j => j.QueuedAt)
                 .FirstOrDefault();
 
             if (next is null)
@@ -150,7 +186,7 @@ public class JobStore : IJobStore
 
             next.Status = JobStatus.Preflight;
             next.StartedAt = DateTime.UtcNow;
-            Save();
+            AppendJournal("put", next);
             return next;
         }
     }
@@ -169,13 +205,13 @@ public class JobStore : IJobStore
     {
         lock (_lock)
         {
-            var removed = _jobs.Remove(id);
-            if (removed)
+            if (!_jobs.Remove(id))
             {
-                Save();
+                return false;
             }
 
-            return removed;
+            AppendJournal("del", new EncodeJob { Id = id });
+            return true;
         }
     }
 
@@ -184,29 +220,212 @@ public class JobStore : IJobStore
     {
         lock (_lock)
         {
+            var resume = Plugin.Instance?.Configuration.ResumeJobsAfterRestart ?? true;
             var stranded = _jobs.Values
-                .Where(j => j.Status is JobStatus.Preflight or JobStatus.Encoding
-                    or JobStatus.Verifying or JobStatus.Applying)
+                .Where(j => j.Status is JobStatus.Preflight or JobStatus.Encoding or JobStatus.Verifying or JobStatus.Applying)
                 .ToList();
 
             foreach (var job in stranded)
             {
-                // Applying is the only phase where the original may already have moved, so it is
-                // flagged rather than silently requeued: a human needs to look at it.
-                job.Status = JobStatus.Interrupted;
-                job.Error = job.Status == JobStatus.Applying
-                    ? "The server stopped while the output was being moved into place. Check the file before requeueing."
-                    : "The server stopped while this job was running. The original file was not modified.";
-                job.FinishedAt = DateTime.UtcNow;
+                if (job.Status == JobStatus.Applying)
+                {
+                    // The only phase where the original may already have moved. A human needs to
+                    // look before anything else touches those files.
+                    job.Status = JobStatus.Interrupted;
+                    job.Error = "The server stopped while the finished file was being moved into place. "
+                        + "Check the file and the quarantine folder before requeueing.";
+                    job.FinishedAt = DateTime.UtcNow;
+                }
+                else if (resume)
+                {
+                    // Encoding writes only to a temp file, so restarting the job is always safe.
+                    job.Status = JobStatus.Queued;
+                    job.ProgressPercent = 0;
+                    job.Speed = null;
+                    job.EtaSeconds = null;
+                    job.StartedAt = null;
+                    job.ResumeCount++;
+                    job.Error = null;
+                }
+                else
+                {
+                    job.Status = JobStatus.Interrupted;
+                    job.Error = "The server stopped while this job was running. The original file was not modified.";
+                    job.FinishedAt = DateTime.UtcNow;
+                }
+
+                AppendJournal("put", job);
             }
 
             if (stranded.Count > 0)
             {
-                Save();
-                _logger.LogWarning("[MediaOptimizer] Marked {Count} interrupted job(s) after restart", stranded.Count);
+                var resumed = stranded.Count(j => j.Status == JobStatus.Queued);
+                _logger.LogInformation(
+                    "[MediaOptimizer] Recovered {Count} interrupted job(s) after restart: {Resumed} requeued, {Held} held for review",
+                    stranded.Count,
+                    resumed,
+                    stranded.Count - resumed);
             }
 
             return stranded;
+        }
+    }
+
+    /// <summary>Rebuilds in-memory state from a snapshot plus the journal written after it.</summary>
+    /// <param name="snapshotJson">Snapshot contents, or null when there is none.</param>
+    /// <param name="journalLines">Journal lines in the order they were written.</param>
+    /// <returns>The recovered jobs, keyed by id.</returns>
+    internal static Dictionary<Guid, EncodeJob> Replay(string? snapshotJson, IEnumerable<string> journalLines)
+    {
+        var jobs = new Dictionary<Guid, EncodeJob>();
+
+        if (!string.IsNullOrWhiteSpace(snapshotJson))
+        {
+            try
+            {
+                foreach (var job in JsonSerializer.Deserialize<List<EncodeJob>>(snapshotJson, SerializerOptions) ?? [])
+                {
+                    jobs[job.Id] = job;
+                }
+            }
+            catch (JsonException)
+            {
+                // A corrupt snapshot is not fatal: the journal alone can rebuild recent state.
+            }
+        }
+
+        foreach (var line in journalLines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            JournalRecord? record;
+            try
+            {
+                record = JsonSerializer.Deserialize<JournalRecord>(line, SerializerOptions);
+            }
+            catch (JsonException)
+            {
+                // A torn final line is exactly what a crash mid-append looks like. Everything
+                // before it is intact, so stop here rather than discarding the whole journal.
+                break;
+            }
+
+            if (record?.Job is null)
+            {
+                continue;
+            }
+
+            if (string.Equals(record.Op, "del", StringComparison.Ordinal))
+            {
+                jobs.Remove(record.Job.Id);
+            }
+            else
+            {
+                jobs[record.Job.Id] = record.Job;
+            }
+        }
+
+        return jobs;
+    }
+
+    private void Load()
+    {
+        try
+        {
+            var snapshot = File.Exists(_snapshotPath) ? File.ReadAllText(_snapshotPath) : null;
+            var journal = File.Exists(_journalPath) ? File.ReadAllLines(_journalPath) : Array.Empty<string>();
+
+            foreach (var pair in Replay(snapshot, journal))
+            {
+                _jobs[pair.Key] = pair.Value;
+            }
+
+            _journalRecords = journal.Length;
+
+            // Older builds wrote a single jobs.json; fold it in once so nothing is lost on upgrade.
+            var legacy = Path.Combine(_directory, "jobs.json");
+            if (_jobs.Count == 0 && File.Exists(legacy))
+            {
+                foreach (var job in JsonSerializer.Deserialize<List<EncodeJob>>(File.ReadAllText(legacy), SerializerOptions) ?? [])
+                {
+                    _jobs[job.Id] = job;
+                }
+
+                Compact();
+                File.Move(legacy, legacy + ".migrated", overwrite: true);
+                _logger.LogInformation("[MediaOptimizer] Migrated {Count} job(s) from the previous store", _jobs.Count);
+            }
+
+            _logger.LogInformation(
+                "[MediaOptimizer] Job store loaded: {Count} job(s), {Records} journal record(s)",
+                _jobs.Count,
+                _journalRecords);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            _logger.LogError(ex, "[MediaOptimizer] Could not read the job store in {Directory}", _directory);
+        }
+    }
+
+    /// <summary>Appends one record and flushes it to disk before returning.</summary>
+    /// <param name="op">"put" or "del".</param>
+    /// <param name="job">The job the record concerns.</param>
+    private void AppendJournal(string op, EncodeJob job)
+    {
+        try
+        {
+            var line = JsonSerializer.Serialize(new JournalRecord { Op = op, Job = job }, SerializerOptions);
+
+            using (var stream = new FileStream(_journalPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.WriteLine(line);
+                writer.Flush();
+                // Without this the record lives only in the OS page cache, which is precisely
+                // what a power cut takes with it.
+                stream.Flush(flushToDisk: true);
+            }
+
+            _journalRecords++;
+
+            if (_journalRecords >= CompactionThreshold)
+            {
+                Compact();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            _logger.LogError(ex, "[MediaOptimizer] Could not append to the job journal");
+        }
+    }
+
+    /// <summary>Writes a fresh snapshot and truncates the journal.</summary>
+    private void Compact()
+    {
+        try
+        {
+            var temp = _snapshotPath + ".tmp";
+            var json = JsonSerializer.Serialize(_jobs.Values.ToList(), SerializerOptions);
+
+            using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(json);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            // Rename is atomic, so a reader sees either the old snapshot or the new one, never half.
+            File.Move(temp, _snapshotPath, overwrite: true);
+            File.WriteAllText(_journalPath, string.Empty);
+            _journalRecords = 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            _logger.LogError(ex, "[MediaOptimizer] Could not compact the job store");
         }
     }
 
@@ -234,52 +453,19 @@ public class JobStore : IJobStore
             }
 
             _jobs.Remove(job.Id);
+            AppendJournal("del", new EncodeJob { Id = job.Id });
         }
     }
 
-    private void Load()
+    /// <summary>One line of the write-ahead journal.</summary>
+    internal sealed class JournalRecord
     {
-        if (!File.Exists(_path))
-        {
-            return;
-        }
+        /// <summary>Gets or sets the operation: "put" or "del".</summary>
+        [JsonPropertyName("op")]
+        public string Op { get; set; } = "put";
 
-        try
-        {
-            var json = File.ReadAllText(_path);
-            var jobs = JsonSerializer.Deserialize<List<EncodeJob>>(json, SerializerOptions);
-            if (jobs is null)
-            {
-                return;
-            }
-
-            foreach (var job in jobs)
-            {
-                _jobs[job.Id] = job;
-            }
-
-            _logger.LogInformation("[MediaOptimizer] Loaded {Count} job(s) from disk", _jobs.Count);
-        }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
-        {
-            _logger.LogError(ex, "[MediaOptimizer] Could not read the job store at {Path}", _path);
-        }
-    }
-
-    private void Save()
-    {
-        try
-        {
-            var json = JsonSerializer.Serialize(_jobs.Values.ToList(), SerializerOptions);
-
-            // Write to a temporary file and rename, so a crash mid-write cannot corrupt the queue.
-            var temp = _path + ".tmp";
-            File.WriteAllText(temp, json);
-            File.Move(temp, _path, overwrite: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
-        {
-            _logger.LogError(ex, "[MediaOptimizer] Could not persist the job store to {Path}", _path);
-        }
+        /// <summary>Gets or sets the job the record concerns.</summary>
+        [JsonPropertyName("job")]
+        public EncodeJob? Job { get; set; }
     }
 }

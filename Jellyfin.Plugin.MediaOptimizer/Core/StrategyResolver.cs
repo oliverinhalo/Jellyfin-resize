@@ -115,9 +115,25 @@ public static class StrategyResolver
     /// <summary>Picks the most efficient video encoder this server can actually use.</summary>
     /// <param name="caps">Discovered capabilities.</param>
     /// <param name="allowAv1">Whether AV1 may be chosen. It is very slow on CPU.</param>
+    /// <param name="preferHardware">Whether to pick a GPU encoder when one is available.</param>
     /// <returns>An encoder name, or null when none is available.</returns>
-    public static string? PickEncoder(Capabilities caps, bool allowAv1)
+    public static string? PickEncoder(Capabilities caps, bool allowAv1, bool preferHardware = false)
     {
+        if (preferHardware)
+        {
+            // Hardware encoding is the single biggest speed lever available: typically ten to
+            // twenty times faster than x265 on the same machine.
+            var hardware = caps.VideoEncoders.Where(e => e.IsHardware).ToList();
+            var pick = hardware.FirstOrDefault(e => e.Codec == "hevc")
+                ?? hardware.FirstOrDefault(e => e.Codec == "av1")
+                ?? hardware.FirstOrDefault(e => e.Codec == "h264");
+
+            if (pick is not null)
+            {
+                return pick.Name;
+            }
+        }
+
         var software = caps.VideoEncoders.Where(e => !e.IsHardware && e.Codec != "ffv1").ToList();
 
         if (allowAv1 && caps.AllowAv1Encoding)
@@ -132,6 +148,88 @@ public static class StrategyResolver
         return software.FirstOrDefault(e => e.Codec == "hevc")?.Name
             ?? software.FirstOrDefault(e => e.Codec == "h264")?.Name
             ?? software.FirstOrDefault()?.Name;
+    }
+
+    /// <summary>
+    /// Drops audio and subtitle tracks the user has said they will never use. Always leaves at
+    /// least one audio track behind: a file with no audio is worse than a file with the wrong
+    /// language in it.
+    /// </summary>
+    /// <param name="analysis">The source file.</param>
+    /// <param name="request">The request being built.</param>
+    /// <param name="config">Plugin configuration.</param>
+    internal static void ApplyTrackFilters(FileAnalysis analysis, EncodeRequest request, PluginConfiguration config)
+    {
+        var keepAudio = LanguageMatcher.ParseList(config.KeepAudioLanguages);
+        var keepSubs = LanguageMatcher.ParseList(config.KeepSubtitleLanguages);
+
+        if (keepAudio.Count > 0 || config.DropCommentaryTracks)
+        {
+            var survivors = new List<AudioTrackRequest>();
+
+            foreach (var track in request.AudioTracks)
+            {
+                var source = analysis.Audio.FirstOrDefault(a => a.Index == track.Index);
+                if (source is null)
+                {
+                    survivors.Add(track);
+                    continue;
+                }
+
+                var keep = LanguageMatcher.ShouldKeep(source.Language, keepAudio, config.KeepUntaggedTracks);
+
+                if (keep && config.DropCommentaryTracks && IsCommentary(source.Title))
+                {
+                    keep = false;
+                }
+
+                if (keep)
+                {
+                    survivors.Add(track);
+                }
+                else
+                {
+                    track.Action = AudioAction.Drop;
+                }
+            }
+
+            // Nothing survived the filter: keep the default track, or the first one.
+            if (survivors.Count == 0 && request.AudioTracks.Count > 0)
+            {
+                var fallbackIndex = analysis.Audio.FirstOrDefault(a => a.IsDefault)?.Index
+                    ?? analysis.Audio.FirstOrDefault()?.Index;
+
+                var fallback = request.AudioTracks.FirstOrDefault(t => t.Index == fallbackIndex)
+                    ?? request.AudioTracks[0];
+                fallback.Action = AudioAction.Copy;
+            }
+        }
+
+        if (keepSubs.Count > 0)
+        {
+            request.KeepSubtitleIndexes = analysis.Subtitles
+                .Where(sub => !sub.IsExternal
+                    && LanguageMatcher.ShouldKeep(sub.Language, keepSubs, config.KeepUntaggedTracks))
+                .Select(sub => sub.Index)
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// Detects commentary and audio-description tracks from their title, which is the only place
+    /// most containers record it.
+    /// </summary>
+    /// <param name="title">The track title.</param>
+    /// <returns>Whether the track looks like commentary.</returns>
+    internal static bool IsCommentary(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return false;
+        }
+
+        string[] markers = ["commentary", "commentaries", "director", "audio description", "descriptive", "visually impaired"];
+        return markers.Any(m => title.Contains(m, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Builds concrete settings for a strategy against one file.</summary>
@@ -156,8 +254,12 @@ public static class StrategyResolver
             KeepChapters = true,
             AudioTracks = analysis.Audio
                 .Select(a => new AudioTrackRequest { Index = a.Index, Action = AudioAction.Copy })
-                .ToList()
+                .ToList(),
+            KeepAudioLanguages = config.KeepAudioLanguages,
+            KeepSubtitleLanguages = config.KeepSubtitleLanguages
         };
+
+        ApplyTrackFilters(analysis, request, config);
 
         // Graphical subtitles cannot live in MP4, so a Blu-ray rip would silently lose all of
         // them. Prefer the container that keeps what the file actually has.
@@ -172,7 +274,10 @@ public static class StrategyResolver
             return request;
         }
 
-        var encoder = PickEncoder(caps, allowAv1: strategy == OptimizationStrategy.HighReduction);
+        var encoder = PickEncoder(
+            caps,
+            allowAv1: strategy == OptimizationStrategy.HighReduction && config.Speed == SpeedPreference.SmallestFile,
+            preferHardware: config.PreferHardwareEncoding);
         if (encoder is null || analysis.Video is null)
         {
             request.Video = VideoAction.Copy;
@@ -183,10 +288,11 @@ public static class StrategyResolver
         request.VideoCodec = encoder;
         request.RateControl = RateControlMode.ConstantQuality;
         request.BitDepth = analysis.Video.BitDepth ?? 8;
+        request.UseHardware = caps.VideoEncoders.Any(e => e.Name == encoder && e.IsHardware);
 
         var family = CodecFamilyOf(encoder);
         var reference = ReferenceCrfOf(family);
-        request.Preset = DefaultPresetFor(encoder, caps);
+        request.Preset = DefaultPresetFor(encoder, caps, config.Speed);
 
         switch (strategy)
         {
@@ -250,7 +356,16 @@ public static class StrategyResolver
             : OptimizationStrategy.Standard;
     }
 
-    private static string? DefaultPresetFor(string encoder, Capabilities caps)
+    /// <summary>
+    /// Picks an encoder preset for the requested speed. The preset is the second biggest lever
+    /// after hardware encoding: x265 "veryfast" runs several times quicker than "medium" for a
+    /// file perhaps 10% larger.
+    /// </summary>
+    /// <param name="encoder">Encoder name.</param>
+    /// <param name="caps">Server capabilities.</param>
+    /// <param name="speed">How much time to trade for size.</param>
+    /// <returns>A preset name, or null when the encoder takes none.</returns>
+    internal static string? DefaultPresetFor(string encoder, Capabilities caps, SpeedPreference speed)
     {
         var option = caps.VideoEncoders.FirstOrDefault(e => e.Name == encoder);
         if (option is null || option.Presets.Count == 0)
@@ -258,9 +373,32 @@ public static class StrategyResolver
             return null;
         }
 
-        return option.Presets.Contains("medium") ? "medium"
-            : option.Name == "libsvtav1" ? "8"
-            : option.Presets[option.Presets.Count / 2];
+        if (option.Name == "libsvtav1")
+        {
+            return speed switch
+            {
+                SpeedPreference.Fastest => "10",
+                SpeedPreference.SmallestFile => "6",
+                _ => "8"
+            };
+        }
+
+        string[] wanted = speed switch
+        {
+            SpeedPreference.Fastest => ["veryfast", "faster", "p2", "fast"],
+            SpeedPreference.SmallestFile => ["slow", "slower", "p6", "medium"],
+            _ => ["medium", "fast", "p4"]
+        };
+
+        foreach (var candidate in wanted)
+        {
+            if (option.Presets.Contains(candidate, StringComparer.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return option.Presets[option.Presets.Count / 2];
     }
 
     private static void TrimHeavyAudio(

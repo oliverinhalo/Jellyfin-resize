@@ -27,6 +27,15 @@ public class BatchRequest
 
     /// <summary>Gets or sets a value indicating whether losing Dolby Vision is accepted, per item.</summary>
     public bool AcceptDolbyVisionLoss { get; set; }
+
+    /// <summary>
+    /// Gets or sets the audio languages to keep across the whole batch, overriding the plugin
+    /// default. Empty string keeps every track; null uses the configured default.
+    /// </summary>
+    public string? KeepAudioLanguages { get; set; }
+
+    /// <summary>Gets or sets the subtitle languages to keep across the whole batch.</summary>
+    public string? KeepSubtitleLanguages { get; set; }
 }
 
 /// <summary>What happened to one item in a batch.</summary>

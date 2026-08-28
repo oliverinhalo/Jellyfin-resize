@@ -85,6 +85,12 @@
 
       <div class="verticalSection">
         <h2 class="sectionTitle">Queue and history</h2>
+        <div id="moptStats" class="moptStats"></div>
+        <div class="moptQueueBar">
+          <button is="emby-button" type="button" id="moptPause" class="raised emby-button">Pause queue</button>
+          <button is="emby-button" type="button" id="moptClear" class="raised emby-button">Cancel everything pending</button>
+          <button is="emby-button" type="button" id="moptRelease" class="raised emby-button">Free up space held by originals</button>
+        </div>
         <div id="moptJobs"></div>
       </div>
 
@@ -132,6 +138,12 @@
     .moptBar i{display:block;height:100%;background:#00a4dc;transition:width .3s ease}
     .moptActions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
     .moptEmpty{opacity:.65;padding:18px 0}
+    .moptStats{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+    .moptStat{flex:1 1 140px;border:1px solid rgba(128,128,128,.3);border-radius:5px;padding:9px 12px}
+    .moptStatValue{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+    .moptStatLabel{font-size:11.5px;opacity:.62;text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+    .moptStatNote{font-size:12.5px;opacity:.65;margin-bottom:12px}
+    .moptQueueBar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
     .moptErr{color:#e05a50;margin-top:5px;font-size:13px}
   </style>
 
@@ -355,6 +367,7 @@
           if (j.EtaSeconds && j.Status === 'Encoding') { bits.push(Math.round(j.EtaSeconds / 60) + ' min remaining'); }
           if (j.IsLossless) { bits.push('lossless'); }
           if (j.LosslessVerified === true) { bits.push('hash verified'); }
+          if (j.ResumeCount > 0) { bits.push('resumed after restart'); }
           box.appendChild(el('div', 'moptJobMeta', bits.join(' · ')));
 
           if (j.Status === 'Encoding' || j.Status === 'Verifying') {
@@ -386,6 +399,9 @@
           var active = ['Queued','Preflight','Encoding','Verifying','Applying'].indexOf(j.Status) >= 0;
           if (active) {
             button('Cancel', function () { return api('DELETE', 'MediaOptimizer/Jobs/' + j.Id); });
+            if (j.Status === 'Queued') {
+              button('Run this next', function () { return api('POST', 'MediaOptimizer/Jobs/' + j.Id + '/MoveToFront'); });
+            }
           } else {
             if (j.QuarantinePath) {
               button('Put the original back', function () {
@@ -405,7 +421,40 @@
         });
       }
 
+      function renderStats(s) {
+        var host = page.querySelector('#moptStats');
+        host.innerHTML = '';
+
+        function stat(value, label) {
+          var box = el('div', 'moptStat');
+          box.appendChild(el('div', 'moptStatValue', value));
+          box.appendChild(el('div', 'moptStatLabel', label));
+          host.appendChild(box);
+        }
+
+        stat(bytes(s.BytesSaved), 'disk reclaimed');
+        stat(s.CompletedJobs, 'files converted');
+        stat(Math.round((s.AverageSavingFraction || 0) * 100) + '%', 'average reduction');
+        stat(s.ActiveJobs, 'in the queue');
+        if (s.RestorableOriginals > 0) {
+          stat(bytes(s.QuarantineBytes), s.RestorableOriginals + ' originals still undoable');
+        }
+
+        var note = page.querySelector('#moptStatsNote');
+        if (!note) {
+          note = el('div', 'moptStatNote');
+          note.id = 'moptStatsNote';
+          host.parentNode.insertBefore(note, host.nextSibling);
+        }
+        note.textContent = s.SpeedNote || '';
+
+        var pause = page.querySelector('#moptPause');
+        pause.textContent = s.IsPaused ? 'Resume queue' : 'Pause queue';
+        pause.dataset.paused = s.IsPaused ? '1' : '';
+      }
+
       function refresh() {
+        api('GET', 'MediaOptimizer/Statistics').then(renderStats).catch(function () {});
         return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function () {});
       }
 
@@ -431,6 +480,30 @@
         });
 
         page.querySelector('#moptBatch').addEventListener('click', openBatch);
+
+        page.querySelector('#moptPause').addEventListener('click', function (e) {
+          var paused = e.target.dataset.paused === '1';
+          api('POST', 'MediaOptimizer/Queue/' + (paused ? 'Resume' : 'Pause')).then(refresh)
+            .catch(function () { Dashboard.alert({ message: 'Could not change the queue state.' }); });
+        });
+
+        page.querySelector('#moptClear').addEventListener('click', function () {
+          Dashboard.confirm('Cancel every job that has not started yet? Anything already running is left alone.',
+            'Cancel pending jobs')
+            .then(function () { return api('POST', 'MediaOptimizer/Queue/ClearPending'); })
+            .then(refresh).catch(function () {});
+        });
+
+        page.querySelector('#moptRelease').addEventListener('click', function () {
+          Dashboard.confirm(
+            'Delete every original still held for undo? This frees the space immediately, but those ' +
+            'conversions can no longer be reversed.', 'Free up space')
+            .then(function () { return api('POST', 'MediaOptimizer/Queue/ReleaseQuarantine'); })
+            .then(function (r) {
+              Dashboard.alert({ message: 'Released ' + r.released + ' original(s), freeing ' + bytes(r.freedBytes) + '.' });
+              return refresh();
+            }).catch(function () {});
+        });
 
         clearInterval(timer);
         timer = setInterval(refresh, 2000);

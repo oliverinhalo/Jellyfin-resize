@@ -313,7 +313,14 @@ public class MediaOptimizerController : ControllerBase
                 continue;
             }
 
-            var encodeRequest = StrategyResolver.Resolve(analysis, request.Strategy, caps, config);
+            // A batch-level language choice overrides the plugin default for this run only.
+            var effectiveConfig = config;
+            if (request.KeepAudioLanguages is not null || request.KeepSubtitleLanguages is not null)
+            {
+                effectiveConfig = CloneWithLanguages(config, request.KeepAudioLanguages, request.KeepSubtitleLanguages);
+            }
+
+            var encodeRequest = StrategyResolver.Resolve(analysis, request.Strategy, caps, effectiveConfig);
 
             // Batch-wide overrides, applied after the per-file strategy so an explicit choice wins.
             if (request.TargetHeight is > 0)
@@ -388,6 +395,48 @@ public class MediaOptimizerController : ControllerBase
             EstimatedSavingBytes = totalSaving,
             Items = items
         });
+    }
+
+    /// <summary>
+    /// Copies the configuration with different language keep-lists, so a batch override never
+    /// mutates the saved settings.
+    /// </summary>
+    /// <param name="source">The saved configuration.</param>
+    /// <param name="audio">Audio languages to keep, or null to leave unchanged.</param>
+    /// <param name="subtitles">Subtitle languages to keep, or null to leave unchanged.</param>
+    /// <returns>A copy carrying the overrides.</returns>
+    private static Configuration.PluginConfiguration CloneWithLanguages(
+        Configuration.PluginConfiguration source,
+        string? audio,
+        string? subtitles)
+    {
+        return new Configuration.PluginConfiguration
+        {
+            Injection = source.Injection,
+            DefaultOutputPolicy = source.DefaultOutputPolicy,
+            DefaultContainer = source.DefaultContainer,
+            SidecarDirectory = source.SidecarDirectory,
+            TempDirectory = source.TempDirectory,
+            QuarantineDirectory = source.QuarantineDirectory,
+            QuarantineRetentionDays = source.QuarantineRetentionDays,
+            MaxConcurrentJobs = source.MaxConcurrentJobs,
+            PauseWhilePlaybackActive = source.PauseWhilePlaybackActive,
+            LowProcessPriority = source.LowProcessPriority,
+            EncodingThreadCount = source.EncodingThreadCount,
+            FileStabilitySeconds = source.FileStabilitySeconds,
+            DeepVerifyBeforeReplace = source.DeepVerifyBeforeReplace,
+            FreeSpaceSafetyFactor = source.FreeSpaceSafetyFactor,
+            AllowNonAdminAnalysis = source.AllowNonAdminAnalysis,
+            JobHistoryLimit = source.JobHistoryLimit,
+            KeepAudioLanguages = audio ?? source.KeepAudioLanguages,
+            KeepSubtitleLanguages = subtitles ?? source.KeepSubtitleLanguages,
+            KeepUntaggedTracks = source.KeepUntaggedTracks,
+            DropCommentaryTracks = source.DropCommentaryTracks,
+            Speed = source.Speed,
+            PreferHardwareEncoding = source.PreferHardwareEncoding,
+            ResumeJobsAfterRestart = source.ResumeJobsAfterRestart,
+            RegenerateTrickplayAfterReplace = source.RegenerateTrickplayAfterReplace
+        };
     }
 
     private async Task<Jellyfin.Database.Implementations.Entities.User?> GetCallingUserAsync()

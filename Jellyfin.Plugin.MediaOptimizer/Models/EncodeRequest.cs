@@ -152,4 +152,10 @@ public class EncodeRequest
 
     /// <summary>Gets or sets where the result is placed.</summary>
     public OutputPolicy OutputPolicy { get; set; } = OutputPolicy.Sidecar;
+
+    /// <summary>Gets or sets the audio languages kept, comma separated. Empty keeps every track.</summary>
+    public string? KeepAudioLanguages { get; set; }
+
+    /// <summary>Gets or sets the subtitle languages kept, comma separated. Empty keeps every track.</summary>
+    public string? KeepSubtitleLanguages { get; set; }
 }

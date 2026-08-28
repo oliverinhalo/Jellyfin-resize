@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.2.0.0"
+version: "1.3.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,22 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.3.0.0
+  - Keep only the audio and subtitle languages you actually use; everything else is removed.
+    This is bit-exact for the tracks you keep and is often the largest saving available. A file
+    is never left with no audio at all.
+  - Optionally remove commentary and audio-description tracks.
+  - The queue is now crash-safe: every change is written to disk before it is acknowledged, and
+    an encode interrupted by a restart or a power cut is picked up again automatically.
+  - Speed settings: fastest / balanced / smallest file, and a switch to use the graphics card,
+    which is typically ten to twenty times faster than the CPU.
+  - A status panel entry that measures this server's real encoding speed and names what is
+    slowing it down.
+  - Statistics: disk actually reclaimed, average reduction, and how much is still held for undo.
+  - Pause the queue, run a job next, cancel everything pending, and free the space held by
+    originals awaiting undo.
+  - Scrub previews are rebuilt after a file is replaced, instead of staying stale.
+
   ### 1.2.0.0
   - Fixed the dialog's two panes rendering on top of each other. It now lives in a shadow root,
     so no stylesheet on the page can reposition it.

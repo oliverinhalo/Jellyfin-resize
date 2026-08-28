@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
+using MediaBrowser.Controller.Trickplay;
 using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 
@@ -50,6 +51,7 @@ public class LibraryReconciler : ILibraryReconciler
     private readonly ILibraryMonitor _libraryMonitor;
     private readonly IProviderManager _providerManager;
     private readonly IFileSystem _fileSystem;
+    private readonly ITrickplayManager _trickplayManager;
     private readonly ILogger<LibraryReconciler> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="LibraryReconciler"/> class.</summary>
@@ -57,18 +59,21 @@ public class LibraryReconciler : ILibraryReconciler
     /// <param name="libraryMonitor">Library monitor, so the watcher does not race the swap.</param>
     /// <param name="providerManager">Provider manager, for the post-swap refresh.</param>
     /// <param name="fileSystem">Jellyfin file system abstraction.</param>
+    /// <param name="trickplayManager">Trickplay manager, for discarding stale scrub previews.</param>
     /// <param name="logger">Logger.</param>
     public LibraryReconciler(
         ILibraryManager libraryManager,
         ILibraryMonitor libraryMonitor,
         IProviderManager providerManager,
         IFileSystem fileSystem,
+        ITrickplayManager trickplayManager,
         ILogger<LibraryReconciler> logger)
     {
         _libraryManager = libraryManager;
         _libraryMonitor = libraryMonitor;
         _providerManager = providerManager;
         _fileSystem = fileSystem;
+        _trickplayManager = trickplayManager;
         _logger = logger;
     }
 
@@ -100,6 +105,20 @@ public class LibraryReconciler : ILibraryReconciler
             itemId,
             oldPath,
             newPath);
+
+        // Scrub previews were generated from the old file. After a resolution change they are
+        // both wrong and the wrong size, so discard them and let Jellyfin rebuild on demand.
+        if (Plugin.Instance?.Configuration.RegenerateTrickplayAfterReplace ?? true)
+        {
+            try
+            {
+                await _trickplayManager.DeleteTrickplayDataAsync(item.Id, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or IOException)
+            {
+                _logger.LogDebug(ex, "[MediaOptimizer] Could not clear trickplay data for {ItemId}", itemId);
+            }
+        }
 
         // Re-probe so streams, bitrate and runtime reflect the new file straight away
         // instead of after the next scheduled scan.

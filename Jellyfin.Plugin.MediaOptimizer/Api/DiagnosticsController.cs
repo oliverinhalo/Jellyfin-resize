@@ -70,6 +70,7 @@ public class DiagnosticsController : ControllerBase
 
         await AddFfmpegChecksAsync(checks, cancellationToken).ConfigureAwait(false);
         AddQueueCheck(checks);
+        AddSpeedCheck(checks);
         AddInjectionCheck(checks);
         AddPermissionCheck(checks, isAdmin);
 
@@ -163,6 +164,79 @@ public class DiagnosticsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Explains the encoding speed people actually get, and which of the four levers is still
+    /// available to them. Software x265 at 4K is inherently slow; the useful thing is to say so
+    /// with numbers and name the fix rather than leave it looking broken.
+    /// </summary>
+    /// <param name="checks">The list being built.</param>
+    private void AddSpeedCheck(List<DiagnosticCheck> checks)
+    {
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var notes = new List<string>();
+        var status = CheckStatus.Ok;
+
+        var measured = _store.GetAll()
+            .Where(j => j.Status == JobStatus.Completed && j.PixelsPerSecond is > 0)
+            .OrderByDescending(j => j.FinishedAt ?? j.QueuedAt)
+            .Take(10)
+            .Select(j => j.PixelsPerSecond!.Value)
+            .ToList();
+
+        if (measured.Count > 0)
+        {
+            var pps = measured.Average();
+            var hours1080 = 1920d * 1080d * 24d * 7200d / pps / 3600d;
+            var hours4k = 3840d * 2160d * 24d * 7200d / pps / 3600d;
+            notes.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "Measured {0:F1} megapixels/second: roughly {1:F1}h for a two-hour 1080p film, {2:F1}h at 4K.",
+                pps / 1_000_000d,
+                hours1080,
+                hours4k));
+        }
+        else
+        {
+            notes.Add("No completed encode yet, so this server's speed has not been measured.");
+        }
+
+        if (config.LowProcessPriority)
+        {
+            status = CheckStatus.Warning;
+            notes.Add("FFmpeg runs at below-normal priority, which slows encoding whenever anything "
+                + "else wants the CPU. Turn it off in the plugin settings if the server is otherwise idle.");
+        }
+
+        if (config.PauseWhilePlaybackActive)
+        {
+            notes.Add("The queue pauses entirely while anyone is streaming, so overnight is when it "
+                + "will make progress.");
+        }
+
+        if (!config.PreferHardwareEncoding)
+        {
+            notes.Add("Hardware encoding is off. It is the single biggest speed lever — typically ten "
+                + "to twenty times faster — at the cost of a file around 50% larger for the same quality.");
+        }
+
+        if (config.Speed == SpeedPreference.SmallestFile)
+        {
+            notes.Add("Speed is set to \"smallest file\", which uses a slow encoder preset. "
+                + "Switch to balanced or fastest to trade a little size for a lot of time.");
+        }
+
+        if (config.EncodingThreadCount is > 0 && config.EncodingThreadCount < 4)
+        {
+            status = CheckStatus.Warning;
+            notes.Add(string.Format(
+                CultureInfo.InvariantCulture,
+                "FFmpeg is capped at {0} thread(s), which throttles it badly. Set 0 to use every core.",
+                config.EncodingThreadCount));
+        }
+
+        checks.Add(new DiagnosticCheck("Encoding speed", status, string.Join(" ", notes)));
+    }
+
     private void AddQueueCheck(List<DiagnosticCheck> checks)
     {
         try
@@ -170,14 +244,21 @@ public class DiagnosticsController : ControllerBase
             var all = _store.GetAll();
             var active = _store.GetActive();
 
+            var resumed = all.Count(j => j.ResumeCount > 0);
             checks.Add(new DiagnosticCheck(
                 "Conversion queue",
-                CheckStatus.Ok,
+                JobStore.IsPaused ? CheckStatus.Warning : CheckStatus.Ok,
                 string.Format(
                     CultureInfo.InvariantCulture,
-                    "{0} active, {1} in history. The queue survives restarts.",
+                    "{0} active, {1} in history.{2} Every change is written to disk before it is "
+                    + "acknowledged, so a crash or a power cut loses nothing and interrupted encodes "
+                    + "are picked up again on restart.{3}",
                     active.Count,
-                    all.Count)));
+                    all.Count,
+                    JobStore.IsPaused ? " The queue is paused." : string.Empty,
+                    resumed > 0
+                        ? string.Format(CultureInfo.InvariantCulture, " {0} job(s) have already been resumed this way.", resumed)
+                        : string.Empty)));
         }
 #pragma warning disable CA1031
         catch (Exception ex)

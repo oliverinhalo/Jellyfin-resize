@@ -107,6 +107,14 @@ public class EncodeJob
     /// </summary>
     public double? PixelsPerSecond { get; set; }
 
+    /// <summary>
+    /// Gets or sets the queue position weight. Lower runs first; ties fall back to arrival order.
+    /// </summary>
+    public int Priority { get; set; }
+
+    /// <summary>Gets or sets how many times this job has been resumed after a server restart.</summary>
+    public int ResumeCount { get; set; }
+
     /// <summary>Gets or sets the policy that was applied.</summary>
     public OutputPolicy OutputPolicy { get; set; }
 
