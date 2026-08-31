@@ -61,9 +61,15 @@ public class SweepTask : IScheduledTask
         progress.Report(0);
 
         ExpireQuarantine(cancellationToken);
-        progress.Report(50);
+        progress.Report(35);
+
+        RemoveOldJobs(cancellationToken);
+        progress.Report(60);
 
         CleanTempDirectory(cancellationToken);
+        progress.Report(85);
+
+        CleanOrphanedWorkFiles(cancellationToken);
         progress.Report(100);
 
         return Task.CompletedTask;
@@ -98,6 +104,99 @@ public class SweepTask : IScheduledTask
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 _logger.LogWarning(ex, "[MediaOptimizer] Could not delete quarantined file for job {JobId}", job.Id);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes finished jobs once they are older than the configured age, so the history does not
+    /// have to be tidied by hand. A job still holding a restorable original is always kept.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private void RemoveOldJobs(CancellationToken cancellationToken)
+    {
+        var days = Plugin.Instance?.Configuration.RemoveFinishedJobsAfterDays ?? 30;
+        if (days <= 0)
+        {
+            return;
+        }
+
+        var cutoff = DateTime.UtcNow.AddDays(-days);
+        var removed = 0;
+
+        foreach (var job in _store.GetAll())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (job.IsActive || job.CanRevert)
+            {
+                continue;
+            }
+
+            if ((job.FinishedAt ?? job.QueuedAt) < cutoff && _store.Remove(job.Id))
+            {
+                removed++;
+            }
+        }
+
+        if (removed > 0)
+        {
+            _logger.LogInformation("[MediaOptimizer] Removed {Count} finished job(s) older than {Days} days", removed, days);
+        }
+    }
+
+    /// <summary>
+    /// Deletes working files left in library folders by an encode that was killed outright, so a
+    /// crash cannot leave hidden partial files sitting next to the media.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private void CleanOrphanedWorkFiles(CancellationToken cancellationToken)
+    {
+        var activeIds = _store.GetActive().Select(j => j.Id.ToString("N")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var directories = _store.GetAll()
+            .Select(j => Path.GetDirectoryName(j.SourcePath))
+            .Where(d => !string.IsNullOrEmpty(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var cutoff = DateTime.UtcNow.AddHours(-6);
+
+        foreach (var directory in directories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string[] leftovers;
+            try
+            {
+                leftovers = Directory.GetFiles(directory!, ".mo-*.motmp");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                continue;
+            }
+
+            foreach (var file in leftovers)
+            {
+                // ".mo-<jobid>.<ext>.motmp"
+                var name = Path.GetFileName(file);
+                var jobId = name.Length > 4 ? name[4..].Split('.')[0] : string.Empty;
+                if (activeIds.Contains(jobId))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff)
+                    {
+                        File.Delete(file);
+                        _logger.LogInformation("[MediaOptimizer] Removed abandoned working file {Path}", file);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(ex, "[MediaOptimizer] Could not delete working file {Path}", file);
+                }
             }
         }
     }

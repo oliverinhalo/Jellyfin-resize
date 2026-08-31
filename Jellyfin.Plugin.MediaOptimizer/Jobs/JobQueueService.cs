@@ -185,9 +185,12 @@ public class JobQueueService : BackgroundService, IJobQueueService
             job.SourcePath = analysis.Path;
             job.SourceSizeBytes = analysis.SizeBytes;
 
-            var tempDir = _output.GetTempDirectory();
+            // Encoding into the media folder makes the final move a rename rather than a copy of
+            // the whole file, which on a multi-gigabyte film is the difference between instant and
+            // several minutes. The suffix keeps Jellyfin's scanner away from the partial file.
+            var tempDir = _output.GetWorkDirectoryFor(analysis.Path);
             var extension = job.Request.Container.Trim().TrimStart('.').ToLowerInvariant();
-            tempPath = Path.Combine(tempDir, FormattableString.Invariant($"{job.Id:N}.{extension}"));
+            tempPath = Path.Combine(tempDir, FormattableString.Invariant($".mo-{job.Id:N}.{extension}.motmp"));
 
             var plan = await _planner
                 .PlanAsync(analysis, job.Request, tempPath, cancellationToken)
@@ -206,7 +209,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
             // Re-derive the temp path in case the planner normalised the container.
             if (!string.Equals(extension, plan.OutputExtension, StringComparison.OrdinalIgnoreCase))
             {
-                tempPath = Path.Combine(tempDir, FormattableString.Invariant($"{job.Id:N}.{plan.OutputExtension}"));
+                tempPath = Path.Combine(tempDir, FormattableString.Invariant($".mo-{job.Id:N}.{plan.OutputExtension}.motmp"));
                 plan = await _planner
                     .PlanAsync(analysis, job.Request, tempPath, cancellationToken)
                     .ConfigureAwait(false);
@@ -260,7 +263,8 @@ public class JobQueueService : BackgroundService, IJobQueueService
             job.ProgressPercent = 100d;
             _store.Update(job);
 
-            var deepScan = Config.DeepVerifyBeforeReplace && job.OutputPolicy == OutputPolicy.Replace;
+            var deepScan = Config.DeepVerifyBeforeReplace
+                && job.OutputPolicy is OutputPolicy.Replace or OutputPolicy.ReplaceAndDelete;
             var verification = await _verifier.VerifyAsync(
                 analysis.Path,
                 tempPath,

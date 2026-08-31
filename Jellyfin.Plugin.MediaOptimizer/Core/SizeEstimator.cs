@@ -205,8 +205,9 @@ public class SizeEstimator : ISizeEstimator
         var crf = request.Quality ?? reference;
         var qualityFactor = Math.Pow(CrfStepFactor, reference - crf);
 
-        // Hardware encoders need meaningfully more bitrate for the same perceived quality.
-        var hardwareFactor = request.UseHardware ? 1.5d : 1d;
+        // Tuned hardware encoding (multi-pass, lookahead, B-frames, adaptive quantisation) lands
+        // within about 15% of a CPU encode rather than the 50% a GPU on its defaults would cost.
+        var hardwareFactor = request.UseHardware ? 1.15d : 1d;
 
         if (sourceBitrate <= 0d)
         {

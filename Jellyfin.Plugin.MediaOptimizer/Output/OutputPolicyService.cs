@@ -17,6 +17,14 @@ public interface IOutputPolicyService
     /// <returns>An existing directory path.</returns>
     string GetTempDirectory();
 
+    /// <summary>
+    /// Gets the best directory to encode into for a given source. Writing next to the source
+    /// makes the final move a rename rather than a whole-file copy.
+    /// </summary>
+    /// <param name="sourcePath">The file being converted.</param>
+    /// <returns>An existing, writable directory.</returns>
+    string GetWorkDirectoryFor(string sourcePath);
+
     /// <summary>Applies the requested policy to a verified output file.</summary>
     /// <param name="job">The job being completed.</param>
     /// <param name="tempOutputPath">The verified temporary file.</param>
@@ -56,6 +64,9 @@ public class OutputPolicyService : IOutputPolicyService
         _logger = logger;
     }
 
+    /// <summary>Extension given to a kept original. Not a media extension, so Jellyfin ignores it.</summary>
+    internal const string OriginalSuffix = ".mooriginal";
+
     private static PluginConfiguration Config =>
         Plugin.Instance?.Configuration ?? new PluginConfiguration();
 
@@ -69,6 +80,41 @@ public class OutputPolicyService : IOutputPolicyService
 
         Directory.CreateDirectory(dir);
         return dir;
+    }
+
+    /// <inheritdoc />
+    public string GetWorkDirectoryFor(string sourcePath)
+    {
+        if (Config.EncodeBesideMedia && !string.IsNullOrEmpty(sourcePath))
+        {
+            var directory = Path.GetDirectoryName(sourcePath);
+            if (!string.IsNullOrEmpty(directory) && IsWritable(directory))
+            {
+                return directory;
+            }
+        }
+
+        return GetTempDirectory();
+    }
+
+    /// <summary>Checks that a directory can be written to before choosing it.</summary>
+    /// <param name="directory">Directory to test.</param>
+    /// <returns>Whether a file can be created there.</returns>
+    internal static bool IsWritable(string directory)
+    {
+        try
+        {
+            var probe = Path.Combine(directory, ".mediaoptimizer-probe-" + Guid.NewGuid().ToString("N"));
+            using (File.Create(probe, 1, FileOptions.DeleteOnClose))
+            {
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc />
@@ -97,6 +143,7 @@ public class OutputPolicyService : IOutputPolicyService
                 break;
 
             case OutputPolicy.Replace:
+            case OutputPolicy.ReplaceAndDelete:
                 await ApplyReplaceAsync(job, tempOutputPath, cancellationToken).ConfigureAwait(false);
                 break;
 
@@ -296,34 +343,53 @@ public class OutputPolicyService : IOutputPolicyService
                 Path.GetDirectoryName(sourcePath) ?? ".",
                 Path.GetFileNameWithoutExtension(sourcePath) + extension);
 
-        var quarantineDir = GetQuarantineDirectory();
-        var quarantinePath = Path.Combine(
-            quarantineDir,
-            FormattableString.Invariant($"{job.Id:N}-{Path.GetFileName(sourcePath)}"));
+        var deleteNow = job.OutputPolicy == OutputPolicy.ReplaceAndDelete;
+        var keptPath = deleteNow ? null : BuildKeptOriginalPath(sourcePath);
 
         var watchDir = Path.GetDirectoryName(sourcePath) ?? sourcePath;
         _reconciler.ReportChangeBegin(watchDir);
 
         try
         {
-            // The original is moved aside rather than deleted, so a revert is always possible
-            // for as long as the retention window lasts.
-            MoveAcrossVolumes(sourcePath, quarantinePath, overwrite: false);
-            job.QuarantinePath = quarantinePath;
-            job.QuarantineExpiresAt = DateTime.UtcNow.AddDays(Math.Max(0, Config.QuarantineRetentionDays));
+            if (deleteNow)
+            {
+                // Still move it aside rather than deleting outright: if putting the new file in
+                // place fails, the original must still be there to restore.
+                var scratch = sourcePath + ".mo-replacing";
+                MoveAcrossVolumes(sourcePath, scratch, overwrite: true);
 
-            try
-            {
-                MoveAcrossVolumes(tempOutputPath, finalPath, overwrite: true);
+                try
+                {
+                    MoveAcrossVolumes(tempOutputPath, finalPath, overwrite: true);
+                }
+                catch
+                {
+                    _logger.LogError("[MediaOptimizer] Could not move the new file into place; restoring the original");
+                    MoveAcrossVolumes(scratch, sourcePath, overwrite: true);
+                    throw;
+                }
+
+                File.Delete(scratch);
             }
-            catch
+            else
             {
-                // Put the original back before surfacing the failure; never leave a gap.
-                _logger.LogError("[MediaOptimizer] Failed to move the new file into place; restoring the original");
-                MoveAcrossVolumes(quarantinePath, sourcePath, overwrite: true);
-                job.QuarantinePath = null;
-                job.QuarantineExpiresAt = null;
-                throw;
+                // Renaming within the same directory is atomic and instant, however large the file.
+                MoveAcrossVolumes(sourcePath, keptPath!, overwrite: false);
+                job.QuarantinePath = keptPath;
+                job.QuarantineExpiresAt = DateTime.UtcNow.AddDays(Math.Max(0, Config.QuarantineRetentionDays));
+
+                try
+                {
+                    MoveAcrossVolumes(tempOutputPath, finalPath, overwrite: true);
+                }
+                catch
+                {
+                    _logger.LogError("[MediaOptimizer] Could not move the new file into place; restoring the original");
+                    MoveAcrossVolumes(keptPath!, sourcePath, overwrite: true);
+                    job.QuarantinePath = null;
+                    job.QuarantineExpiresAt = null;
+                    throw;
+                }
             }
 
             job.OutputPath = finalPath;
@@ -343,14 +409,90 @@ public class OutputPolicyService : IOutputPolicyService
             _reconciler.ReportChangeComplete(watchDir, refreshPath: false);
         }
 
-        // Only after the file is safely in place does the database get repointed.
         await _reconciler.RepointAsync(job.ItemId, finalPath, cancellationToken).ConfigureAwait(false);
+        WriteReplacementLog(job, sourcePath, finalPath, keptPath);
 
         _logger.LogInformation(
-            "[MediaOptimizer] Replaced {Source} with {Final}; original quarantined at {Quarantine}",
+            "[MediaOptimizer] Replaced {Source} with {Final}; original {Disposition}",
             sourcePath,
             finalPath,
-            quarantinePath);
+            keptPath is null ? "deleted" : "kept at " + keptPath);
+    }
+
+    /// <summary>
+    /// Builds the path a replaced original is kept at. Beside the media by default, using an
+    /// extension Jellyfin's scanner ignores so the library never picks it up as a second copy.
+    /// </summary>
+    /// <param name="sourcePath">The original file.</param>
+    /// <returns>Where to keep it.</returns>
+    internal string BuildKeptOriginalPath(string sourcePath)
+    {
+        if (Config.KeepOriginalsBesideMedia)
+        {
+            var directory = Path.GetDirectoryName(sourcePath);
+            if (!string.IsNullOrEmpty(directory) && IsWritable(directory))
+            {
+                var candidate = sourcePath + OriginalSuffix;
+                var counter = 2;
+                while (File.Exists(candidate))
+                {
+                    candidate = sourcePath + "." + counter.ToString(CultureInfo.InvariantCulture) + OriginalSuffix;
+                    counter++;
+                }
+
+                return candidate;
+            }
+        }
+
+        return Path.Combine(
+            GetQuarantineDirectory(),
+            FormattableString.Invariant($"{Guid.NewGuid():N}-{Path.GetFileName(sourcePath)}"));
+    }
+
+    /// <summary>
+    /// Appends a plain-text record of every replacement, so there is a readable trail independent
+    /// of the plugin's own job history.
+    /// </summary>
+    /// <param name="job">The job.</param>
+    /// <param name="sourcePath">The original path.</param>
+    /// <param name="finalPath">Where the new file ended up.</param>
+    /// <param name="keptPath">Where the original was kept, or null when it was deleted.</param>
+    private void WriteReplacementLog(EncodeJob job, string sourcePath, string finalPath, string? keptPath)
+    {
+        try
+        {
+            var logPath = Path.Combine(_appPaths.DataPath, "mediaoptimizer", "replacements.log");
+            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+
+            var line = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0:u}\t{1}\t{2} -> {3}\t{4} -> {5}\toriginal: {6}",
+                DateTime.UtcNow,
+                job.ItemName,
+                Path.GetFileName(sourcePath),
+                Path.GetFileName(finalPath),
+                FormatSize(job.SourceSizeBytes),
+                FormatSize(job.OutputSizeBytes),
+                keptPath is null
+                    ? "deleted"
+                    : FormattableString.Invariant($"kept until {job.QuarantineExpiresAt:yyyy-MM-dd} at {keptPath}"));
+
+            File.AppendAllText(logPath, line + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "[MediaOptimizer] Could not append to the replacement log");
+        }
+    }
+
+    private static string FormatSize(long? bytes)
+    {
+        if (bytes is not > 0)
+        {
+            return "unknown";
+        }
+
+        return string.Format(CultureInfo.InvariantCulture, "{0:F2} GiB", bytes.Value / 1024d / 1024d / 1024d);
     }
 
     private static string DescribeVersion(EncodeRequest request)

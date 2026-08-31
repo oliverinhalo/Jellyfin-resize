@@ -167,6 +167,66 @@ readable, whether the in-app injection registered, and whether your account may 
 conversions. A failure in one is reported on its own line with what to do about it, and never
 hides the others. If that page renders at all, the plugin is loaded and its API is routed.
 
+## Making it faster
+
+Encoding is genuinely slow — x265 at 4K is a few frames per second on a CPU, and that is the job,
+not a bug. But most of the gap between this plugin and running FFmpeg by hand came from settings,
+not the encoder, and those are fixed:
+
+| What | Cost | Now |
+|---|---|---|
+| Full decode verification after every replace | roughly doubled every job | Off by default; the cheap checks still run |
+| Encoding into a working folder on another disk | a full copy of the finished file | Encodes into the media folder — the final move is a rename |
+| Moving the original into a data folder | a second full copy | Renamed in place, instantly |
+| Below-normal process priority | slower whenever anything else runs | Off by default |
+
+On a 5 GB film those three copies alone were minutes of pure disk shuffling per job.
+
+**The levers that remain, in order of effect:**
+
+1. **Encode on the graphics card.** Ten to twenty times faster. See below for the quality question.
+2. **Reduce the resolution first.** 4K to 1440p is roughly a quarter of the pixels, so roughly a
+   quarter of the time — and a much bigger file saving than any amount of CRF tuning.
+3. **Speed setting.** "Fastest" picks a quicker encoder preset: typically three to five times
+   sooner for a file around 10% larger.
+4. **Let it run.** The queue pauses while anyone is streaming and runs one job at a time by
+   default. Overnight is when it makes progress.
+
+### "Can it use the GPU and still make a small file?"
+
+Mostly, yes — that reputation comes from GPUs being run on their defaults. This plugin drives them
+in their highest-quality mode instead: multi-pass rate control, a 32-frame lookahead, B-frames with
+middle reference, and spatial and temporal adaptive quantisation.
+
+That lands roughly **10–20% larger** than a slow CPU encode, rather than the ~50% a GPU on its
+defaults costs, while still being many times faster. For a library-wide reduction that is almost
+always the right trade. Keep the CPU for files you care most about.
+
+### Would another program be faster?
+
+- **Tdarr** and **Unmanic** can spread encoding across several machines. If you have a spare PC,
+  that beats anything a single-server plugin can do.
+- **SVT-AV1** is often faster than x265 at comparable quality and is used automatically for the
+  High reduction preset when your FFmpeg has it and AV1 encoding is enabled.
+- Nothing will make software 4K encoding quick. If jobs need to finish in minutes rather than
+  hours, hardware encoding is the only real answer.
+
+## What happens to the original
+
+Replacing a file keeps the old one **in the same folder**, renamed with an extension Jellyfin
+ignores, so it never shows up as a second copy. That makes the swap an instant rename rather than
+a whole-file copy, and putting it back is equally instant.
+
+Three choices:
+
+- **Replace, keep the old file** for the retention period (7 days by default), then it is deleted
+  automatically. Undo any time before that.
+- **Replace and delete now** — frees the space immediately, no undo.
+- **Keep the original** and write a new file alongside, or add it as another version.
+
+Every replacement is also appended to `replacements.log` in the plugin data folder, so there is a
+readable trail independent of the plugin's own history.
+
 ### If a plugin does not appear
 
 1. **Click the "Available" chip.** The page defaults to *Installed*. This is nearly always it.

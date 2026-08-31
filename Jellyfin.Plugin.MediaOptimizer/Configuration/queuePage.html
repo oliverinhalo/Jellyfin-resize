@@ -6,13 +6,21 @@
   <div data-role="content">
     <div class="content-primary">
 
-      <div class="verticalSection">
-        <h2 class="sectionTitle">Status</h2>
-        <div id="moptDiag">Checking…</div>
-      </div>
+      <details class="moptPanel" id="moptDiagPanel">
+        <summary class="moptSummary">
+          <span class="moptDot" id="moptDiagDot"></span>
+          <span id="moptDiagLine">Checking…</span>
+          <span class="moptSummaryHint">details</span>
+        </summary>
+        <div id="moptDiag" class="moptPanelBody"></div>
+      </details>
 
-      <div class="verticalSection">
-        <h2 class="sectionTitle">Choose files to convert</h2>
+      <details class="moptPanel" id="moptPickerPanel" open>
+        <summary class="moptSummary">
+          <strong>Choose files to convert</strong>
+          <span class="moptSummaryHint" id="moptPickerHint"></span>
+        </summary>
+        <div class="moptPanelBody">
 
         <div class="moptFilters">
           <div class="moptFilter moptFilterWide">
@@ -81,17 +89,26 @@
         </div>
 
         <div id="moptResults"></div>
-      </div>
+        </div>
+      </details>
 
       <div class="verticalSection">
-        <h2 class="sectionTitle">Queue and history</h2>
+        <h2 class="sectionTitle">Queue</h2>
         <div id="moptStats" class="moptStats"></div>
         <div class="moptQueueBar">
           <button is="emby-button" type="button" id="moptPause" class="raised emby-button">Pause queue</button>
           <button is="emby-button" type="button" id="moptClear" class="raised emby-button">Cancel everything pending</button>
-          <button is="emby-button" type="button" id="moptRelease" class="raised emby-button">Free up space held by originals</button>
+          <button is="emby-button" type="button" id="moptRelease" class="raised emby-button">Delete originals kept for undo</button>
         </div>
-        <div id="moptJobs"></div>
+        <div id="moptActiveJobs"></div>
+
+        <details class="moptPanel" id="moptHistoryPanel">
+          <summary class="moptSummary">
+            <strong>History</strong>
+            <span class="moptSummaryHint" id="moptHistoryHint"></span>
+          </summary>
+          <div id="moptJobs" class="moptPanelBody"></div>
+        </details>
       </div>
 
     </div>
@@ -144,6 +161,16 @@
     .moptStatLabel{font-size:11.5px;opacity:.62;text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
     .moptStatNote{font-size:12.5px;opacity:.65;margin-bottom:12px}
     .moptQueueBar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    .moptPanel{border:1px solid rgba(128,128,128,.28);border-radius:6px;margin-bottom:14px;
+      background:rgba(128,128,128,.05)}
+    .moptSummary{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;
+      list-style:none;font-size:14px;user-select:none}
+    .moptSummary::-webkit-details-marker{display:none}
+    .moptSummary::after{content:"\25BE";margin-left:auto;opacity:.5;font-size:12px;transition:transform .15s ease}
+    .moptPanel[open] .moptSummary::after{transform:rotate(180deg)}
+    .moptSummary:hover{background:rgba(128,128,128,.09)}
+    .moptSummaryHint{opacity:.6;font-size:12.5px}
+    .moptPanelBody{padding:2px 13px 13px}
     .moptErr{color:#e05a50;margin-top:5px;font-size:13px}
   </style>
 
@@ -181,8 +208,13 @@
       function renderDiagnostics() {
         var host = page.querySelector('#moptDiag');
         api('GET', 'MediaOptimizer/Diagnostics').then(function (d) {
+          var level = String(d.Overall || 'Ok').toLowerCase();
+          page.querySelector('#moptDiagDot').className = 'moptDot ' + level;
+          page.querySelector('#moptDiagLine').textContent = d.Summary;
+          // Only demand attention when something is actually wrong.
+          page.querySelector('#moptDiagPanel').open = level === 'failed';
+
           host.innerHTML = '';
-          host.appendChild(el('div', 'moptBanner ' + String(d.Overall || 'Ok').toLowerCase(), d.Summary));
           (d.Checks || []).forEach(function (c) {
             var row = el('div', 'moptCheck');
             row.appendChild(el('span', 'moptDot ' + String(c.Status).toLowerCase()));
@@ -219,6 +251,9 @@
         var host = page.querySelector('#moptResults');
         host.innerHTML = '';
         page.querySelector('#moptSelectAll').checked = false;
+
+        page.querySelector('#moptPickerHint').textContent = shown.length
+          ? shown.length + ' shown' : 'no matches';
 
         if (!shown.length) {
           host.appendChild(el('div', 'moptEmpty', 'Nothing matches those filters.'));
@@ -346,13 +381,29 @@
       // ---- queue -----------------------------------------------------------------------
       function renderJobs(jobs) {
         var host = page.querySelector('#moptJobs');
+        var activeHost = page.querySelector('#moptActiveJobs');
         host.innerHTML = '';
-        if (!jobs || !jobs.length) {
-          host.appendChild(el('div', 'moptEmpty', 'Nothing queued yet.'));
-          return;
+        activeHost.innerHTML = '';
+
+        jobs = jobs || [];
+        var isActive = function (j) {
+          return ['Queued','Preflight','Encoding','Verifying','Applying'].indexOf(j.Status) >= 0;
+        };
+        var active = jobs.filter(isActive);
+        var history = jobs.filter(function (j) { return !isActive(j); });
+
+        page.querySelector('#moptHistoryHint').textContent = history.length
+          ? history.length + ' finished' : 'nothing yet';
+
+        if (!active.length) {
+          activeHost.appendChild(el('div', 'moptEmpty', 'Nothing running or queued.'));
+        }
+        if (!history.length) {
+          host.appendChild(el('div', 'moptEmpty', 'No finished conversions yet.'));
         }
 
         jobs.forEach(function (j) {
+          var target = isActive(j) ? activeHost : host;
           var box = el('div', 'moptJob');
           var head = el('div', 'moptJobHead');
           head.appendChild(el('span', 'moptJobName', j.ItemName || j.ItemId));
@@ -396,8 +447,7 @@
             actions.appendChild(b);
           }
 
-          var active = ['Queued','Preflight','Encoding','Verifying','Applying'].indexOf(j.Status) >= 0;
-          if (active) {
+          if (isActive(j)) {
             button('Cancel', function () { return api('DELETE', 'MediaOptimizer/Jobs/' + j.Id); });
             if (j.Status === 'Queued') {
               button('Run this next', function () { return api('POST', 'MediaOptimizer/Jobs/' + j.Id + '/MoveToFront'); });
@@ -417,7 +467,7 @@
             }
           }
           if (actions.children.length) { box.appendChild(actions); }
-          host.appendChild(box);
+          target.appendChild(box);
         });
       }
 

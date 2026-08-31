@@ -841,7 +841,8 @@
         ], req.Container, function (v) { setContainer(v); });
 
         selectField(outRow, 'What happens to the original', [
-            { value: 'Replace', label: 'Replace it' },
+            { value: 'Replace', label: 'Replace it, keep the old file for a while' },
+            { value: 'ReplaceAndDelete', label: 'Replace it and delete the old file now' },
             { value: 'Sidecar', label: 'Keep it, save a new file alongside' },
             { value: 'AlternateVersion', label: 'Keep it, add as another version' }
         ], req.OutputPolicy, function (v) { req.OutputPolicy = v; rebuild(); });
@@ -862,11 +863,18 @@
         host.appendChild(keepRow);
 
         if (req.OutputPolicy === 'Replace') {
+            host.appendChild(warningBox('info',
+                'The old file is renamed and left in the same folder, so it can be put back ' +
+                'instantly from Dashboard → Media Optimizer. It is deleted automatically once the ' +
+                'retention period in the plugin settings has passed. Nothing is touched at all ' +
+                'unless the new file passes verification.'));
+        }
+
+        if (req.OutputPolicy === 'ReplaceAndDelete') {
             host.appendChild(warningBox('warning',
-                'The original is moved to a safety folder first and can be put back from ' +
-                'Dashboard → Media Optimizer for the retention period set in the plugin settings ' +
-                '(14 days by default). Nothing is deleted before then, and nothing is touched at ' +
-                'all unless the new file passes verification.'));
+                'The old file is deleted as soon as the new one passes verification. That frees ' +
+                'the space immediately, but there is no undo — choose "keep the old file for a ' +
+                'while" if you want to be able to change your mind.'));
         }
     }
 
@@ -930,7 +938,8 @@
 
         selectField(row, 'What happens to originals', [
             { value: null, label: 'Use the plugin default' },
-            { value: 'Replace', label: 'Replace them' },
+            { value: 'Replace', label: 'Replace, keep old files for a while' },
+            { value: 'ReplaceAndDelete', label: 'Replace and delete old files now' },
             { value: 'Sidecar', label: 'Keep them, save new files' },
             { value: 'AlternateVersion', label: 'Keep them, add versions' }
         ], batch.OutputPolicy, function (v) { batch.OutputPolicy = v; });

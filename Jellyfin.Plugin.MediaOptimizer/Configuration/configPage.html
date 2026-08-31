@@ -45,7 +45,8 @@
           <div class="selectContainer">
             <label class="selectLabel" for="DefaultOutputPolicy">Default output policy</label>
             <select is="emby-select" id="DefaultOutputPolicy" name="DefaultOutputPolicy" class="emby-select-withcolor emby-select">
-              <option value="Replace">Replace the original (undoable for the retention period)</option>
+              <option value="Replace">Replace, keep the old file for the retention period</option>
+              <option value="ReplaceAndDelete">Replace and delete the old file immediately</option>
               <option value="Sidecar">Keep the original, save a new file alongside</option>
               <option value="AlternateVersion">Keep the original, add as another version</option>
             </select>
@@ -78,9 +79,34 @@
           </div>
 
           <div class="inputContainer">
-            <label class="inputLabel inputLabelUnfocused" for="QuarantineRetentionDays">Keep originals for (days)</label>
+            <label class="inputLabel inputLabelUnfocused" for="QuarantineRetentionDays">Keep replaced originals for (days)</label>
             <input is="emby-input" type="number" id="QuarantineRetentionDays" name="QuarantineRetentionDays" min="0" max="365" />
-            <div class="fieldDescription">A replaced original can be restored for this long. After that the housekeeping task deletes it.</div>
+            <div class="fieldDescription">
+              A replaced original can be put back for this long; after that the housekeeping task
+              deletes it. 7 is a sensible default — long enough to notice a problem, short enough
+              not to fill the disk.
+            </div>
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="KeepOriginalsBesideMedia" name="KeepOriginalsBesideMedia" />
+            <span>Keep replaced originals in the same folder as the media</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Strongly recommended, and the biggest speed win available. The old file is simply
+            renamed, which is instant however large it is. Moving it to a folder on another disk
+            copies every byte — minutes per film. The renamed file uses an extension Jellyfin
+            ignores, so it never appears in your library, and every replacement is recorded in
+            replacements.log in the plugin data folder.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="EncodeBesideMedia" name="EncodeBesideMedia" />
+            <span>Encode into the media folder rather than a working directory</span>
+          </label>
+          <div class="fieldDescription">
+            Same reasoning: it makes putting the finished file in place a rename instead of a copy.
+            Turn this off only if your library is on slow or space-constrained storage.
           </div>
         </div>
 
@@ -229,6 +255,16 @@
             <label class="inputLabel inputLabelUnfocused" for="JobHistoryLimit">Jobs kept in history</label>
             <input is="emby-input" type="number" id="JobHistoryLimit" name="JobHistoryLimit" min="10" max="5000" />
           </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="RemoveFinishedJobsAfterDays">Remove finished jobs after (days)</label>
+            <input is="emby-input" type="number" id="RemoveFinishedJobsAfterDays" name="RemoveFinishedJobsAfterDays" min="0" max="365" />
+            <div class="fieldDescription">
+              Finished jobs are cleared automatically once they reach this age. 0 keeps them until
+              the count limit above is reached instead. A job still holding a restorable original
+              is never removed.
+            </div>
+          </div>
         </div>
 
         <div>
@@ -246,10 +282,11 @@
       var fields = ['Injection', 'DefaultContainer', 'DefaultOutputPolicy', 'SidecarDirectory', 'TempDirectory',
         'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
         'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit',
-        'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed'];
+        'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed', 'RemoveFinishedJobsAfterDays'];
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
         'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
-        'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace'];
+        'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace',
+        'KeepOriginalsBesideMedia', 'EncodeBesideMedia'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
         Dashboard.showLoadingMsg();

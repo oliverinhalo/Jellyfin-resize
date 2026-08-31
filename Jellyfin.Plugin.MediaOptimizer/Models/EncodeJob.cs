@@ -126,6 +126,6 @@ public class EncodeJob
     /// <summary>Gets a value indicating whether the original can still be restored.</summary>
     public bool CanRevert =>
         Status == JobStatus.Completed
-        && OutputPolicy == OutputPolicy.Replace
+        && OutputPolicy is OutputPolicy.Replace or OutputPolicy.ReplaceAndDelete
         && !string.IsNullOrEmpty(QuarantinePath);
 }

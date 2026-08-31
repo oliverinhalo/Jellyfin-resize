@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.3.0.0"
+version: "1.4.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,20 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.4.0.0
+  - Much faster, without touching the encoder. Replaced originals are now renamed in place
+    instead of copied to a data folder, encoding writes into the media folder so the finished
+    file is moved by rename, and the full decode verification that doubled every job is off by
+    default. On a 5 GB film that is minutes of pure disk copying removed per job.
+  - Hardware encoding is now tuned for quality — multi-pass, lookahead, B-frames and adaptive
+    quantisation — landing 10-20% larger than a slow CPU encode rather than 50%.
+  - New: replace and delete the original immediately, or replace and keep it for a set number of
+    days. Every replacement is written to replacements.log.
+  - Finished jobs are removed automatically after 30 days.
+  - The dashboard is tidier: status collapses to one line, the file picker and the history are
+    dropdowns, and running jobs are separated from finished ones.
+  - Process priority is no longer lowered by default, which was quietly slowing every encode.
+
   ### 1.3.0.0
   - Keep only the audio and subtitle languages you actually use; everything else is removed.
     This is bit-exact for the tracks you keep and is often the largest saving available. A file

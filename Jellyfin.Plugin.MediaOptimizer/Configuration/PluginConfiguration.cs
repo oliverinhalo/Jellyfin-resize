@@ -11,8 +11,16 @@ public enum OutputPolicy
     /// <summary>Register the result as an alternate version of the same library item.</summary>
     AlternateVersion = 1,
 
-    /// <summary>Replace the original, moving it to quarantine first.</summary>
-    Replace = 2
+    /// <summary>
+    /// Replace the original, keeping it for the retention period so the change can be undone.
+    /// </summary>
+    Replace = 2,
+
+    /// <summary>
+    /// Replace the original and delete it as soon as the result passes verification. Frees the
+    /// space immediately; there is no undo.
+    /// </summary>
+    ReplaceAndDelete = 3
 }
 
 /// <summary>How the client script is delivered into jellyfin-web.</summary>
@@ -63,11 +71,32 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets the working directory for in-progress encodes. Empty means the plugin data folder.</summary>
     public string TempDirectory { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets the directory originals are moved to before a Replace. Empty means the plugin data folder.</summary>
+    /// <summary>
+    /// Gets or sets the directory originals are moved to when they are not kept beside the media.
+    /// Empty means the plugin data folder.
+    /// </summary>
     public string QuarantineDirectory { get; set; } = string.Empty;
 
-    /// <summary>Gets or sets how many days a quarantined original is kept before the sweep task deletes it.</summary>
-    public int QuarantineRetentionDays { get; set; } = 14;
+    /// <summary>Gets or sets how many days a replaced original is kept before it is deleted.</summary>
+    public int QuarantineRetentionDays { get; set; } = 7;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a replaced original is kept next to the media file
+    /// rather than moved into the plugin's data folder.
+    /// <para>
+    /// On by default, and it is also the single biggest speed win available: moving a file within
+    /// one directory is an instant rename, whereas moving it to a folder on another disk copies
+    /// every byte. On a 5 GB film that is the difference between milliseconds and minutes, twice
+    /// over — once for the finished encode and once for the original.
+    /// </para>
+    /// </summary>
+    public bool KeepOriginalsBesideMedia { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether encoding writes into the media folder rather than
+    /// the working directory. Same reasoning: it makes the final move a rename instead of a copy.
+    /// </summary>
+    public bool EncodeBesideMedia { get; set; } = true;
 
     /// <summary>Gets or sets how many encodes may run at once.</summary>
     public int MaxConcurrentJobs { get; set; } = 1;
@@ -75,8 +104,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets a value indicating whether the queue pauses while anyone is streaming.</summary>
     public bool PauseWhilePlaybackActive { get; set; } = true;
 
-    /// <summary>Gets or sets a value indicating whether ffmpeg runs at below-normal process priority.</summary>
-    public bool LowProcessPriority { get; set; } = true;
+    /// <summary>
+    /// Gets or sets a value indicating whether ffmpeg runs at below-normal process priority.
+    /// Off by default: it keeps the server responsive but measurably slows encoding whenever
+    /// anything else wants the CPU.
+    /// </summary>
+    public bool LowProcessPriority { get; set; }
 
     /// <summary>Gets or sets the ffmpeg thread cap. Zero or less lets ffmpeg decide.</summary>
     public int EncodingThreadCount { get; set; }
@@ -84,8 +117,15 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Gets or sets the seconds a source file must be unmodified before it is eligible.</summary>
     public int FileStabilitySeconds { get; set; } = 60;
 
-    /// <summary>Gets or sets a value indicating whether a full decode scan runs before a Replace.</summary>
-    public bool DeepVerifyBeforeReplace { get; set; } = true;
+    /// <summary>
+    /// Gets or sets a value indicating whether a full decode scan runs before a Replace.
+    /// <para>
+    /// Off by default. It re-decodes the entire output looking for corruption, which roughly
+    /// doubles how long a job takes. The cheap checks — the file parses, the duration matches, the
+    /// streams are all present — already run every time and catch essentially every real failure.
+    /// </para>
+    /// </summary>
+    public bool DeepVerifyBeforeReplace { get; set; }
 
     /// <summary>Gets or sets the multiple of the estimated output size that must be free before starting.</summary>
     public double FreeSpaceSafetyFactor { get; set; } = 1.5;
@@ -95,6 +135,12 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Gets or sets how many finished jobs are retained in history.</summary>
     public int JobHistoryLimit { get; set; } = 200;
+
+    /// <summary>
+    /// Gets or sets how many days a finished job stays in the history before it is removed
+    /// automatically. Zero keeps them until the count limit above is reached instead.
+    /// </summary>
+    public int RemoveFinishedJobsAfterDays { get; set; } = 30;
 
     /// <summary>
     /// Gets or sets the audio languages worth keeping, comma separated (e.g. "eng, fr").
