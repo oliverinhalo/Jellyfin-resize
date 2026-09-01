@@ -127,6 +127,17 @@ public class EncodePlanner : IEncodePlanner
             {
                 args.Add(FormattableString.Invariant($"-c:a:{audioOutIndex}"));
                 args.Add("copy");
+
+                // A Blu-ray remux carries TrueHD or Blu-ray PCM, and MP4 has no box for either.
+                // FFmpeg would fail writing the header rather than at the end, so stop here with
+                // something the user can act on instead of letting the job run and die.
+                if (!ContainerCompatibility.CanCopyAudio(request.Container, track.Codec))
+                {
+                    warnings.Add(new PlanWarning(
+                        WarningLevel.Blocker,
+                        "AUDIO_CONTAINER_INCOMPATIBLE",
+                        FormattableString.Invariant($"{ContainerCompatibility.Normalise(request.Container).ToUpperInvariant()} cannot store {track.Codec.ToUpperInvariant()} audio (track {track.TypeIndex + 1}). Choose MKV to keep the track untouched, or re-encode this track to AAC or Opus.")));
+                }
             }
             else
             {
@@ -189,6 +200,12 @@ public class EncodePlanner : IEncodePlanner
 
         args.Add("-y");
         args.Add(outputPath);
+
+        // Answers "I set MP4 as my default, why does this say MKV?" before the user has to ask.
+        if (!string.IsNullOrEmpty(request.ContainerSwitchReason))
+        {
+            warnings.Add(new PlanWarning(WarningLevel.Info, "CONTAINER_SWITCHED", request.ContainerSwitchReason));
+        }
 
         // A plan is only "lossless" if literally every operation preserved the payload.
         var isLossless = everythingBitExact && videoAction != VideoAction.Drop;
@@ -759,6 +776,8 @@ public class EncodePlanner : IEncodePlanner
         var embedded = analysis.Subtitles.Where(s => !s.IsExternal).ToList();
 
         var incompatible = 0;
+        var converted = 0;
+        var subOutIndex = 0;
         foreach (var sub in embedded)
         {
             if (keep is not null && !keep.Contains(sub.Index))
@@ -766,7 +785,10 @@ public class EncodePlanner : IEncodePlanner
                 continue;
             }
 
-            if (container == "mp4" && sub.IsGraphical)
+            // The container decides this, not the source: copying a SubRip track into MP4 makes
+            // FFmpeg refuse to write the header, which kills the whole job before frame one.
+            var subCodec = ContainerCompatibility.SubtitleCodecFor(container, sub.Codec);
+            if (subCodec is null)
             {
                 incompatible++;
                 continue;
@@ -774,6 +796,15 @@ public class EncodePlanner : IEncodePlanner
 
             args.Add("-map");
             args.Add(FormattableString.Invariant($"0:{sub.Index}"));
+            args.Add(FormattableString.Invariant($"-c:s:{subOutIndex}"));
+            args.Add(subCodec);
+
+            if (!string.Equals(subCodec, "copy", StringComparison.Ordinal))
+            {
+                converted++;
+            }
+
+            subOutIndex++;
         }
 
         // One message for the whole set: a Blu-ray rip can carry a dozen image-based tracks and
@@ -786,10 +817,12 @@ public class EncodePlanner : IEncodePlanner
                 FormattableString.Invariant($"MP4 cannot store image-based subtitles, so {incompatible} track(s) will be dropped. Switch the container to MKV to keep them.")));
         }
 
-        if (embedded.Count > 0)
+        if (converted > 0)
         {
-            args.Add("-c:s");
-            args.Add("copy");
+            warnings.Add(new PlanWarning(
+                WarningLevel.Info,
+                "SUBTITLE_CONVERTED",
+                FormattableString.Invariant($"{converted} text subtitle track(s) will be converted to the container's own subtitle format. The words are kept; any styling, positioning or karaoke timing is not. Choose MKV to keep them exactly as they are.")));
         }
 
         if (keep is not null && embedded.Count > keep.Count)

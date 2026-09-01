@@ -244,6 +244,70 @@ public static class StrategyResolver
         Capabilities caps,
         PluginConfiguration config)
     {
+        var resolved = ResolveCore(analysis, strategy, caps, config);
+        ApplyContainerCompatibility(analysis, resolved);
+        return resolved;
+    }
+
+    /// <summary>
+    /// Moves the output to a container that can actually hold what the file has.
+    /// <para>
+    /// This runs last, once the audio actions are final, because whether MP4 is viable depends on
+    /// whether a track is being copied or re-encoded. Picking MP4 for a Blu-ray remux is not a
+    /// cosmetic mistake: FFmpeg refuses to write the header and the job fails having encoded
+    /// nothing.
+    /// </para>
+    /// </summary>
+    /// <param name="analysis">The source file.</param>
+    /// <param name="request">The request to adjust in place.</param>
+    internal static void ApplyContainerCompatibility(FileAnalysis analysis, EncodeRequest request)
+    {
+        request.ContainerSwitchReason = null;
+
+        if (ContainerCompatibility.Normalise(request.Container) == "mkv")
+        {
+            return;
+        }
+
+        var asked = ContainerCompatibility.Normalise(request.Container).ToUpperInvariant();
+
+        // Attachments (subtitle fonts) and image-based subtitles are Matroska-only.
+        var graphical = analysis.Subtitles.Count(s => s.IsGraphical && !s.IsExternal);
+        if (graphical > 0 || analysis.AttachmentCount > 0)
+        {
+            var what = graphical > 0 ? "image-based subtitles" : "embedded subtitle fonts";
+            request.Container = "mkv";
+            request.ContainerSwitchReason = FormattableString.Invariant(
+                $"Writing MKV instead of {asked}, because {asked} cannot store this file's {what} and they would have been lost. Nothing is dropped this way.");
+            return;
+        }
+
+        var audioRequests = request.AudioTracks.ToDictionary(a => a.Index);
+        foreach (var track in analysis.Audio)
+        {
+            if (!audioRequests.TryGetValue(track.Index, out var req) || req.Action == AudioAction.Drop)
+            {
+                continue;
+            }
+
+            var outgoing = req.Action == AudioAction.Copy ? track.Codec : req.Codec;
+            if (!ContainerCompatibility.CanCopyAudio(request.Container, outgoing))
+            {
+                // Keeping the lossless track intact beats silently transcoding it away.
+                request.Container = "mkv";
+                request.ContainerSwitchReason = FormattableString.Invariant(
+                    $"Writing MKV instead of {asked}, because {asked} has no way to store {outgoing?.ToUpperInvariant()} audio. The track is kept exactly as it is rather than being re-encoded.");
+                return;
+            }
+        }
+    }
+
+    private static EncodeRequest ResolveCore(
+        FileAnalysis analysis,
+        OptimizationStrategy strategy,
+        Capabilities caps,
+        PluginConfiguration config)
+    {
         var request = new EncodeRequest
         {
             ItemId = analysis.ItemId,
@@ -260,13 +324,6 @@ public static class StrategyResolver
         };
 
         ApplyTrackFilters(analysis, request, config);
-
-        // Graphical subtitles cannot live in MP4, so a Blu-ray rip would silently lose all of
-        // them. Prefer the container that keeps what the file actually has.
-        if (analysis.Subtitles.Any(s => s.IsGraphical && !s.IsExternal) || analysis.AttachmentCount > 0)
-        {
-            request.Container = "mkv";
-        }
 
         if (strategy == OptimizationStrategy.LosslessOnly)
         {

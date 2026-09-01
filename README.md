@@ -106,6 +106,24 @@ skipped with the reason.
 
 ---
 
+## MP4 or MKV
+
+MP4 is the default because it plays on everything, but it cannot store some of what a Blu-ray rip
+contains. When a file needs more than MP4 offers, the plugin writes MKV instead and says why, in
+the dialog, rather than dropping tracks quietly. That happens when the file has:
+
+- **image-based subtitles** (PGS, DVD, DVB) — MP4 has no bitmap subtitle format at all;
+- **embedded subtitle fonts** — attachments are Matroska-only;
+- **audio MP4 cannot carry** — TrueHD, MLP or Blu-ray PCM. The track is kept exactly as it is
+  rather than being re-encoded to fit.
+
+Text subtitles are the one case that converts cleanly: SubRip and ASS become MP4's own subtitle
+format. The words survive; styling and positioning do not. Choose MKV to keep them exactly.
+
+You can always override the container yourself, and the plugin will tell you what that costs.
+
+---
+
 ## Trimming tracks you never use
 
 A Blu-ray rip often carries five audio languages and a commentary track. If you only ever watch in
@@ -265,6 +283,11 @@ These are properties of Jellyfin and of video compression, not bugs.
 
 **The in-app buttons don't appear.** Install File Transformation (step 4), restart, then
 hard-refresh. The status panel says explicitly whether the injection registered.
+
+**A conversion failed straight away.** Before encoding, every job runs half a second of the real
+thing through the real muxer, so an impossible combination fails in a second instead of an hour.
+The message names what FFmpeg objected to. Switching the container to MKV resolves nearly all of
+them, because it can store formats MP4 cannot — see [MP4 or MKV](#mp4-or-mkv).
 
 **Is anything working at all?** **Dashboard → Media Optimizer** opens with a status line that
 expands into a per-part check: the plugin, FFmpeg and its encoders, encoding speed measured on your

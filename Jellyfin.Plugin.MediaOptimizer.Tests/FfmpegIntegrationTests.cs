@@ -162,6 +162,115 @@ public class FfmpegIntegrationTests : IDisposable
                 _caps.VideoEncoders.Any(e => e.Name == encoder) || _caps.AudioEncoders.Any(e => e.Name == encoder));
     }
 
+    /// <summary>
+    /// Builds a clip that looks like a Blu-ray remux to the muxer: a text subtitle track that MP4
+    /// cannot store as-is.
+    /// </summary>
+    private async Task<string> CreateSubtitledSourceAsync()
+    {
+        var srt = Path.Combine(_dir, "subs.srt");
+        await File.WriteAllTextAsync(
+            srt,
+            "1\n00:00:00,000 --> 00:00:02,000\nhello\n\n2\n00:00:02,000 --> 00:00:04,000\nworld\n\n");
+
+        var path = Path.Combine(_dir, "subbed.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
+            "-i", srt,
+            "-map", "0:v", "-map", "1:a", "-map", "2:s",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-c:s", "copy",
+            path
+        ];
+
+        var result = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(result.Success, "Could not build the subtitled test source: " + result.StandardError);
+        return path;
+    }
+
+    /// <summary>
+    /// The regression test for the bug that killed two 20 GiB jobs. The plan copied the source's
+    /// SubRip track into MP4, FFmpeg refused to write the header, and the encode died with
+    /// "Error sending frames to consumers: Invalid argument" having produced zero frames.
+    /// <para>
+    /// Only a real muxer can prove this is fixed, so this test runs the planned arguments rather
+    /// than inspecting them.
+    /// </para>
+    /// </summary>
+    [SkippableFact]
+    public async Task Mp4_output_with_text_subtitles_actually_muxes()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateSubtitledSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Subtitles = [new SubtitleTrackInfo { Index = 2, Codec = "subrip", Language = "eng" }];
+        var output = Path.Combine(_dir, "subbed.mp4");
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Strategy = OptimizationStrategy.Standard,
+            Container = "mp4",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            Quality = 30,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "aac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, "Plan was blocked: " + string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        var result = await Runner.RunEncodeAsync(
+            plan.Arguments, analysis.DurationSeconds, _ => { }, false, CancellationToken.None);
+
+        Assert.True(result.Success, "ffmpeg failed: " + result.StandardError);
+        Assert.True(new FileInfo(output).Length > 0, "ffmpeg wrote an empty file.");
+
+        // The subtitles must survive the container change, not just avoid crashing it.
+        var probe = await Runner.RunAsync(
+            _ffprobe!,
+            ["-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", output],
+            CancellationToken.None);
+        Assert.Contains("mov_text", probe.StandardOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other half of the same bug: MP4 has no box for lossless Blu-ray audio, so a plan that
+    /// copies it must be stopped before it runs rather than failing hours in.
+    /// </summary>
+    [SkippableFact]
+    public async Task Audio_that_mp4_cannot_hold_is_blocked_and_would_indeed_fail()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateSourceAsync("flac");
+        var analysis = AnalysisFor(source, "truehd", audioLossless: true);
+        var output = Path.Combine(_dir, "blocked.mp4");
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Strategy = OptimizationStrategy.Standard,
+            Container = "mp4",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            Quality = 30,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "aac").PlanAsync(analysis, request, output, CancellationToken.None);
+
+        Assert.False(plan.IsRunnable);
+        Assert.Contains(plan.Warnings, w => w.Code == "AUDIO_CONTAINER_INCOMPATIBLE");
+    }
+
     [SkippableFact]
     public async Task Lossless_flac_conversion_is_bit_exact_and_verifies()
     {

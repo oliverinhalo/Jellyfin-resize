@@ -223,6 +223,17 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 return;
             }
 
+            // Half a second of the real encode, through the real muxer. FFmpeg validates the whole
+            // output configuration when it writes the header, so anything the container cannot
+            // hold fails here in a second instead of after hours of encoding.
+            var dryRunError = await MuxDryRunAsync(plan.Arguments, tempDir, job.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (dryRunError is not null)
+            {
+                Fail(job, dryRunError);
+                return;
+            }
+
             job.Status = JobStatus.Encoding;
             _store.Update(job);
 
@@ -323,6 +334,138 @@ public class JobQueueService : BackgroundService, IJobQueueService
     /// <param name="job">The job.</param>
     /// <param name="analysis">Fresh analysis of the source.</param>
     /// <returns>An error message, or null when the job may proceed.</returns>
+    /// <summary>
+    /// Runs the planned arguments against half a second of the source, into a throwaway file.
+    /// <para>
+    /// This is the last line of defence against a plan FFmpeg will not accept. It caught nothing
+    /// the planner already checks; it exists for the mistakes nobody has thought of yet, because
+    /// the alternative is a job that burns an hour and then reports a muxer error.
+    /// </para>
+    /// </summary>
+    /// <param name="arguments">The planned arguments, ending in <c>-y &lt;output&gt;</c>.</param>
+    /// <param name="workDirectory">Where to put the throwaway output.</param>
+    /// <param name="jobId">The job, used to name the throwaway file.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An error message, or <c>null</c> when the configuration is valid.</returns>
+    private async Task<string?> MuxDryRunAsync(
+        IReadOnlyList<string> arguments,
+        string workDirectory,
+        Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var realOutput = arguments[^1];
+        var extension = Path.GetExtension(realOutput.Replace(".motmp", string.Empty, StringComparison.OrdinalIgnoreCase));
+
+        // Same naming rules as the real temp file: leading dot and .motmp suffix, so the library
+        // scanner never sees it even if the delete below is somehow missed.
+        var probePath = Path.Combine(
+            workDirectory,
+            FormattableString.Invariant($".mo-{jobId:N}.probe{extension}.motmp"));
+
+        var probeArgs = new List<string>(arguments.Count + 3);
+        // Everything up to the trailing "-y <output>".
+        for (var i = 0; i < arguments.Count - 2; i++)
+        {
+            probeArgs.Add(arguments[i]);
+        }
+
+        probeArgs.Add("-t");
+        probeArgs.Add("0.5");
+        probeArgs.Add("-y");
+        probeArgs.Add(probePath);
+
+        try
+        {
+            var result = await _runner
+                .RunEncodeAsync(probeArgs, 0.5d, null, true, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result.Success)
+            {
+                return null;
+            }
+
+            _logger.LogWarning(
+                "[MediaOptimizer] Job {JobId} failed its dry run: {Error}",
+                jobId,
+                result.StandardError);
+
+            return "FFmpeg rejected these settings before encoding started, so nothing was wasted. "
+                + Summarise(result.StandardError)
+                + " Switching the container to MKV resolves most cases, because it can store formats MP4 cannot.";
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The dry run is a safety net, not a gate. If it cannot even write its scratch file,
+            // let the real encode run and report the real problem.
+            _logger.LogWarning(ex, "[MediaOptimizer] Job {JobId} could not run its dry run; continuing", jobId);
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(probePath))
+                {
+                    File.Delete(probePath);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogDebug(ex, "[MediaOptimizer] Could not remove dry-run file {Path}", probePath);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pulls the line that actually says what went wrong out of FFmpeg's output, so the job list
+    /// shows a sentence rather than fifty lines of encoder banner.
+    /// </summary>
+    /// <param name="stderr">FFmpeg's standard error.</param>
+    /// <returns>A short description.</returns>
+    internal static string Summarise(string? stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+        {
+            return "FFmpeg gave no reason.";
+        }
+
+        string[] markers =
+        [
+            "Could not find tag for codec",
+            "is not supported in container",
+            "Could not write header",
+            "Unsupported codec",
+            "Invalid data found",
+            "No such file or directory",
+            "Permission denied",
+            "Error initializing",
+            "Unknown encoder",
+        ];
+
+        var lines = stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var hit = lines.FirstOrDefault(l => markers.Any(m => l.Contains(m, StringComparison.OrdinalIgnoreCase)));
+        var line = hit ?? lines.LastOrDefault(l => !l.StartsWith("frame=", StringComparison.Ordinal)) ?? stderr;
+
+        // Strip FFmpeg's "[mp4 @ 0x7f...]" component prefix; the address means nothing to anyone.
+        var close = line.IndexOf("] ", StringComparison.Ordinal);
+        if (line.StartsWith('[') && close > 0 && close + 2 < line.Length)
+        {
+            line = line[(close + 2)..];
+        }
+
+        return line.Length > 300 ? line[..300] + "…" : line;
+    }
+
     private string? Preflight(EncodeJob job, FileAnalysis analysis)
     {
         if (!analysis.IsEligible)

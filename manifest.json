@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.4.1.0",
+                "changelog": "- Fixed conversions to MP4 failing immediately on any file with text subtitles. The plan copied\nthe source subtitle track into MP4, which has no format for it, so FFmpeg refused to write the\nfile and the job died having encoded nothing. Text subtitles are now converted to MP4's own\nsubtitle format, and left untouched in MKV.\n- Fixed MP4 being chosen for files carrying TrueHD, Blu-ray PCM or other audio MP4 cannot store.\nThose now stay MKV so the track is kept exactly as it is, and the reason is shown in the dialog\ninstead of the container silently changing.\n- Every job now runs half a second of the real encode through the real muxer before starting.\nAnything FFmpeg would reject fails in a second with a readable message, rather than after hours\nof encoding.\n- Image-based subtitle detection now recognises DVB and XSUB tracks as well as PGS and DVD.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.4.1.0.zip",
+                "checksum": "41ea74f011e7a8bf9ceeaf6974e0cf34",
+                "timestamp": "2026-09-01T10:03:18Z"
+            },
+            {
                 "version": "1.4.0.0",
                 "changelog": "- Much faster, without touching the encoder. Replaced originals are now renamed in place\ninstead of copied to a data folder, encoding writes into the media folder so the finished\nfile is moved by rename, and the full decode verification that doubled every job is off by\ndefault. On a 5 GB film that is minutes of pure disk copying removed per job.\n- Hardware encoding is now tuned for quality \u2014 multi-pass, lookahead, B-frames and adaptive\nquantisation \u2014 landing 10-20% larger than a slow CPU encode rather than 50%.\n- New: replace and delete the original immediately, or replace and keep it for a set number of\ndays. Every replacement is written to replacements.log.\n- Finished jobs are removed automatically after 30 days.\n- The dashboard is tidier: status collapses to one line, the file picker and the history are\ndropdowns, and running jobs are separated from finished ones.\n- Process priority is no longer lowered by default, which was quietly slowing every encode.",
                 "targetAbi": "10.11.0.0",

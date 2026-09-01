@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.4.0.0"
+version: "1.4.1.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,19 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.4.1.0
+  - Fixed conversions to MP4 failing immediately on any file with text subtitles. The plan copied
+    the source subtitle track into MP4, which has no format for it, so FFmpeg refused to write the
+    file and the job died having encoded nothing. Text subtitles are now converted to MP4's own
+    subtitle format, and left untouched in MKV.
+  - Fixed MP4 being chosen for files carrying TrueHD, Blu-ray PCM or other audio MP4 cannot store.
+    Those now stay MKV so the track is kept exactly as it is, and the reason is shown in the dialog
+    instead of the container silently changing.
+  - Every job now runs half a second of the real encode through the real muxer before starting.
+    Anything FFmpeg would reject fails in a second with a readable message, rather than after hours
+    of encoding.
+  - Image-based subtitle detection now recognises DVB and XSUB tracks as well as PGS and DVD.
+
   ### 1.4.0.0
   - Much faster, without touching the encoder. Replaced originals are now renamed in place
     instead of copied to a data folder, encoding writes into the media folder so the finished

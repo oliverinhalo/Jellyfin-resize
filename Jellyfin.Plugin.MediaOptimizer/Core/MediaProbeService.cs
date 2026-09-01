@@ -414,11 +414,7 @@ public class MediaProbeService : IMediaProbeService
                         Title = s.Title,
                         IsDefault = s.IsDefault,
                         IsExternal = s.IsExternal,
-                        IsGraphical = s.Codec is not null
-                            && (s.Codec.Contains("pgs", StringComparison.OrdinalIgnoreCase)
-                                || s.Codec.Contains("dvd_sub", StringComparison.OrdinalIgnoreCase)
-                                || s.Codec.Contains("dvdsub", StringComparison.OrdinalIgnoreCase)
-                                || s.Codec.Contains("vobsub", StringComparison.OrdinalIgnoreCase))
+                        IsGraphical = ContainerCompatibility.IsGraphicalSubtitle(s.Codec)
                     });
                     break;
 

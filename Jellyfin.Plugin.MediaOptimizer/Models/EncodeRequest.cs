@@ -120,6 +120,12 @@ public class EncodeRequest
     /// <summary>Gets or sets the target video bitrate for ABR mode.</summary>
     public long? VideoBitrateBps { get; set; }
 
+    /// <summary>
+    /// Gets or sets why the container was changed from the one that was asked for, or <c>null</c>
+    /// when it was honoured. Surfaced as an informational warning so the change is never silent.
+    /// </summary>
+    public string? ContainerSwitchReason { get; set; }
+
     /// <summary>Gets or sets the desired output size in bytes for two-pass mode.</summary>
     public long? TargetSizeBytes { get; set; }
 

@@ -330,14 +330,11 @@ public class MediaOptimizerController : ControllerBase
 
             if (!string.IsNullOrWhiteSpace(request.Container))
             {
-                // Never force a container that would silently discard this file's subtitles.
-                var forcesLoss = request.Container.Equals("mp4", StringComparison.OrdinalIgnoreCase)
-                    && (analysis.Subtitles.Any(x => x.IsGraphical && !x.IsExternal) || analysis.AttachmentCount > 0);
-
-                if (!forcesLoss)
-                {
-                    encodeRequest.Container = request.Container;
-                }
+                // A batch container applies to files it can actually hold. Re-running the
+                // compatibility pass puts any file back on MKV rather than queuing a job that
+                // would fail, or one that would silently drop its subtitles.
+                encodeRequest.Container = request.Container;
+                StrategyResolver.ApplyContainerCompatibility(analysis, encodeRequest);
             }
 
             if (request.OutputPolicy is not null)
