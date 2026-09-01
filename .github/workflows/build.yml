@@ -14,6 +14,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A hung step should fail in minutes, not sit on a runner for six hours.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -21,10 +23,19 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
-      # The integration tests drive a real ffmpeg; without it they skip rather than fail,
-      # but the lossless guarantees are only actually proven when it is present.
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      # The integration tests drive a real ffmpeg; without it they skip rather than fail, but the
+      # lossless guarantees are only actually proven when it is present. ubuntu-latest ships it
+      # already, so only reach for apt if it is genuinely missing — "apt-get update" depends on
+      # mirrors that can hang for many minutes.
+      - name: Ensure ffmpeg
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+            ffmpeg -version | head -1
+          else
+            echo "ffmpeg not present; installing"
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
 
       - name: Restore
         run: dotnet restore
