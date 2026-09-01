@@ -2,7 +2,7 @@
  * Renders the dashboard page in a real browser with stubbed Jellyfin globals, so the collapsible
  * panels and the compact status line are verified rather than assumed.
  */
-import { chromium } from 'playwright';
+import { launchChromium } from './browser.mjs';
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +41,7 @@ const STATS = {
 };
 
 let failures = 0;
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await launchChromium();
 
 for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobile', width: 412, height: 915 }]) {
   const ctx = await browser.newContext({ viewport: vp });

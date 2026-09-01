@@ -1,4 +1,4 @@
-import { chromium } from 'playwright';
+import { launchChromium } from './browser.mjs';
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const res = path.join(here, '..', 'Jellyfin.Plugin.MediaOptimizer', 'Web', 'Resources');
@@ -13,7 +13,7 @@ const HOSTILE = [
   ['display overridden', '.mopt-body { display: block !important; } .mopt-pane { position: absolute; top: 0; }']
 ];
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await launchChromium();
 for (const [label, css] of HOSTILE) {
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 } });
   const page = await ctx.newPage();

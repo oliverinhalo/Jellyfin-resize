@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A rapid series of pushes should not queue a run each; only the newest matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,16 +39,14 @@ jobs:
         with:
           node-version: "22"
 
-      # Guards the selectors the injected UI depends on. jellyfin-web has no plugin API, so
-      # these are private and will move between releases; this is the early warning.
-      # Guards the selectors the injected UI depends on, proves the dialog stays laid out under
-      # hostile host CSS, and renders it in a real browser to catch layout regressions.
+      # Guards the private jellyfin-web selectors the injected UI depends on, proves the dialog
+      # survives hostile host CSS, and renders both the dialog and the dashboard in a real browser
+      # to catch layout regressions. web-tests/browser.mjs finds the Chromium installed here.
+      - name: Install Chromium
+        run: cd web-tests && npm install && npx playwright install --with-deps chromium
+
       - name: Web UI tests
-        run: |
-          cd web-tests
-          npm install
-          npx playwright install --with-deps chromium
-          npm test
+        run: cd web-tests && npm test
 
       - name: Package
         run: |
