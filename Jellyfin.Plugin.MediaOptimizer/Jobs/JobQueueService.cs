@@ -185,6 +185,22 @@ public class JobQueueService : BackgroundService, IJobQueueService
             job.SourcePath = analysis.Path;
             job.SourceSizeBytes = analysis.SizeBytes;
 
+            // Re-check the container against what this file actually contains, every time the job
+            // runs. A queued job carries the settings it was created with, so a job queued before
+            // this check existed -- or requeued with "Try again" -- would otherwise replay a
+            // container that cannot hold the file and fail exactly as it did the first time.
+            var containerBefore = job.Request.Container;
+            StrategyResolver.ApplyContainerCompatibility(analysis, job.Request);
+            if (!string.Equals(containerBefore, job.Request.Container, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation(
+                    "[MediaOptimizer] Job {JobId} moved from {Before} to {After}: {Reason}",
+                    job.Id,
+                    containerBefore,
+                    job.Request.Container,
+                    job.Request.ContainerSwitchReason);
+            }
+
             // Encoding into the media folder makes the final move a rename rather than a copy of
             // the whole file, which on a multi-gigabyte film is the difference between instant and
             // several minutes. The suffix keeps Jellyfin's scanner away from the partial file.
@@ -265,7 +281,13 @@ public class JobQueueService : BackgroundService, IJobQueueService
 
             if (!result.Success)
             {
-                Fail(job, "FFmpeg failed: " + Tail(result.StandardError));
+                // Lead with the line that names the cause. FFmpeg prints it first and then floods
+                // stderr with thread teardown, so a plain tail cuts off the only useful sentence
+                // and leaves a message nobody can act on.
+                Fail(
+                    job,
+                    "FFmpeg failed: " + Summarise(result.StandardError)
+                    + "\n\nFull output: " + Tail(result.StandardError));
                 TryDelete(tempPath);
                 return;
             }
@@ -596,7 +618,15 @@ public class JobQueueService : BackgroundService, IJobQueueService
     private void Fail(EncodeJob job, string error)
     {
         job.Status = JobStatus.Failed;
-        job.Error = error;
+
+        // Stamp the build. Without it there is no way to tell a failure on the current version
+        // from one produced by an older version still installed, which is exactly the question
+        // asked first when the same error is reported twice.
+        var version = Plugin.Instance?.Version?.ToString();
+        job.Error = version is null
+            ? error
+            : FormattableString.Invariant($"{error} (Media Optimizer {version})");
+
         job.FinishedAt = DateTime.UtcNow;
         _store.Update(job);
     }

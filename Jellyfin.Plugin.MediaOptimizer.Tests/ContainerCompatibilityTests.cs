@@ -224,6 +224,56 @@ public class ContainerCompatibilityTests
         Assert.Null(request.ContainerSwitchReason);
     }
 
+    /// <summary>
+    /// "Try again" requeues a job with the settings it was created with, so a job queued by an
+    /// older build still carries MP4. Re-running the compatibility pass at job start is what makes
+    /// the retry succeed instead of failing the same way twice.
+    /// </summary>
+    [Fact]
+    public void A_job_queued_with_stale_settings_is_corrected_when_it_runs()
+    {
+        var analysis = Remux();
+
+        // Exactly what an older build would have persisted: MP4, copy the TrueHD track.
+        var stale = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mp4",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx265",
+            Quality = 24,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        StrategyResolver.ApplyContainerCompatibility(analysis, stale);
+
+        Assert.Equal("mkv", stale.Container);
+        Assert.NotNull(stale.ContainerSwitchReason);
+    }
+
+    /// <summary>Correcting an already-correct request must not churn it.</summary>
+    [Fact]
+    public void Re_running_the_compatibility_pass_is_idempotent()
+    {
+        var analysis = Remux();
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mp4",
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        StrategyResolver.ApplyContainerCompatibility(analysis, request);
+        var first = request.Container;
+
+        StrategyResolver.ApplyContainerCompatibility(analysis, request);
+
+        Assert.Equal(first, request.Container);
+
+        // Already MKV the second time round, so there is nothing left to explain.
+        Assert.Null(request.ContainerSwitchReason);
+    }
+
     [Theory]
     [InlineData("mp4", "truehd", false)]
     [InlineData("mp4", "mlp", false)]
@@ -278,6 +328,30 @@ public class ContainerCompatibilityTests
         Assert.Contains("subrip", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("x265", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("0x55d1", summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The reported failures arrived truncated to the last 500 characters, which cut off the line
+    /// naming the cause and started mid-word in "Invalid argument". The summary has to survive
+    /// that, because it is what the user actually reads.
+    /// </summary>
+    [Fact]
+    public void The_failure_summary_survives_the_flood_of_teardown_lines_after_it()
+    {
+        const string Stderr = """
+            [mp4 @ 0x1] Could not find tag for codec subrip in stream #2, codec not currently supported in container
+            [out#0/mp4 @ 0x1] Could not write header (incorrect codec parameters ?): Invalid argument
+            [vf#0:0 @ 0x2] Error sending frames to consumers: Invalid argument
+            [vf#0:0 @ 0x2] Task finished with error code: -22 (Invalid argument)
+            [vf#0:0 @ 0x2] Terminating thread with return code -22 (Invalid argument)
+            [out#0/mp4 @ 0x1] Nothing was written into output file, because at least one of its streams received no packets.
+            frame=    0 fps=0.0 q=0.0 Lsize=       0KiB time=N/A bitrate=N/A speed=N/A
+            """;
+
+        var summary = JobQueueService.Summarise(Stderr);
+
+        // The naming line comes first in FFmpeg's output and must win over everything after it.
+        Assert.StartsWith("Could not find tag for codec subrip", summary, StringComparison.Ordinal);
     }
 
     [Fact]
