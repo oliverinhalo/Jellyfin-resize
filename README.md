@@ -1,131 +1,46 @@
 # Media Optimizer for Jellyfin
 
-Inspect any media file from inside Jellyfin and convert it with FFmpeg — resolution, codec, bit
-depth, bitrate, audio — plus a genuinely lossless mode whose bit-exactness is verified by hash
-after every encode.
+Inspect any file in your library from inside Jellyfin and convert it with FFmpeg — resolution,
+codec, bit depth, bitrate, audio tracks — one film at a time or hundreds at once.
 
-Built for **Jellyfin 10.11.x**. Licensed GPL-3.0, matching the official Jellyfin plugin template.
+Nothing is deleted until the new file has been checked, and every claim the interface makes about
+size, speed or quality is measured rather than guessed.
 
-## Install
-
-Add this as a plugin repository in Jellyfin (**Dashboard → Plugins → Repositories → `+`**):
-
-```
-https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/manifest.json
-```
-
-Then go to **Dashboard → Plugins**, click the **Available** filter chip, install
-**Media Optimizer**, and restart Jellyfin. Full step-by-step, including the extra plugin needed
-for the in-app buttons, is [below](#installing).
+**Jellyfin 10.11.x** · .NET 9 · GPL-3.0 · uses the FFmpeg already bundled with your server
 
 ---
 
-## What it does
+## Install
 
-Open the 3-dot menu on any movie or episode, or press the tune icon in the player, and you get a
-dialog with two halves.
+### 1. Add the repository
 
-**Left — what the file is now:** container, size, duration, overall bitrate; video codec, profile,
-resolution, bit depth, frame rate (with a VFR flag), dynamic range and bitrate; every audio track
-with codec, channel layout, language and whether it is lossless or carries Atmos/DTS:X objects;
-subtitle and attachment inventory; and whether the folder is writable.
-
-**Right — what you want instead:** strategy presets, resolution (720p / 1080p / 1440p / 4K /
-original / custom), video codec, bit depth, CRF or bitrate or target size, encoder preset,
-optional hardware encoding, per-track audio decisions, and where the result goes.
-
-A live estimate at the foot shows predicted size, the saving, a range, and the encode time.
-
-## Honest limitations
-
-These are properties of Jellyfin and of video compression, not bugs.
-
-- **The in-app dialog only exists in browser-based clients.** Jellyfin has no plugin API for its
-  web client, so the menu entry and player button are grafted onto private DOM. They appear in
-  browsers, in Jellyfin Media Player, and in the Android app's web views. They do **not** appear on
-  Android TV, Roku, Kodi, tvOS or Swiftfin, and no server plugin can put them there. **Dashboard →
-  Media Optimizer** provides the same conversion dialog behind a library search, so nothing is
-  lost apart from the convenience of starting from the item itself.
-- **The DOM hooks will break.** Between jellyfin-web `v10.11.0` and current `master`,
-  `actionSheet.js` became `.ts` and the video OSD moved directories. Both are files this depends
-  on. Every hook fails closed and logs once; expect to need a plugin update after a Jellyfin
-  release.
-- **Dolby Vision cannot survive a re-encode.** FFmpeg parses the DV RPU but cannot re-inject it.
-  Re-encoding DV video is blocked by default; you can explicitly accept conversion to HDR10.
-- **You cannot losslessly shrink already-lossy video.** Re-encoding H.264/HEVC with `-qp 0` stores
-  the *decoded pixels*, which carry far more entropy than the bitstream they came from — the result
-  is typically 3–20× larger. The plugin refuses this rather than letting you discover it.
-- **HDR10+ dynamic metadata is lost** on re-encode; the output keeps static HDR10.
-- **Encoding competes with playback.** Jellyfin exposes no resource governor to plugins. The queue
-  defaults to one job, below-normal priority, and pauses while anyone is streaming.
-
-## Lossless mode, precisely
-
-Genuinely bit-exact operations, and roughly what each saves:
-
-| Technique | Typical saving | Notes |
-|---|---|---|
-| Drop unwanted audio/subtitle tracks | 10–50% | The largest real saving on most remuxes |
-| Lossless audio → FLAC | 10–35% (50%+ from PCM) | TrueHD, DTS-HD MA and LPCM decode bit-exactly |
-| Strip filler NAL units | 0%, or 10–20% | Only on sources padded to constant bitrate |
-| Remux container | <1% | Not a size strategy; useful for compatibility |
-| Lossless video re-encode | 40–70% | **Only** from a lossless source (FFV1, HuffYUV, raw) |
-
-After a lossless job the plugin decodes each retained track from both files and compares MD5
-hashes. A mismatch fails the job and leaves the original untouched. The result shows a
-verification badge — the claim is checked, not asserted.
-
-"Visually lossless" (CRF 16–18) is presented separately and never labelled lossless.
-
-## Safety
-
-The original file is not touched until a verified replacement exists on disk.
-
-- **Preflight:** free space, file-stability window (never grabs an active download), no active
-  playback on the item, writable target, and exclusion of ISO/BDMV/`.strm`/multi-part items.
-- **Verification gate:** output parses, duration within ±0.5% or 1s, optional full decode scan,
-  and hash comparison for lossless jobs.
-- **Output policies:** *Sidecar* (default, original never modified), *Alternate version*, and
-  *Replace* — which moves the original to quarantine with a retention period and a working
-  **Restore original** button, not a delete.
-- **Library reconciliation:** on a container change the existing item is repointed via
-  `UpdateItemAsync`. Watched state, resume positions, favourites, playlists and collections are
-  keyed on the item id, so they survive. Companion files (`.nfo`, artwork, external subtitles) are
-  renamed alongside.
-
-Every endpoint that starts, cancels or reverts a conversion requires `RequiresElevation`.
-
-## Installing
-
-### 1. Add the plugin repository
-
-In Jellyfin: **Dashboard → Plugins → Repositories → `+`**
+**Dashboard → Plugins → Repositories → `+`**
 
 | Field | Value |
 |---|---|
 | Repository Name | `Media Optimizer` |
 | Repository URL | `https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/manifest.json` |
 
-Press **Save**. If Jellyfin says the repository is invalid, the URL is wrong — it must end in
-`manifest.json` and be the **raw** GitHub URL, not the page you see when browsing the repo.
+If Jellyfin rejects it, the URL is wrong: it must end in `manifest.json` and be the **raw** link,
+not the GitHub page you see when browsing the repo.
 
-### 2. Install the plugin
+### 2. Install it
 
-Go to **Dashboard → Plugins** and click the **Available** chip at the top of the page.
+Go to **Dashboard → Plugins** and click the **Available** chip at the top.
 
-> **This is the step everyone gets stuck on.** In Jellyfin 10.11 the plugins page defaults to the
-> **Installed** filter, so a newly added repository looks like it did nothing. Nothing appears
-> until you switch to **Available** (or **All**). There is no separate "Catalog" page any more —
-> that was 10.10 and earlier.
+> **This is the step everyone gets stuck on.** Jellyfin 10.11's plugins page opens on the
+> **Installed** filter, so a freshly added repository looks like it did nothing. Nothing shows up
+> until you switch to **Available** or **All**. The separate "Catalog" page was removed after
+> 10.10.
 
-Find **Media Optimizer** (category *General*) and click **Install**.
+Find **Media Optimizer** under *General* and install it.
 
 ### 3. Restart Jellyfin
 
-Required. The plugin will not load until you do. After restarting, check
-**Dashboard → Plugins → My Plugins** — Media Optimizer should show as *Active*.
+Not optional — the plugin will not load until you do. Afterwards, **Dashboard → Plugins → My
+Plugins** should show it as *Active*.
 
-### 4. Add File Transformation, for the in-app buttons
+### 4. Optional: the in-app buttons
 
 The 3-dot menu entry and the player button need a second plugin to get their script into the web
 client. Repeat step 1 with:
@@ -135,123 +50,241 @@ client. Repeat step 1 with:
 | Repository Name | `IAmParadox` |
 | Repository URL | `https://www.iamparadox.dev/jellyfin/plugins/manifest.json` |
 
-Then, again under **Dashboard → Plugins** with the **Available** chip selected, install
-**File Transformation** and restart Jellyfin again. No configuration needed.
+Install **File Transformation** the same way and restart again. No configuration needed.
 
-**This step is optional.** Without it you lose only the in-app buttons: **Dashboard → Media
-Optimizer** has its own file picker, so you can search your library, open the same conversion
-dialog and run everything from there.
+**Skip this and you lose only the buttons.** Everything else works from **Dashboard → Media
+Optimizer**, which has its own library search and opens the identical conversion dialog.
 
 ### Requirements
 
-- **Jellyfin 10.11.x.** The plugin will show as *Not Supported* on 10.10 or earlier; the plugin
-  ABI is pinned per Jellyfin minor version.
-- FFmpeg — already bundled with Jellyfin. The plugin uses the server's own binary and never
-  ships its own.
+- **Jellyfin 10.11.0 or newer.** The plugin ABI is pinned per Jellyfin minor version, so it will
+  not appear at all on 10.10.x.
+- FFmpeg — already part of Jellyfin. The plugin uses the server's own binary and never ships one.
 
-### Where things are afterwards
+---
 
-- **Dashboard → Media Optimizer** — a status panel showing whether each part of the plugin is
-  working, a library search for starting conversions, and the queue with progress, history,
-  cancel and restore.
-- **Dashboard → Plugins → Media Optimizer** — settings: output policy, directories, concurrency,
-  safety options.
-- **In the web client** (with File Transformation installed) — "Optimize file…" in any movie or
-  episode's 3-dot menu, and a tune icon in the video player.
+## Where everything is
 
-### Is anything actually working?
+| Where | What |
+|---|---|
+| **Dashboard → Media Optimizer** | Status, library search, bulk selection, the queue and its history |
+| **Dashboard → Plugins → Media Optimizer** | Settings: languages, speed, output policy, safety |
+| **In the web client** | "Optimize file…" in any 3-dot menu, and a tune icon in the player |
 
-**Dashboard → Media Optimizer** opens with a status panel that checks each part independently:
-whether the plugin loaded, whether FFmpeg was found and what it can encode, whether the queue is
-readable, whether the in-app injection registered, and whether your account may start
-conversions. A failure in one is reported on its own line with what to do about it, and never
-hides the others. If that page renders at all, the plugin is loaded and its API is routed.
+---
 
-## Making it faster
+## What it does
 
-Encoding is genuinely slow — x265 at 4K is a few frames per second on a CPU, and that is the job,
-not a bug. But most of the gap between this plugin and running FFmpeg by hand came from settings,
-not the encoder, and those are fixed:
+The dialog has two halves. On the left, what the file actually is: container, size, duration and
+bitrate; video codec, profile, resolution, bit depth, frame rate (flagged when variable) and
+dynamic range; every audio track with its channel layout, language, and whether it is lossless or
+carries Atmos/DTS:X objects; the subtitle and attachment inventory.
 
-| What | Cost | Now |
-|---|---|---|
-| Full decode verification after every replace | roughly doubled every job | Off by default; the cheap checks still run |
-| Encoding into a working folder on another disk | a full copy of the finished file | Encodes into the media folder — the final move is a rename |
-| Moving the original into a data folder | a second full copy | Renamed in place, instantly |
-| Below-normal process priority | slower whenever anything else runs | Off by default |
+On the right, what you want instead — and a live estimate underneath showing the predicted size,
+the saving, and how confident that prediction is.
 
-On a 5 GB film those three copies alone were minutes of pure disk shuffling per job.
+### Presets
 
-**The levers that remain, in order of effect:**
+| Preset | What it changes |
+|---|---|
+| **Standard** | Keeps the resolution, re-encodes to a more efficient codec. Best on older H.264 or MPEG files. |
+| **Medium reduction** | One step down the resolution ladder (4K → 1440p, 1080p → 720p) plus leaner audio. |
+| **High reduction** | A step down *and* a lower bitrate. Smallest file; the quality loss is visible. |
+| **Lossless only** | Bit-exact changes only. Verified by hash afterwards. |
+| **Custom** | Everything by hand. |
 
-1. **Encode on the graphics card.** Ten to twenty times faster. See below for the quality question.
-2. **Reduce the resolution first.** 4K to 1440p is roughly a quarter of the pixels, so roughly a
-   quarter of the time — and a much bigger file saving than any amount of CRF tuning.
-3. **Speed setting.** "Fastest" picks a quicker encoder preset: typically three to five times
-   sooner for a file around 10% larger.
-4. **Let it run.** The queue pauses while anyone is streaming and runs one job at a time by
-   default. Overnight is when it makes progress.
+The dialog opens on whichever preset actually helps *that* file. A file already encoded in HEVC at
+a sensible bitrate cannot be shrunk by re-encoding it to HEVC again, so it steers you to a
+resolution change and says why rather than offering a preset that would save nothing.
 
-### "Can it use the GPU and still make a small file?"
+### In bulk
 
-Mostly, yes — that reputation comes from GPUs being run on their defaults. This plugin drives them
-in their highest-quality mode instead: multi-pass rate control, a 32-frame lookahead, B-frames with
-middle reference, and spatial and temporal adaptive quantisation.
+Search or filter your library — by size, resolution, bitrate, watched state, container or codec —
+tick the files you want, and apply one preset to all of them. Each file is still analysed
+individually, so the preset adapts to what it actually is, and anything unconvertible is listed as
+skipped with the reason.
 
-That lands roughly **10–20% larger** than a slow CPU encode, rather than the ~50% a GPU on its
-defaults costs, while still being many times faster. For a library-wide reduction that is almost
-always the right trade. Keep the CPU for files you care most about.
+---
 
-### Would another program be faster?
+## Trimming tracks you never use
 
-- **Tdarr** and **Unmanic** can spread encoding across several machines. If you have a spare PC,
-  that beats anything a single-server plugin can do.
-- **SVT-AV1** is often faster than x265 at comparable quality and is used automatically for the
-  High reduction preset when your FFmpeg has it and AV1 encoding is enabled.
-- Nothing will make software 4K encoding quick. If jobs need to finish in minutes rather than
-  hours, hardware encoding is the only real answer.
+A Blu-ray rip often carries five audio languages and a commentary track. If you only ever watch in
+English, the rest is pure waste — and removing it is **bit-exact for everything you keep**, which
+usually makes it the single largest saving available.
+
+Set **Audio languages** to `eng` in the settings, or per conversion, or across a whole batch.
+`eng`, `en`, `en-GB` and `English` all match, because containers spell it inconsistently. Subtitles
+have their own list, and commentary tracks can be dropped separately.
+
+Two safeguards: tracks with no language tag are kept by default (on a single-language release the
+untagged track is usually the only one), and **a file is never left with no audio at all** — if
+nothing matches your list, the default track survives.
+
+---
 
 ## What happens to the original
 
-Replacing a file keeps the old one **in the same folder**, renamed with an extension Jellyfin
-ignores, so it never shows up as a second copy. That makes the swap an instant rename rather than
-a whole-file copy, and putting it back is equally instant.
+Replacing a file leaves the old one **in the same folder**, renamed with an extension Jellyfin
+ignores so it never appears as a second copy. That makes the swap an instant rename instead of a
+whole-file copy, and putting it back equally instant.
 
-Three choices:
+| Choice | Effect |
+|---|---|
+| **Replace, keep the old file** *(default)* | Kept for 7 days, then deleted automatically. Undo any time before that. |
+| **Replace and delete now** | Frees the space immediately. No undo. |
+| **Keep the original** | Writes a new file alongside, or adds it as another version. |
 
-- **Replace, keep the old file** for the retention period (7 days by default), then it is deleted
-  automatically. Undo any time before that.
-- **Replace and delete now** — frees the space immediately, no undo.
-- **Keep the original** and write a new file alongside, or add it as another version.
-
-Every replacement is also appended to `replacements.log` in the plugin data folder, so there is a
+Every replacement is appended to `replacements.log` in the plugin data folder, so there is a
 readable trail independent of the plugin's own history.
 
-### If a plugin does not appear
+---
 
-1. **Click the "Available" chip.** The page defaults to *Installed*. This is nearly always it.
-2. **Hard-refresh the browser** (Ctrl+Shift+R), then restart Jellyfin. Manifests are cached.
-3. **Check the server can reach the URL.** The manifest is fetched by the *Jellyfin server*, not
-   your browser, so pasting the URL into your own browser proves nothing. Look in
-   **Dashboard → Logs** for errors mentioning the repository host. A server without outbound
-   HTTPS, or behind a proxy, gets nothing and reports nothing in the UI.
-4. **Check your Jellyfin version.** Jellyfin only offers a plugin whose `targetAbi` is less than
-   or equal to the server version. Media Optimizer targets `10.11.0.0`, so it needs 10.11.0 or
-   newer and will not appear at all on 10.10.x.
+## Making it faster
 
-### Updating
+Software encoding is genuinely slow — x265 at 4K is a few frames per second, and that is the job,
+not a bug. But most of the gap between this plugin and running FFmpeg by hand was never the
+encoder. It was these, all now fixed:
 
-Jellyfin checks the repository automatically. When a new version appears, **Dashboard → Plugins**
-offers the update; restart afterwards.
+| What was costing time | How much | Now |
+|---|---|---|
+| Full decode verification after every replace | roughly doubled every job | Off by default; the cheap checks still run |
+| Encoding into a folder on another disk | a full copy of the finished file | Encodes in the media folder — the final move is a rename |
+| Moving the original into a data folder | a second full copy | Renamed in place, instantly |
+| Below-normal process priority | slower whenever anything else runs | Off by default |
 
-### Uninstalling
+On a 5 GB film those copies alone were minutes of pure disk shuffling per job.
 
-**Dashboard → Plugins → Media Optimizer → Uninstall**, then restart. Files it already converted
-are left exactly as they are. If you used *Replace* and want an original back, restore it from the
-queue page **before** uninstalling — the quarantine folder is tracked in the plugin's own job
-history, which uninstalling leaves behind on disk but the UI can no longer read.
+**The levers that remain, in order of effect:**
 
-### Building it yourself instead
+1. **Encode on the graphics card** — ten to twenty times faster. See below.
+2. **Reduce the resolution first** — 4K to 1440p is roughly a quarter of the pixels, so roughly a
+   quarter of the time, and a far bigger saving than any amount of CRF tuning.
+3. **Set Speed to "Fastest"** — typically three to five times sooner for a file about 10% larger.
+4. **Let it run overnight** — the queue pauses while anyone is streaming and runs one job at a time.
+
+### Can it use the GPU and still make a small file?
+
+Mostly, yes. That reputation comes from GPUs being run on their defaults. This plugin drives them
+in their highest-quality mode instead: multi-pass rate control, a 32-frame lookahead, B-frames with
+middle reference, and spatial and temporal adaptive quantisation.
+
+That lands **10–20% larger** than a slow CPU encode rather than the ~50% a GPU on its defaults
+costs, while still being many times faster. For a library-wide reduction that is almost always the
+right trade; keep the CPU for the files you care most about.
+
+### Would another program be faster?
+
+- **Tdarr** or **Unmanic** spread encoding across several machines. With a spare PC, that beats
+  anything a single-server plugin can do.
+- **SVT-AV1** is often faster than x265 at comparable quality, and is chosen automatically for High
+  reduction when your FFmpeg has it and AV1 encoding is enabled.
+- Nothing makes software 4K encoding quick. If jobs must finish in minutes, hardware is the only
+  real answer.
+
+---
+
+## Lossless mode, precisely
+
+Genuinely bit-exact operations, and roughly what each saves:
+
+| Technique | Typical saving | Notes |
+|---|---|---|
+| Drop unwanted audio/subtitle tracks | 10–50% | The largest real saving on most remuxes |
+| Lossless audio → FLAC | 10–35%, 50%+ from PCM | TrueHD, DTS-HD MA and LPCM decode bit-exactly |
+| Strip filler NAL units | 0%, or 10–20% | Only on sources padded to a constant bitrate |
+| Remux container | under 1% | Not a size strategy; useful for compatibility |
+| Lossless video re-encode | 40–70% | **Only** from a lossless source (FFV1, HuffYUV, raw) |
+
+After a lossless job the plugin decodes every retained track from both files and compares MD5
+hashes. A mismatch fails the job and leaves the original untouched — the claim is checked, not
+asserted.
+
+"Visually lossless" (CRF 16–18) is presented separately and never labelled lossless.
+
+---
+
+## Safety
+
+The original is not touched until a verified replacement exists on disk.
+
+- **Preflight** — free space, a file-stability window so an in-progress download is never grabbed,
+  no active playback on the item, a writable target, and exclusion of ISO, BDMV, `.strm` and
+  multi-part items.
+- **Verification** — the output parses, its duration matches within ±0.5% or one second, every
+  expected stream is present, and for lossless jobs the hashes match. An optional full decode scan
+  catches deeper corruption at the cost of roughly doubling the job.
+- **The queue survives a crash.** Every change is written to disk before it is acknowledged, so a
+  power cut loses nothing. An interrupted encode is picked up again automatically; one interrupted
+  while moving files is held for review instead, because there the original may already have moved.
+- **Library reconciliation** — on a container change the existing item is repointed rather than
+  rescanned, so watched state, resume positions, favourites, playlists and collections survive.
+  Companion files (`.nfo`, artwork, external subtitles) are renamed alongside, and stale scrub
+  previews are rebuilt.
+
+Every endpoint that starts, cancels or reverses a conversion requires administrator rights.
+
+---
+
+## Honest limitations
+
+These are properties of Jellyfin and of video compression, not bugs.
+
+- **The in-app buttons only exist in browser-based clients.** Jellyfin has no plugin API for its
+  web client, so they are grafted onto private DOM. They appear in browsers, Jellyfin Media Player
+  and the Android app's web views — not on Android TV, Roku, Kodi, tvOS or Swiftfin, and no server
+  plugin can put them there. The dashboard page does everything they do.
+- **Those hooks will break eventually.** Between jellyfin-web `v10.11.0` and current `master`,
+  `actionSheet.js` became `.ts` and the video OSD moved directories — both files this depends on.
+  Every hook fails closed and logs once; expect a plugin update after a Jellyfin release.
+- **Dolby Vision cannot survive a re-encode.** FFmpeg parses the RPU but cannot re-inject it.
+  Re-encoding DV video is blocked by default; you can explicitly accept conversion to HDR10.
+- **HDR10+ dynamic metadata is lost** on re-encode. The output keeps static HDR10.
+- **You cannot losslessly shrink already-lossy video.** Re-encoding H.264 or HEVC at `-qp 0` stores
+  the *decoded pixels*, which carry far more entropy than the bitstream they came from — the result
+  is typically 3–20× larger. The plugin refuses this rather than letting you discover it.
+- **Encoding competes with playback.** Jellyfin gives plugins no resource governor. The queue runs
+  one job at a time and pauses while anyone is streaming.
+- **It has not been verified inside a live Jellyfin server.** Everything here is built and tested
+  against the real 10.11 packages, but plugin loading and the File Transformation handshake are
+  verified structurally, not observed running. The status panel is what tells you the truth on
+  your server.
+
+---
+
+## Troubleshooting
+
+**Nothing appeared after adding the repository.**
+
+1. Click the **Available** chip — the page defaults to *Installed*. This is nearly always it.
+2. Hard-refresh (Ctrl+Shift+R), then restart Jellyfin. Manifests are cached.
+3. Check the *server* can reach the URL. It is fetched by Jellyfin, not your browser, so pasting it
+   into your own browser proves nothing. Look in **Dashboard → Logs** for the repository host. A
+   server without outbound HTTPS gets nothing and reports nothing in the UI.
+4. Check your version. Jellyfin only offers a plugin whose `targetAbi` is at or below the server
+   version; this one needs 10.11.0+.
+
+**The in-app buttons don't appear.** Install File Transformation (step 4), restart, then
+hard-refresh. The status panel says explicitly whether the injection registered.
+
+**Is anything working at all?** **Dashboard → Media Optimizer** opens with a status line that
+expands into a per-part check: the plugin, FFmpeg and its encoders, encoding speed measured on your
+hardware, the queue, the in-app injection, and your permissions. Each failure reports itself with
+what to do, and never hides the others. If that page renders, the plugin is loaded and routed.
+
+---
+
+## Updating and uninstalling
+
+Jellyfin checks the repository automatically; when a new version appears, **Dashboard → Plugins**
+offers it. Restart afterwards.
+
+To uninstall: **Dashboard → Plugins → Media Optimizer → Uninstall**, then restart. Converted files
+are left exactly as they are. If you used *Replace* and want an original back, **restore it before
+uninstalling** — the kept files remain on disk, but the UI that knows which is which will be gone.
+
+---
+
+## Building it yourself
 
 ```bash
 dotnet publish -c Release
@@ -264,15 +297,27 @@ directory), then restart.
 ## Development
 
 ```bash
-dotnet build                 # build
-dotnet test                  # 60 tests, including 7 against a real ffmpeg
+dotnet build -c Release        # requires the .NET 9 SDK
+dotnet test                    # 124 tests
+cd web-tests && npm test       # browser-based UI tests
+./tools/package.sh             # rebuilds the zip and manifest.json together
 ```
 
-The FFmpeg integration tests generate a short clip, run planner-produced argument vectors through
-a real binary, and assert on the actual output — that a lossless job hashes identically, that a
-lossy one claiming to be lossless is *rejected*, that a truncated output is caught, that a
-downscale produces the requested resolution, and that an upscale is refused. They skip when ffmpeg
-is absent.
+`tools/package.sh` takes the version and changelog from `build.yaml`. Never hand-edit
+`manifest.json` — Jellyfin verifies the MD5 on download, so the two must be generated in one step.
+
+**The tests exercise real things.** Seven drive an actual FFmpeg binary on a generated clip and
+assert on the output: that a lossless job hashes identically, that a lossy job *claiming* to be
+lossless is rejected, that a truncated output is caught, that a downscale produces the requested
+resolution, that an upscale is refused, and that cancelling kills FFmpeg leaving the source
+untouched. The browser tests render the dialog and dashboard in Chromium and measure the layout,
+including under deliberately hostile page CSS — which is how the shadow-root isolation is verified
+rather than assumed.
 
 See [`docs/implementation-plan.html`](docs/implementation-plan.html) for the design rationale and
-the full risk register.
+the full risk register, and [`docs/NEXT-SESSION-PROMPT.md`](docs/NEXT-SESSION-PROMPT.md) to pick
+the work up in a fresh session.
+
+## Licence
+
+GPL-3.0, matching the official Jellyfin plugin template.
