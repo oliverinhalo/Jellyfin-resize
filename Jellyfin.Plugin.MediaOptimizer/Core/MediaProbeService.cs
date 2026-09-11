@@ -102,14 +102,30 @@ public class MediaProbeService : IMediaProbeService
             }
         }
 
-        var streams = GetMediaStreams(itemId);
+        var streams = GetMediaStreams(item, itemId);
         BuildTracks(analysis, streams);
 
         // ffprobe fills the gaps Jellyfin's model does not carry: attachments, chapter count,
-        // Dolby Vision side data and variable-frame-rate detection.
+        // Dolby Vision side data and variable-frame-rate detection. When Jellyfin knows nothing
+        // about the streams it also supplies the tracks themselves.
         await EnrichFromFfprobeAsync(analysis, cancellationToken).ConfigureAwait(false);
 
         DeriveBitrates(analysis);
+
+        // Converting a file whose streams could not be read is never safe: the planner would map
+        // nothing, and the job would spend hours producing an empty file. Stop here instead, with
+        // a reason that says which of the two sources failed.
+        if (analysis.IsEligible && analysis.Video is null && analysis.Audio.Count == 0)
+        {
+            analysis.IsEligible = false;
+            analysis.IneligibleReason =
+                "Neither Jellyfin nor FFmpeg could report what is inside this file, so there is "
+                + "nothing safe to convert. "
+                + (analysis.StreamInfoError ?? "FFprobe returned no streams.")
+                + " Scan the library for this item (\u2026 \u2192 Refresh metadata, \"Replace all metadata\") so "
+                + "Jellyfin records its streams, and check Dashboard \u2192 Playback \u2192 Transcoding points at a "
+                + "working FFmpeg. Media Optimizer's dashboard page has a diagnostics panel with the detail.";
+        }
 
         return analysis;
     }
@@ -331,17 +347,52 @@ public class MediaProbeService : IMediaProbeService
         analysis.IsEligible = true;
     }
 
-    private IReadOnlyList<MediaStream> GetMediaStreams(Guid itemId)
+    private IReadOnlyList<MediaStream> GetMediaStreams(BaseItem item, Guid itemId)
     {
+        // The stream table, which is how Jellyfin itself reads them almost everywhere.
         try
         {
-            return _mediaSourceManager.GetMediaStreams(itemId);
+            var streams = _mediaSourceManager.GetMediaStreams(itemId);
+            if (streams.Count > 0)
+            {
+                return streams;
+            }
         }
-        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+#pragma warning disable CA1031 // One empty source must fall through to the next, not throw.
+        catch (Exception ex)
+#pragma warning restore CA1031
         {
             _logger.LogWarning(ex, "[MediaOptimizer] Could not read media streams for {ItemId}", itemId);
-            return Array.Empty<MediaStream>();
         }
+
+        // The item's own media source. This is assembled differently and still answers for items
+        // the stream query comes back empty for, which is the difference between the dialog
+        // working and showing a file with no video in it.
+        try
+        {
+            var sources = _mediaSourceManager.GetStaticMediaSources(item, false, null);
+            foreach (var source in sources)
+            {
+                if (source.MediaStreams is { Count: > 0 })
+                {
+                    _logger.LogDebug(
+                        "[MediaOptimizer] Stream table was empty for {ItemId}; used the item's media source instead",
+                        itemId);
+                    return source.MediaStreams;
+                }
+            }
+        }
+#pragma warning disable CA1031 // Falls through to ffprobe below.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not read static media sources for {ItemId}", itemId);
+        }
+
+        _logger.LogWarning(
+            "[MediaOptimizer] Jellyfin reported no media streams for {ItemId}; falling back to ffprobe",
+            itemId);
+        return Array.Empty<MediaStream>();
     }
 
     private static void BuildTracks(FileAnalysis analysis, IReadOnlyList<MediaStream> streams)
@@ -444,19 +495,62 @@ public class MediaProbeService : IMediaProbeService
             analysis.Path
         ];
 
+        var probePath = string.Empty;
+        try
+        {
+            probePath = _runner.FfprobePath ?? string.Empty;
+        }
+#pragma warning disable CA1031 // A path we cannot read is reported, not thrown.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogError(ex, "[MediaOptimizer] Jellyfin did not report an ffprobe path");
+        }
+
+        if (string.IsNullOrWhiteSpace(probePath))
+        {
+            analysis.StreamInfoError =
+                "Jellyfin has no FFprobe path configured, so the file could not be inspected.";
+            _logger.LogError("[MediaOptimizer] No ffprobe path available; cannot inspect {Path}", analysis.Path);
+            return;
+        }
+
         ProcessResult result;
         try
         {
-            result = await _runner.RunAsync(_runner.FfprobePath, args, cancellationToken).ConfigureAwait(false);
+            result = await _runner.RunAsync(probePath, args, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (OperationCanceledException)
         {
-            _logger.LogWarning(ex, "[MediaOptimizer] ffprobe failed for {Path}", analysis.Path);
+            throw;
+        }
+#pragma warning disable CA1031 // A failed probe must degrade to "unknown", not throw the dialog away.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogError(ex, "[MediaOptimizer] ffprobe failed for {Path}", analysis.Path);
+            analysis.StreamInfoError = FormattableString.Invariant(
+                $"Could not run '{probePath}': {ex.Message}");
             return;
         }
 
         if (!result.Success || string.IsNullOrWhiteSpace(result.StandardOutput))
         {
+            var detail = result.StandardError.Trim();
+            if (detail.Length > 300)
+            {
+                detail = detail[..300];
+            }
+
+            var summary = FormattableString.Invariant(
+                $"'{probePath}' exited with code {result.ExitCode} and returned nothing usable.");
+            analysis.StreamInfoError = detail.Length > 0 ? summary + " " + detail : summary;
+            _logger.LogError(
+                "[MediaOptimizer] ffprobe at {Path} exited {ExitCode} with no usable output for {File}: {Error}",
+                probePath,
+                result.ExitCode,
+                analysis.Path,
+                detail);
             return;
         }
 
@@ -498,6 +592,14 @@ public class MediaProbeService : IMediaProbeService
 
             if (root.TryGetProperty("streams", out var streams) && streams.ValueKind == JsonValueKind.Array)
             {
+                // Jellyfin knew nothing about this file, so ffprobe is the only description of it
+                // there is. Previously its answer was thrown away and the dialog rendered a file
+                // with no video and no audio in it.
+                if (analysis.Video is null && analysis.Audio.Count == 0)
+                {
+                    BuildTracksFromFfprobe(analysis, streams);
+                }
+
                 ApplyStreamDetails(analysis, streams);
             }
         }
@@ -506,6 +608,155 @@ public class MediaProbeService : IMediaProbeService
             _logger.LogWarning(ex, "[MediaOptimizer] Could not parse ffprobe output for {Path}", analysis.Path);
         }
     }
+
+    /// <summary>
+    /// Builds the whole track list out of ffprobe's stream array. This is the fallback for a file
+    /// Jellyfin has no recorded streams for — an item it has not probed yet, or a library whose
+    /// stream table came back empty — where the alternative is a dialog that shows a movie as
+    /// having neither video nor audio.
+    /// </summary>
+    /// <param name="analysis">The analysis to populate.</param>
+    /// <param name="streams">The "streams" array from ffprobe's JSON output.</param>
+    internal static void BuildTracksFromFfprobe(FileAnalysis analysis, JsonElement streams)
+    {
+        var audio = new List<AudioTrackInfo>();
+        var subs = new List<SubtitleTrackInfo>();
+        var audioTypeIndex = 0;
+
+        foreach (var s in streams.EnumerateArray())
+        {
+            var type = s.TryGetProperty("codec_type", out var t) ? t.GetString() : null;
+            var index = s.TryGetProperty("index", out var idx) && idx.TryGetInt32(out var i) ? i : -1;
+            var codec = s.TryGetProperty("codec_name", out var c) ? c.GetString() ?? string.Empty : string.Empty;
+            var profile = s.TryGetProperty("profile", out var pr) ? pr.GetString() : null;
+
+            switch (type)
+            {
+                case "video" when analysis.Video is null:
+                    var transfer = Text(s, "color_transfer");
+                    analysis.Video = new VideoTrackInfo
+                    {
+                        Index = index,
+                        Codec = codec,
+                        Profile = profile,
+                        Width = Int(s, "width"),
+                        Height = Int(s, "height"),
+                        BitDepth = Int(s, "bits_per_raw_sample"),
+                        PixelFormat = Text(s, "pix_fmt"),
+                        FrameRate = ParseRational(s, "avg_frame_rate") is { } fps and > 0
+                            ? (float)fps
+                            : null,
+                        Range = RangeFromTransfer(transfer),
+                        RangeType = RangeFromTransfer(transfer),
+                        ColorTransfer = transfer,
+                        ColorPrimaries = Text(s, "color_primaries"),
+                        ColorSpace = Text(s, "color_space"),
+                        IsLosslessCodec = LosslessAnalyzer.IsLosslessVideo(codec),
+                        Bitrate = Rate(s)
+                    };
+                    break;
+
+                case "audio":
+                    audio.Add(new AudioTrackInfo
+                    {
+                        Index = index,
+                        TypeIndex = audioTypeIndex++,
+                        Codec = codec,
+                        Profile = profile,
+                        Channels = Int(s, "channels"),
+                        ChannelLayout = Text(s, "channel_layout"),
+                        SampleRate = Int(s, "sample_rate"),
+                        BitDepth = Int(s, "bits_per_raw_sample") ?? Int(s, "bits_per_sample"),
+                        Language = Tag(s, "language"),
+                        Title = Tag(s, "title"),
+                        IsDefault = Disposition(s, "default"),
+                        IsLossless = LosslessAnalyzer.IsLosslessAudio(codec, profile),
+                        HasObjectAudio = LosslessAnalyzer.HasObjectAudio(codec, profile),
+                        Bitrate = Rate(s)
+                    });
+                    break;
+
+                case "subtitle":
+                    subs.Add(new SubtitleTrackInfo
+                    {
+                        Index = index,
+                        Codec = codec,
+                        Language = Tag(s, "language"),
+                        Title = Tag(s, "title"),
+                        IsDefault = Disposition(s, "default"),
+                        IsExternal = false,
+                        IsGraphical = ContainerCompatibility.IsGraphicalSubtitle(codec)
+                    });
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        analysis.Audio = audio;
+        analysis.Subtitles = subs;
+    }
+
+    /// <summary>Maps ffprobe's colour transfer onto the dynamic-range label shown in the UI.</summary>
+    /// <param name="transfer">The color_transfer value.</param>
+    /// <returns>A display label.</returns>
+    private static string RangeFromTransfer(string? transfer) => transfer switch
+    {
+        "smpte2084" => "HDR10",
+        "arib-std-b67" => "HLG",
+        _ => "SDR"
+    };
+
+    private static string? Text(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString()
+            : null;
+
+    /// <summary>Reads an integer that ffprobe may report either as a number or as a string.</summary>
+    /// <param name="element">The stream object.</param>
+    /// <param name="property">Property name.</param>
+    /// <returns>The value, or null.</returns>
+    private static int? Int(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var v))
+        {
+            return null;
+        }
+
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        return v.ValueKind == JsonValueKind.String
+            && int.TryParse(v.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : null;
+    }
+
+    private static BitrateInfo Rate(JsonElement element)
+    {
+        if (element.TryGetProperty("bit_rate", out var v)
+            && v.ValueKind == JsonValueKind.String
+            && long.TryParse(v.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var bps)
+            && bps > 0)
+        {
+            return new BitrateInfo { Bps = bps, Source = ValueSource.Measured };
+        }
+
+        return new BitrateInfo { Source = ValueSource.Unknown };
+    }
+
+    private static string? Tag(JsonElement element, string name) =>
+        element.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Object
+            ? Text(tags, name)
+            : null;
+
+    private static bool Disposition(JsonElement element, string name) =>
+        element.TryGetProperty("disposition", out var d)
+        && d.ValueKind == JsonValueKind.Object
+        && Int(d, name) == 1;
 
     private static void ApplyStreamDetails(FileAnalysis analysis, JsonElement streams)
     {

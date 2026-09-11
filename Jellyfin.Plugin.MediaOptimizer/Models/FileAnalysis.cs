@@ -209,6 +209,13 @@ public class FileAnalysis
     /// <summary>Gets or sets the reason the item is not eligible.</summary>
     public string? IneligibleReason { get; set; }
 
+    /// <summary>
+    /// Gets or sets why the file's streams could not be read, or null when they were.
+    /// Set only when both Jellyfin's own stream data and FFprobe came back with nothing, so the
+    /// dialog can name the real problem instead of showing a file with no video in it.
+    /// </summary>
+    public string? StreamInfoError { get; set; }
+
     /// <summary>Gets or sets a value indicating whether a job for this item is already queued or running.</summary>
     public bool HasActiveJob { get; set; }
 
