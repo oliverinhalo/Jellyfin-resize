@@ -55,7 +55,10 @@
   margin-left:6px;font-weight:700;vertical-align:middle}
 
 .mopt-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;align-items:flex-end}
-.mopt-field{display:flex;flex-direction:column;gap:5px;flex:1 1 150px;min-width:0}
+/* A <select> clips its label instead of wrapping it, so a field narrower than its own
+   longest option reads as a cut-off sentence. The basis is the width the longest label
+   actually needs: below it the row wraps and each field gets the full width. */
+.mopt-field{display:flex;flex-direction:column;gap:5px;flex:1 1 210px;min-width:0}
 .mopt-field>label{font-size:12px;opacity:.68}
 .mopt-field select,.mopt-field input{background:rgba(0,0,0,.35);color:inherit;
   border:1px solid rgba(255,255,255,.18);border-radius:5px;padding:8px 9px;font:inherit;

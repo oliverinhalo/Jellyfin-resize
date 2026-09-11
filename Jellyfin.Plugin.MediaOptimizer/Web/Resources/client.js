@@ -629,7 +629,7 @@
         return options;
     }
 
-    function selectField(host, label, options, value, onChange) {
+    function selectField(host, label, options, value, onChange, hints) {
         var field = el('div', 'mopt-field');
         field.appendChild(el('label', null, label));
         var select = document.createElement('select');
@@ -645,6 +645,19 @@
         });
         select.addEventListener('change', function () { onChange(select.value === '' ? null : select.value); });
         field.appendChild(select);
+
+        // A <select> clips its text rather than wrapping it, so an option label long enough to
+        // explain itself gets cut off mid-sentence on a phone. The label stays short and the
+        // explanation goes underneath, where it can wrap.
+        if (hints) {
+            var note = el('div', 'mopt-sub');
+            note.textContent = hints[String(select.value)] || '';
+            field.appendChild(note);
+            select.addEventListener('change', function () {
+                note.textContent = hints[String(select.value)] || '';
+            });
+        }
+
         host.appendChild(field);
         return select;
     }
@@ -786,10 +799,14 @@
 
                 var row3 = el('div', 'mopt-row');
                 selectField(row3, 'Quality mode', [
-                    { value: 'ConstantQuality', label: 'Constant quality (recommended)' },
+                    { value: 'ConstantQuality', label: 'Constant quality' },
                     { value: 'AverageBitrate', label: 'Fixed bitrate' },
                     { value: 'TargetSize', label: 'Target file size' }
-                ], req.RateControl, function (v) { req.RateControl = v; rebuild(); });
+                ], req.RateControl, function (v) { req.RateControl = v; rebuild(); }, {
+                    ConstantQuality: 'Recommended. Spends bits where the picture needs them.',
+                    AverageBitrate: 'Every second gets the same bitrate, whatever the scene.',
+                    TargetSize: 'Aims at a size you choose; quality follows from it.'
+                });
 
                 if (req.RateControl === 'ConstantQuality') {
                     numberField(row3, 'Quality (lower = better, bigger)', req.Quality,
@@ -879,16 +896,24 @@
         host.appendChild(el('div', 'mopt-sec', 'Output'));
         var outRow = el('div', 'mopt-row');
         selectField(outRow, 'Container', [
-            { value: 'mp4', label: 'MP4 — plays on the most devices' },
-            { value: 'mkv', label: 'MKV — keeps every subtitle and font' }
-        ], req.Container, function (v) { setContainer(v); });
+            { value: 'mp4', label: 'MP4' },
+            { value: 'mkv', label: 'MKV' }
+        ], req.Container, function (v) { setContainer(v); }, {
+            mp4: 'Plays on the most devices.',
+            mkv: 'Keeps every subtitle track and embedded font.'
+        });
 
-        selectField(outRow, 'What happens to the original', [
-            { value: 'Replace', label: 'Replace it, keep the old file for a while' },
-            { value: 'ReplaceAndDelete', label: 'Replace it and delete the old file now' },
-            { value: 'Sidecar', label: 'Keep it, save a new file alongside' },
-            { value: 'AlternateVersion', label: 'Keep it, add as another version' }
-        ], req.OutputPolicy, function (v) { req.OutputPolicy = v; rebuild(); });
+        selectField(outRow, 'The original file', [
+            { value: 'Replace', label: 'Replace it' },
+            { value: 'ReplaceAndDelete', label: 'Replace and delete now' },
+            { value: 'Sidecar', label: 'Keep, save alongside' },
+            { value: 'AlternateVersion', label: 'Keep, add as a version' }
+        ], req.OutputPolicy, function (v) { req.OutputPolicy = v; rebuild(); }, {
+            Replace: 'The old file is kept for a while so this can be undone.',
+            ReplaceAndDelete: 'The old file is deleted as soon as the result is verified.',
+            Sidecar: 'A new file is written next to the original.',
+            AlternateVersion: 'Added to Jellyfin as another version of this item.'
+        });
         host.appendChild(outRow);
 
         var keepRow = el('div');
@@ -979,12 +1004,12 @@
             { value: 'mkv', label: 'MKV everywhere' }
         ], batch.Container, function (v) { batch.Container = v; });
 
-        selectField(row, 'What happens to originals', [
-            { value: null, label: 'Use the plugin default' },
-            { value: 'Replace', label: 'Replace, keep old files for a while' },
-            { value: 'ReplaceAndDelete', label: 'Replace and delete old files now' },
-            { value: 'Sidecar', label: 'Keep them, save new files' },
-            { value: 'AlternateVersion', label: 'Keep them, add versions' }
+        selectField(row, 'The original files', [
+            { value: null, label: 'Plugin default' },
+            { value: 'Replace', label: 'Replace them' },
+            { value: 'ReplaceAndDelete', label: 'Replace and delete now' },
+            { value: 'Sidecar', label: 'Keep, save alongside' },
+            { value: 'AlternateVersion', label: 'Keep, add as versions' }
         ], batch.OutputPolicy, function (v) { batch.OutputPolicy = v; });
         pane.appendChild(row);
 

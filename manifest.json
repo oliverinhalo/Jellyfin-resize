@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.4.4.0",
+                "changelog": "- Fixed the dialog showing a file as having no video and no audio, with a blank duration and\nbitrate, and still offering to convert it. FFprobe's answer was only ever used to fill in\ndetails on top of Jellyfin's own stream data; if Jellyfin had no record of the file, that\nanswer was discarded and the dialog described the file as empty. FFprobe now supplies the\nwhole track list when Jellyfin has nothing, and the item's own media source is tried before\neither of them.\n- A file whose contents genuinely cannot be read is now refused with the reason, instead of\noffering \"Start conversion\" on a job that would map no streams and write an empty file.\n- Fixed MP4 being offered for a TrueHD or Atmos remux. The container check needs the audio\ntrack list to know MP4 cannot hold it, so with no stream data it silently passed and the\njob died at the muxer.\n- Dropdowns no longer cut their own labels off mid-sentence on a phone. A select clips rather\nthan wraps, so the labels are short now and the explanation sits underneath where it can wrap.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.4.4.0.zip",
+                "checksum": "dfa6988f94d3cdb8b49f5cb3cd9604a7",
+                "timestamp": "2026-09-11T22:30:10Z"
+            },
+            {
                 "version": "1.4.3.0",
                 "changelog": "- Fixed the Codec dropdown being empty and every conversion being rejected with \"No video\nencoder was selected\". When the plugin could not read FFmpeg's encoder listing it was left\nwith no codecs at all, and that empty result was then cached until the server was restarted.\nA probe that finds nothing is no longer kept, the listing is parsed in a way that survives\nFFmpeg adding a column, and FFmpeg is asked about each encoder individually as a last resort.\n- The dialog now says why nothing can be re-encoded, naming the actual FFmpeg problem, instead\nof showing an empty Codec dropdown and defaulting Video to \"Keep exactly as it is\".\n- Fixed the chosen codec not reaching the server. A dropdown showing its first entry was not\nthe same as that entry having been selected, so a conversion could be rejected for having no\nencoder while the form plainly showed one.\n- A codec this server no longer provides is shown as such in the dropdown rather than being\nsilently swapped for a different one.",
                 "targetAbi": "10.11.0.0",

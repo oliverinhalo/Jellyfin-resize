@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.4.3.0"
+version: "1.4.4.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,21 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.4.4.0
+  - Fixed the dialog showing a file as having no video and no audio, with a blank duration and
+    bitrate, and still offering to convert it. FFprobe's answer was only ever used to fill in
+    details on top of Jellyfin's own stream data; if Jellyfin had no record of the file, that
+    answer was discarded and the dialog described the file as empty. FFprobe now supplies the
+    whole track list when Jellyfin has nothing, and the item's own media source is tried before
+    either of them.
+  - A file whose contents genuinely cannot be read is now refused with the reason, instead of
+    offering "Start conversion" on a job that would map no streams and write an empty file.
+  - Fixed MP4 being offered for a TrueHD or Atmos remux. The container check needs the audio
+    track list to know MP4 cannot hold it, so with no stream data it silently passed and the
+    job died at the muxer.
+  - Dropdowns no longer cut their own labels off mid-sentence on a phone. A select clips rather
+    than wraps, so the labels are short now and the explanation sits underneath where it can wrap.
+
   ### 1.4.3.0
   - Fixed the Codec dropdown being empty and every conversion being rejected with "No video
     encoder was selected". When the plugin could not read FFmpeg's encoder listing it was left
