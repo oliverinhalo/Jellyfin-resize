@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Verifies the injected client script against real jellyfin-web markup.",
   "scripts": {
-    "test": "node dom.test.mjs && node hostile.mjs && node render.mjs && node dashboard.mjs"
+    "test": "node dom.test.mjs && node hostile.mjs && node render.mjs && node dashboard.mjs && node encoders.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.0",

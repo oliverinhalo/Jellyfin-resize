@@ -57,4 +57,11 @@ public class Capabilities
 
     /// <summary>Gets or sets a value indicating whether the caller may start conversions.</summary>
     public bool CanConvert { get; set; }
+
+    /// <summary>
+    /// Gets or sets the reason no encoders could be discovered, or null when discovery worked.
+    /// Shown in the dialog so a server whose ffmpeg cannot be reached says so, instead of
+    /// presenting an empty codec list.
+    /// </summary>
+    public string? ProbeError { get; set; }
 }

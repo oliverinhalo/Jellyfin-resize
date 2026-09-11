@@ -8,6 +8,14 @@
         "category": "General",
         "versions": [
             {
+                "version": "1.4.3.0",
+                "changelog": "- Fixed the Codec dropdown being empty and every conversion being rejected with \"No video\nencoder was selected\". When the plugin could not read FFmpeg's encoder listing it was left\nwith no codecs at all, and that empty result was then cached until the server was restarted.\nA probe that finds nothing is no longer kept, the listing is parsed in a way that survives\nFFmpeg adding a column, and FFmpeg is asked about each encoder individually as a last resort.\n- The dialog now says why nothing can be re-encoded, naming the actual FFmpeg problem, instead\nof showing an empty Codec dropdown and defaulting Video to \"Keep exactly as it is\".\n- Fixed the chosen codec not reaching the server. A dropdown showing its first entry was not\nthe same as that entry having been selected, so a conversion could be rejected for having no\nencoder while the form plainly showed one.\n- A codec this server no longer provides is shown as such in the dropdown rather than being\nsilently swapped for a different one.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://raw.githubusercontent.com/oliverinhalo/Jellyfin-resize/claude/jellyfin-media-optimizer-92xiw8/dist/media-optimizer_1.4.3.0.zip",
+                "checksum": "4a80d786b16ec9910ef2434b33cebf44",
+                "timestamp": "2026-09-11T17:32:32Z"
+            },
+            {
                 "version": "1.4.2.0",
                 "changelog": "- \"Try again\" now works on jobs that failed before 1.4.1.0. A queued job carries the settings it\nwas created with, so retrying one simply replayed the container that could not hold the file.\nThe container is now re-checked every time a job runs, so a stale job is corrected rather than\nfailing the same way twice.\n- Failure messages now lead with the line that names the cause. FFmpeg prints it first and then\nfloods its output with thread teardown, so the previous message kept the last 500 characters\nand cut off the only useful sentence.\n- Failures record which version of the plugin produced them.",
                 "targetAbi": "10.11.0.0",

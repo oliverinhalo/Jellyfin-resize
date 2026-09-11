@@ -117,8 +117,9 @@ public class DiagnosticsController : ControllerBase
                     CheckStatus.Failed,
                     string.Format(
                         CultureInfo.InvariantCulture,
-                        "Found at {0}, but it reported no usable video encoders. The binary may be missing or not executable.",
-                        caps.FfmpegPath)));
+                        "Found at {0}, but it reported no usable video encoders. {1}",
+                        caps.FfmpegPath,
+                        caps.ProbeError ?? "The binary may be missing or not executable.")));
                 return;
             }
 
