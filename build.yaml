@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.4.2.0"
+version: "1.4.3.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,20 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.4.3.0
+  - Fixed the Codec dropdown being empty and every conversion being rejected with "No video
+    encoder was selected". When the plugin could not read FFmpeg's encoder listing it was left
+    with no codecs at all, and that empty result was then cached until the server was restarted.
+    A probe that finds nothing is no longer kept, the listing is parsed in a way that survives
+    FFmpeg adding a column, and FFmpeg is asked about each encoder individually as a last resort.
+  - The dialog now says why nothing can be re-encoded, naming the actual FFmpeg problem, instead
+    of showing an empty Codec dropdown and defaulting Video to "Keep exactly as it is".
+  - Fixed the chosen codec not reaching the server. A dropdown showing its first entry was not
+    the same as that entry having been selected, so a conversion could be rejected for having no
+    encoder while the form plainly showed one.
+  - A codec this server no longer provides is shown as such in the dropdown rather than being
+    silently swapped for a different one.
+
   ### 1.4.2.0
   - "Try again" now works on jobs that failed before 1.4.1.0. A queued job carries the settings it
     was created with, so retrying one simply replayed the container that could not hold the file.

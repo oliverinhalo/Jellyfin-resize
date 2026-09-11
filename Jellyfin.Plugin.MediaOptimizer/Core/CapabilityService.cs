@@ -71,6 +71,14 @@ public partial class CapabilityService : ICapabilityService
         "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"
     ];
 
+    /// <summary>
+    /// How long a probe that found no encoders is held before it is tried again. A failed probe
+    /// is never cached for good: the usual cause is ffmpeg being briefly unreachable — a path
+    /// Jellyfin had not set yet, or an upgrade swapping the binary out underneath a running
+    /// server — and caching that would leave the plugin unusable until the next restart.
+    /// </summary>
+    private static readonly TimeSpan FailedProbeRetryAfter = TimeSpan.FromSeconds(30);
+
     private readonly IFfmpegRunner _runner;
     private readonly IMediaEncoder _mediaEncoder;
     private readonly IServerConfigurationManager _config;
@@ -78,6 +86,8 @@ public partial class CapabilityService : ICapabilityService
     private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
 
     private Capabilities? _cached;
+    private Capabilities? _lastFailed;
+    private DateTime _lastFailedAt;
 
     /// <summary>Initializes a new instance of the <see cref="CapabilityService"/> class.</summary>
     /// <param name="runner">FFmpeg runner.</param>
@@ -112,8 +122,26 @@ public partial class CapabilityService : ICapabilityService
                 return _cached;
             }
 
-            _cached = await ProbeAsync(cancellationToken).ConfigureAwait(false);
-            return _cached;
+            if (_lastFailed is not null && DateTime.UtcNow - _lastFailedAt < FailedProbeRetryAfter)
+            {
+                return _lastFailed;
+            }
+
+            var probed = await ProbeAsync(cancellationToken).ConfigureAwait(false);
+
+            // Only a probe that actually found something is kept. Otherwise the plugin would be
+            // permanently dead after one bad moment, with an empty codec list and no way back
+            // short of restarting the server.
+            if (probed.VideoEncoders.Count > 0)
+            {
+                _cached = probed;
+                _lastFailed = null;
+                return probed;
+            }
+
+            _lastFailed = probed;
+            _lastFailedAt = DateTime.UtcNow;
+            return probed;
         }
         finally
         {
@@ -162,13 +190,32 @@ public partial class CapabilityService : ICapabilityService
         return found;
     }
 
-    // " V....D libx264              H.264 ..." — six capability flags, then the name.
-    [GeneratedRegex(@"^\s*[VAS.][F.][S.][X.][B.][D.]\s+(?<name>[A-Za-z0-9_\-]+)\s")]
+    // " V....D libx264              H.264 ..." — a block of capability flags, then the name.
+    // The flag block is deliberately not pinned to today's exact six letters: ffmpeg has added
+    // flags before, and a listing this does not recognise leaves the plugin with no codecs at
+    // all. The legend ffmpeg prints above the table ("V..... = Video") is still excluded,
+    // because its second column starts with "=".
+    [GeneratedRegex(@"^\s*[VAS.][A-Za-z.]{1,7}\s+(?<name>[A-Za-z0-9_.\-]{2,})(?:\s|$)")]
     private static partial Regex EncoderLineRegex();
 
     private async Task<Capabilities> ProbeAsync(CancellationToken cancellationToken)
     {
-        var caps = new Capabilities { FfmpegPath = _runner.FfmpegPath };
+        string? ffmpegPath = null;
+        string? probeError = null;
+
+        try
+        {
+            ffmpegPath = _runner.FfmpegPath;
+        }
+#pragma warning disable CA1031 // A path this plugin cannot read must be reported, not thrown.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogError(ex, "[MediaOptimizer] Jellyfin did not report an ffmpeg path");
+            probeError = "Jellyfin did not report an FFmpeg path: " + ex.Message;
+        }
+
+        var caps = new Capabilities { FfmpegPath = ffmpegPath };
 
         try
         {
@@ -179,21 +226,127 @@ public partial class CapabilityService : ICapabilityService
             _logger.LogDebug(ex, "[MediaOptimizer] Could not read ffmpeg version");
         }
 
-        HashSet<string> available;
-        try
+        var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ffmpegAnswered = false;
+
+        if (string.IsNullOrWhiteSpace(ffmpegPath))
         {
-            var result = await _runner
-                .RunAsync(_runner.FfmpegPath, ["-hide_banner", "-encoders"], cancellationToken)
-                .ConfigureAwait(false);
-            available = ParseEncoderList(result.StandardOutput + "\n" + result.StandardError);
+            probeError ??= "Jellyfin has no FFmpeg path configured. Set one under Dashboard → Playback → Transcoding.";
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or System.IO.IOException)
+        else
         {
-            _logger.LogError(ex, "[MediaOptimizer] Could not enumerate ffmpeg encoders at {Path}", _runner.FfmpegPath);
-            available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var result = await _runner
+                    .RunAsync(ffmpegPath, ["-hide_banner", "-encoders"], cancellationToken)
+                    .ConfigureAwait(false);
+                available = ParseEncoderList(result.StandardOutput + "\n" + result.StandardError);
+                ffmpegAnswered = true;
+
+                if (available.Count == 0)
+                {
+                    probeError = FormattableString.Invariant(
+                        $"'{ffmpegPath} -encoders' exited with code {result.ExitCode} and listed no encoders.");
+                    _logger.LogWarning(
+                        "[MediaOptimizer] ffmpeg at {Path} listed no encoders (exit code {ExitCode})",
+                        ffmpegPath,
+                        result.ExitCode);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+#pragma warning disable CA1031 // Any failure here has to degrade to "nothing found", not throw.
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                _logger.LogError(ex, "[MediaOptimizer] Could not enumerate ffmpeg encoders at {Path}", ffmpegPath);
+                probeError = FormattableString.Invariant($"Could not run '{ffmpegPath} -encoders': {ex.Message}");
+            }
         }
 
-        var video = new List<EncoderOption>();
+        var video = BuildVideoOptions(available);
+        var audio = BuildAudioOptions(available);
+
+        // Last resort. Both the bulk listing and Jellyfin's own encoder table came back with
+        // nothing, which would leave the dialog with an empty codec dropdown and no way to
+        // convert anything. Asking ffmpeg about each candidate one at a time costs a handful of
+        // very short processes, only ever runs on a server that would otherwise offer nothing,
+        // and does not depend on the exact shape of the "-encoders" table. It is skipped when
+        // ffmpeg could not be run at all, since asking it twenty more times would not help.
+        if (video.Count == 0 && ffmpegAnswered && !string.IsNullOrWhiteSpace(ffmpegPath))
+        {
+            _logger.LogWarning(
+                "[MediaOptimizer] No encoders found from the listing; asking ffmpeg at {Path} about each candidate individually",
+                ffmpegPath);
+
+            foreach (var (encoder, _, _, _, _) in VideoCandidates)
+            {
+                if (await HasEncoderDirectlyAsync(ffmpegPath, encoder, cancellationToken).ConfigureAwait(false))
+                {
+                    available.Add(encoder);
+                }
+            }
+
+            foreach (var (encoder, _, _) in AudioCandidates)
+            {
+                if (await HasEncoderDirectlyAsync(ffmpegPath, encoder, cancellationToken).ConfigureAwait(false))
+                {
+                    available.Add(encoder);
+                }
+            }
+
+            video = BuildVideoOptions(available);
+            audio = BuildAudioOptions(available);
+
+            if (video.Count > 0)
+            {
+                // The listing was unreadable but ffmpeg itself is fine, so this is no longer a
+                // failure the user needs to see.
+                probeError = null;
+            }
+        }
+
+        caps.VideoEncoders = video;
+        caps.AudioEncoders = audio;
+        caps.Containers = ["mkv", "mp4"];
+        caps.ProbeError = video.Count == 0
+            ? probeError ?? FormattableString.Invariant(
+                $"FFmpeg at {ffmpegPath} was reachable but reported none of the encoders this plugin can use.")
+            : null;
+
+        try
+        {
+            var encoding = _config.GetEncodingOptions();
+            caps.HardwareAcceleration = encoding.HardwareAccelerationType.ToString();
+            caps.VaapiDevice = encoding.VaapiDevice;
+            caps.AllowHevcEncoding = encoding.AllowHevcEncoding;
+            caps.AllowAv1Encoding = encoding.AllowAv1Encoding;
+        }
+#pragma warning disable CA1031 // Server settings we cannot read must not take the codec list with them.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            // A server whose encoding options moved or could not be read still has a usable
+            // ffmpeg. Assume the codecs are permitted rather than hiding them all.
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not read the server's encoding options");
+            caps.AllowHevcEncoding = true;
+            caps.AllowAv1Encoding = true;
+        }
+
+        _logger.LogInformation(
+            "[MediaOptimizer] ffmpeg at {Path}: {VideoCount} video encoders, {AudioCount} audio encoders",
+            ffmpegPath,
+            video.Count,
+            audio.Count);
+
+        return caps;
+    }
+
+    private List<EncoderOption> BuildVideoOptions(HashSet<string> available)
+    {
+        var options = new List<EncoderOption>();
         foreach (var (encoder, codec, display, hardware, tenBit) in VideoCandidates)
         {
             // Trust ffmpeg's own list first, then Jellyfin's probe as a second opinion.
@@ -202,7 +355,7 @@ public partial class CapabilityService : ICapabilityService
                 continue;
             }
 
-            video.Add(new EncoderOption
+            options.Add(new EncoderOption
             {
                 Name = encoder,
                 Codec = codec,
@@ -213,7 +366,12 @@ public partial class CapabilityService : ICapabilityService
             });
         }
 
-        var audio = new List<EncoderOption>();
+        return options;
+    }
+
+    private List<EncoderOption> BuildAudioOptions(HashSet<string> available)
+    {
+        var options = new List<EncoderOption>();
         foreach (var (encoder, codec, display) in AudioCandidates)
         {
             if (!available.Contains(encoder) && !SupportsViaJellyfin(encoder))
@@ -221,26 +379,46 @@ public partial class CapabilityService : ICapabilityService
                 continue;
             }
 
-            audio.Add(new EncoderOption { Name = encoder, Codec = codec, DisplayName = display });
+            options.Add(new EncoderOption { Name = encoder, Codec = codec, DisplayName = display });
         }
 
-        caps.VideoEncoders = video;
-        caps.AudioEncoders = audio;
-        caps.Containers = ["mkv", "mp4"];
+        return options;
+    }
 
-        var encoding = _config.GetEncodingOptions();
-        caps.HardwareAcceleration = encoding.HardwareAccelerationType.ToString();
-        caps.VaapiDevice = encoding.VaapiDevice;
-        caps.AllowHevcEncoding = encoding.AllowHevcEncoding;
-        caps.AllowAv1Encoding = encoding.AllowAv1Encoding;
+    /// <summary>
+    /// Asks ffmpeg about one encoder directly. "-h encoder=libx264" answers with
+    /// "Encoder libx264 [...]" when it exists and "Codec 'libx264' is not recognized" when it
+    /// does not, which makes it a reliable check even when the encoder table cannot be read.
+    /// </summary>
+    /// <param name="ffmpegPath">Path to the ffmpeg binary.</param>
+    /// <param name="encoder">The encoder name to ask about.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True when ffmpeg reports the encoder.</returns>
+    private async Task<bool> HasEncoderDirectlyAsync(
+        string ffmpegPath,
+        string encoder,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _runner
+                .RunAsync(ffmpegPath, ["-hide_banner", "-h", "encoder=" + encoder], cancellationToken)
+                .ConfigureAwait(false);
 
-        _logger.LogInformation(
-            "[MediaOptimizer] ffmpeg at {Path}: {VideoCount} video encoders, {AudioCount} audio encoders",
-            _runner.FfmpegPath,
-            video.Count,
-            audio.Count);
-
-        return caps;
+            return (result.StandardOutput + result.StandardError)
+                .Contains("Encoder " + encoder, StringComparison.Ordinal);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // One unanswerable candidate must not stop the rest being checked.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogDebug(ex, "[MediaOptimizer] Could not ask ffmpeg about {Encoder}", encoder);
+            return false;
+        }
     }
 
     private static IReadOnlyList<string> PresetsFor(string encoder)

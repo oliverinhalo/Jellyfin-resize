@@ -295,7 +295,17 @@ public class EncodePlanner : IEncodePlanner
 
         if (string.IsNullOrEmpty(encoder))
         {
-            warnings.Add(new PlanWarning(WarningLevel.Blocker, "NO_ENCODER", "No video encoder was selected."));
+            // Two very different situations produce an empty encoder, and telling them apart is
+            // the difference between a setting the user can change and a server they must fix.
+            warnings.Add(caps.VideoEncoders.Count == 0
+                ? new PlanWarning(
+                    WarningLevel.Blocker,
+                    "NO_ENCODER_AVAILABLE",
+                    FormattableString.Invariant($"This server's FFmpeg reported no video encoders, so nothing can be re-encoded. {caps.ProbeError ?? "Check that Dashboard → Playback → Transcoding points at a working FFmpeg."} Open Media Optimizer in the dashboard and run the diagnostics for the full detail."))
+                : new PlanWarning(
+                    WarningLevel.Blocker,
+                    "NO_ENCODER",
+                    "No video encoder was selected. Pick one under Video → Codec."));
             return;
         }
 

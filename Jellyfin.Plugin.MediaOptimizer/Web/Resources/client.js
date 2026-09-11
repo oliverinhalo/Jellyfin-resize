@@ -603,6 +603,32 @@
         return box;
     }
 
+    /**
+     * Picks the encoder a codec dropdown should start on. A <select> falls back to showing its
+     * first option when nothing matches the current value, and choosing that same option fires
+     * no change event — so an unset codec has to be written into the request here, or the
+     * request keeps a null the form is not showing and the job is rejected for having no
+     * encoder selected.
+     */
+    function defaultEncoder(value, encoders) {
+        if (value) { return value; }
+        return encoders.length ? encoders[0].Name : null;
+    }
+
+    /**
+     * Builds the option list for a codec dropdown. A codec the server no longer offers is kept
+     * in the list rather than quietly swapped for another one: the dropdown then shows what the
+     * request actually says, and the estimate explains why it cannot run.
+     */
+    function encoderOptions(encoders, value) {
+        var options = encoders.map(function (e) { return { value: e.Name, label: e.DisplayName }; });
+        var present = encoders.some(function (e) { return e.Name === value; });
+        if (value && !present) {
+            options.unshift({ value: value, label: value + ' — not available on this server' });
+        }
+        return options;
+    }
+
     function selectField(host, label, options, value, onChange) {
         var field = el('div', 'mopt-field');
         field.appendChild(el('label', null, label));
@@ -701,17 +727,34 @@
         }
 
         if (a.Video && !lossless) {
+            var videoEncoders = caps.VideoEncoders.filter(function (e) { return e.Codec !== 'ffv1'; });
+
             host.appendChild(el('div', 'mopt-sec', 'Video'));
+
+            // With no encoders there is nothing to put in the Codec dropdown, and offering
+            // "Re-encode" would lead straight to an empty list and a blocker at the end. Say what
+            // is wrong here instead.
+            if (!videoEncoders.length) {
+                req.Video = 'Copy';
+                host.appendChild(warningBox('blocker',
+                    'This server\'s FFmpeg reported no video encoders, so the video cannot be re-encoded. '
+                    + (caps.ProbeError || 'Check that Dashboard \u2192 Playback \u2192 Transcoding points at a working FFmpeg.')
+                    + ' Media Optimizer\'s dashboard page has a diagnostics panel with the full detail.'));
+            }
+
             var row1 = el('div', 'mopt-row');
-            selectField(row1, 'Action', [
-                { value: 'Encode', label: 'Re-encode' },
-                { value: 'Copy', label: 'Keep exactly as it is' }
-            ], req.Video, function (v) { req.Video = v; rebuild(); });
+            var actions = videoEncoders.length
+                ? [{ value: 'Encode', label: 'Re-encode' }, { value: 'Copy', label: 'Keep exactly as it is' }]
+                : [{ value: 'Copy', label: 'Keep exactly as it is' }];
+            selectField(row1, 'Action', actions, req.Video, function (v) { req.Video = v; rebuild(); });
 
             if (req.Video === 'Encode') {
-                selectField(row1, 'Codec',
-                    caps.VideoEncoders.filter(function (e) { return e.Codec !== 'ffv1'; })
-                        .map(function (e) { return { value: e.Name, label: e.DisplayName }; }),
+                // A <select> shows its first option when nothing matches the current value, but
+                // picking that same option fires no change event — so without this the request
+                // would keep the null the form is not showing, and the job would be rejected for
+                // having no encoder selected.
+                req.VideoCodec = defaultEncoder(req.VideoCodec, videoEncoders);
+                selectField(row1, 'Codec', encoderOptions(videoEncoders, req.VideoCodec),
                     req.VideoCodec, function (v) { req.VideoCodec = v; rebuild(); });
             }
             host.appendChild(row1);
@@ -807,8 +850,8 @@
                 });
 
                 if (entry.Action === 'Encode') {
-                    selectField(row, 'Codec',
-                        caps.AudioEncoders.map(function (e) { return { value: e.Name, label: e.DisplayName }; }),
+                    entry.Codec = defaultEncoder(entry.Codec, caps.AudioEncoders);
+                    selectField(row, 'Codec', encoderOptions(caps.AudioEncoders, entry.Codec),
                         entry.Codec, function (v) { entry.Codec = v; rebuild(); });
                     if (entry.Codec !== 'flac') {
                         numberField(row, 'Bitrate (kb/s)', entry.BitrateBps ? entry.BitrateBps / 1000 : '',
