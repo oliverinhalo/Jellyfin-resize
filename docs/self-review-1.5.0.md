@@ -13,11 +13,11 @@ both. Against the previous release the test suite goes from 174 to 372.
 ## How this was reviewed
 
 1. **Read the whole plugin first, before changing anything.** Every C# file, both dashboard pages
-   and the injected client script. Nine of the fifteen fixes below come from that pass, not from a
-   bug report — they are things nobody had hit yet.
+   and the injected client script. Nine of the seventeen fixes below come from that pass, not from
+   a bug report — they are things nobody had hit yet.
 2. **Every regression test was run against the unfixed code.** A test that passes before the fix is
    not a regression test, and two of the ones written here initially did.
-3. **A second review pass over my own diff.** That found six defects in code written earlier in
+3. **A second review pass over my own diff.** That found eight defects in code written earlier in
    this same branch, listed separately below, including one that repeated a mistake this branch
    had already fixed elsewhere.
 
@@ -36,6 +36,7 @@ both. Against the previous release the test suite goes from 174 to 372.
 | 7 | The configuration copy used for batch language overrides silently dropped three settings. | A batch run with a language override reverted "keep originals beside the media" for that run. Now a reflection copy, with a test that cannot miss a property added later. |
 | 8 | `POST /MediaOptimizer/Transform` accepted a document from anyone, unauthenticated, and returned it as `text/html` on the Jellyfin origin. | A cross-site scripting sink. Nothing called it — registration goes through File Transformation's in-process service — so it is gone, and a test now fails the build if an anonymous HTML endpoint reappears. |
 | 9 | The conversion dialog's progress poll kept running after the dialog was closed with the X, Escape or the backdrop. | A request every 1.5 seconds for a job that finished hours ago, for as long as the tab stayed open. |
+| 10 | FFmpeg's last line of output was sometimes lost: the runner waited for the process and collected its output through the completion events, which return before what is still in flight has been delivered. | With ffmpeg the last line *is* the answer — the hash a lossless check compares, the reason a job failed, a measured score. A harness that ran one command 25 times lost it once or twice a run: exactly the frequency that gets written off as "flaky" for years. Both pipes are now read to the end and those reads awaited; 100 consecutive runs, no losses. It was found only because a missing score is obvious in a way a slightly truncated error message is not. |
 
 Also in that pass: the dashboard re-bound its event handlers on every `pageshow`, so after
 navigating away and back one click on "pause queue" sent two requests; endpoints that reveal
@@ -43,11 +44,6 @@ filesystem paths, list the queue, or make the server read an entire media file w
 any signed-in user; 10-bit files whose container omits the depth were being converted to 8-bit;
 nonsensical settings reached FFmpeg instead of being refused with a sentence; and no plan gave the
 muxer enough queue to interleave streams whose timestamps drift apart.
-
-| 10 | FFmpeg's last line of output was sometimes lost: the runner waited for the process and collected output through the completion events, which return before what is still in flight has been delivered. | With ffmpeg the last line *is* the answer — the hash a lossless check compares, the reason a job failed, a measured score. A harness that ran one command 25 times lost it once or twice a run, which is exactly the frequency that gets written off as "flaky" for years. Both pipes are now read to the end and those reads awaited; 100 consecutive runs, no losses. |
-
-Found while building the quality measurement, which is the only reason it was found at all: a
-missing number is visible in a way a slightly truncated error message is not.
 
 ---
 
