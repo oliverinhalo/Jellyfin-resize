@@ -238,6 +238,17 @@
             and is the difference between "probably fine" and "checked".
           </div>
 
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="MeasureQualityWhenSampling" name="MeasureQualityWhenSampling" />
+            <span>Measure picture quality when measuring size</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            "Measure it" and "Find the setting" compare the samples against the source frame by frame
+            and report how much worse it looks, as a VMAF or SSIM score. Switch this off to measure
+            size alone, which is a little quicker. It does nothing unless your FFmpeg has the libvmaf
+            or ssim filter; the status panel says which.
+          </div>
+
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="FileStabilitySeconds">File must be unchanged for (seconds)</label>
             <input is="emby-input" type="number" id="FileStabilitySeconds" name="FileStabilitySeconds" min="0" max="3600" />
@@ -312,7 +323,8 @@
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
         'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
         'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace',
-        'KeepOriginalsBesideMedia', 'EncodeBesideMedia', 'NotifyOnCompletion', 'NotifyOnFailure'];
+        'KeepOriginalsBesideMedia', 'EncodeBesideMedia', 'NotifyOnCompletion', 'NotifyOnFailure',
+        'MeasureQualityWhenSampling'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
         Dashboard.showLoadingMsg();

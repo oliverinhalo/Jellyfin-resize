@@ -83,6 +83,9 @@ changelog: |
     animated series want settings four or five apart. It confirms its answer at three points across
     the film, where the worst of the three has to meet the target, and says plainly when a source
     cannot reach one at all.
+  - The setting for measuring picture quality alongside size now has a control on the settings
+    page. It was added with the measurement itself and left off, so only somebody willing to edit
+    the plugin's XML by hand could turn it off.
   - Enabling HEVC or AV1 encoding in Jellyfin's own transcoding settings now takes effect without
     restarting the server, and a corrected FFmpeg path is picked up the same way.
   - Fixed two people using the conversion dialog at the same time being able to see each other's

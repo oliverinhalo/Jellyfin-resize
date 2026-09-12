@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-eight defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 449.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-nine defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 453.
 
 ---
 
@@ -57,7 +57,9 @@ tests for both. Against the previous release the test suite goes from 174 to 449
 | 17 | The capability probe handed every caller the same cached object, and one caller writes to it: the API stamps "may this user convert?" onto the answer it is about to send. | Two people using the dialog at once could get each other's permissions — a non-administrator's request leaving the cached answer saying nobody may convert, or saying that they may and then being refused by the API. The same class of bug as the paused flag that used to be static. Every caller now gets its own copy, and a reflection test holds the copy to carrying every field. |
 | 18 | The server's own encoding settings were cached with the ffmpeg probe, which is cached for the life of the process. | Turning on "allow HEVC encoding" in Jellyfin's own dashboard did nothing until the server was restarted: the plugin went on warning that it was off. Those settings are Jellyfin's, not ffmpeg's, so they are read on every request now — and the ffmpeg probe itself is re-run when the binary it describes is no longer the one Jellyfin points at, which is what happens when an administrator fixes the path. |
 
-Rows 11 to 13 are the security pass's; rows 14 to 18 came from a fifth pass over the code that
+| 19 | The setting that governs whether picture quality is measured alongside size had no control anywhere: it was added with the quality measurement and left off the settings page. | Only somebody willing to edit the plugin's XML by hand could turn it off. It is on the page now, and three tests hold the whole surface: every setting is read by something, every setting can be changed from a page (with one written-down exception, the rules, which have a panel of their own), and every control the page renders is one the page actually saves — because a control the save list forgets shows a value, accepts a change and silently discards it. |
+
+Rows 11 to 13 are the security pass's; rows 14 to 19 came from a fifth pass over the code that
 verification, the queue and the estimate actually run, reading for the gap between what something
 claims and what it does. The
 first ten came from reading the plugin end to end.
@@ -127,7 +129,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **449 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **453 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
