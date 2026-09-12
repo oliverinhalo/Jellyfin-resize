@@ -13,22 +13,32 @@ browser suites from three to seven.
 
 ## How this was reviewed
 
-1. **Read the whole plugin first, before changing anything.** Every C# file, both dashboard pages
-   and the injected client script. Nine of the seventeen fixes below come from that pass, not from
-   a bug report — they are things nobody had hit yet.
-2. **Every regression test was run against the unfixed code.** A test that passes before the fix is
-   not a regression test, and two of the ones written here initially did.
-3. **A second review pass over my own diff.** That found eight defects in code written earlier in
-   this same branch, listed separately below, including one that repeated a mistake this branch
-   had already fixed elsewhere.
-4. **A security pass, reading the diff as somebody looking for a way in.** What can an
-   unauthenticated caller reach; what can a signed-in non-administrator learn; where does user
-   input become a filesystem path, an argument vector or markup; what does this code delete. Three
-   of the defects below came from it, and the two it did *not* find are worth saying: nothing here
-   builds a shell command (every FFmpeg call is passed as an argument vector, so a filename with a
-   semicolon in it is a filename), and nothing renders server data as HTML — the dialog and the
-   dashboard both write text through `textContent`, and the only `innerHTML` in either is the empty
-   string.
+Five passes, each with a different question, plus one rule that applies to all of them.
+
+1. **Read the whole plugin, before changing anything.** Every C# file, both dashboard pages and
+   the injected client script. Rows 1 to 10 of the table below come from that pass, not from a bug
+   report — they are things nobody had hit yet.
+2. **Read my own diff, twice over.** Once after the first batch of work and once at the end. That
+   is where the eleven defects in the second list come from, including two that repeated mistakes
+   this same branch had already fixed elsewhere, which is precisely why they are written down.
+3. **A security pass**, reading the diff as somebody looking for a way in: what an
+   unauthenticated caller can reach, what a signed-in non-administrator can learn, where input
+   becomes a filesystem path, an argument vector or markup, and what this code deletes. Rows 11 to
+   13. The two things it did *not* find are worth saying as well — nothing here builds a shell
+   command (every FFmpeg call is an argument vector, so a filename with a semicolon in it is a
+   filename), and nothing renders server data as HTML; the dialog and the dashboard write text
+   through `textContent`, and the only `innerHTML` in either is assigned the empty string.
+4. **A claims pass** over the code that verification, the queue, the probe and the estimate
+   actually run, asking one question of each check and each sentence: does it do what it says?
+   Rows 14 to 22, and the largest single defect in this release — a check the settings page
+   described in so many words that did not exist.
+5. **A coverage pass**, writing tests for whatever had none. The settings page had twenty-nine
+   controls, a load path, a save path and no test at all; writing one found a defect in the first
+   ten minutes. The capability probe had none either, for want of a seam.
+
+And throughout: **every regression test was run against the unfixed code first.** A test that
+passes before the fix is not a regression test, and several of the ones written here initially
+did.
 
 ---
 
@@ -49,29 +59,17 @@ browser suites from three to seven.
 | 11 | Housekeeping deleted **every** file in the working directory older than six hours, not only the ones this plugin wrote. | The working directory is a path an administrator types into a settings box, and the obvious thing to type is a directory that already exists — a scratch disk, the server's own transcoding folder. This plugin would then quietly destroy other people's files, once a night, for as long as it was installed. Everything it writes is named `.mo-…`; that is now the only thing it deletes. |
 | 12 | The analysis dialog handed a non-administrator the absolute path of the file on the server, and any FFmpeg error quoting it. | Every other read on that controller is administrator-only for exactly this reason, and the diagnostics page added on this same branch deliberately hides server paths from non-administrators. The one endpoint a non-administrator can actually open was the one giving it away. They now see the file name. |
 | 13 | A cross-volume move copied the whole file to `<destination>.mopt-partial` first — a name the library scanner does not hide and housekeeping does not recognise. | A power cut in the middle of that copy left a full-size duplicate of a film next to it, forever. It is now named like every other working file: hidden from the scanner, swept by housekeeping, and unique per move so two conversions to one destination cannot overwrite each other's staging file. |
-
 | 14 | Verification never checked that the output actually contained the streams the plan mapped — while the setting that governs the deep scan said in so many words that "the streams are all present" was one of the cheap checks that "already run every time". It was not a check at all. | This is the one failure the other checks cannot see. An encoder or muxer that drops a track it could not write and still exits zero produces a file that parses and runs for exactly the right length, missing one audio track — and the next thing the queue does is replace the user's only copy with it. The plan now records what it maps, verification counts what came out, and a shortfall fails the job with the missing track named. The regression test asserts both halves: that the old checks passed that file, and that the new one does not. |
-
 | 15 | "DTS-HD MA" was recognised by looking for the letters "MA" anywhere in the stream profile — which also matches "DTS-ES Matrix", a lossy format. | The plugin would have called a conversion of that track bit-exact and predicted the output at 85% of the source, when re-encoding a lossy track to FLAC makes it several times larger. "MA" now has to be a word of its own, and the test covers the profiles that actually turn up: DTS-ES, DTS-ES Matrix, DTS Express, DTS-HD HRA, DTS-HD MA + DTS:X, and the lower-case spellings. |
 | 16 | The measured quality reported one verdict for two numbers: "VMAF 97.5 on average, 84.0 at its worst — indistinguishable from the source". The words described the average and sat next to the worst. | 84 is not indistinguishable from anything; it is "noticeably softer on detailed scenes", which is exactly the case somebody needs to see rather than have averaged away. Each number now carries its own verdict. |
-
 | 17 | The capability probe handed every caller the same cached object, and one caller writes to it: the API stamps "may this user convert?" onto the answer it is about to send. | Two people using the dialog at once could get each other's permissions — a non-administrator's request leaving the cached answer saying nobody may convert, or saying that they may and then being refused by the API. The same class of bug as the paused flag that used to be static. Every caller now gets its own copy, and a reflection test holds the copy to carrying every field. |
 | 18 | The server's own encoding settings were cached with the ffmpeg probe, which is cached for the life of the process. | Turning on "allow HEVC encoding" in Jellyfin's own dashboard did nothing until the server was restarted: the plugin went on warning that it was off. Those settings are Jellyfin's, not ffmpeg's, so they are read on every request now — and the ffmpeg probe itself is re-run when the binary it describes is no longer the one Jellyfin points at, which is what happens when an administrator fixes the path. |
-
 | 19 | The setting that governs whether picture quality is measured alongside size had no control anywhere: it was added with the quality measurement and left off the settings page. | Only somebody willing to edit the plugin's XML by hand could turn it off. It is on the page now, and three tests hold the whole surface: every setting is read by something, every setting can be changed from a page (with one written-down exception, the rules, which have a panel of their own), and every control the page renders is one the page actually saves — because a control the save list forgets shows a value, accepts a change and silently discards it. |
-
 | 20 | The weakest estimate the plugin can make — a guess for a file that does not report its own video bitrate — was shown in exactly the same words as a good one, with no label at all. And the README's opening sentence claimed every number the interface shows "is measured rather than guessed", which the body of the same document then contradicts. | The one thing this plugin sells is that its numbers can be trusted, which depends entirely on each one saying what kind of number it is. The dialog now labels a guess as a guess and a file it can predict nothing about as exactly that, and the README's first paragraph says what is true. |
-
 | 21 | Clearing a number box on the settings page saved zero. `Number('')` is 0, and 0 is a real setting for several of them — none of which anybody chooses by emptying the field. | The same mistake as the rule editor's cleared limit, which posted null and produced a raw model-binding error; here it silently wrote "delete quarantined originals immediately" or "keep no job history". A cleared box now leaves the setting as it was. Found by writing the settings page its first test. |
-
 | 22 | An interrupted job was resumed on every restart, for ever, with no limit. | Resuming is right up to the point where the job is what stopped the server. A file or a setting that takes the machine down mid-encode — a hardware encoder wedging a driver, an ffmpeg that exhausts memory — would be requeued on the next boot, take the server down again, and be requeued again: the plugin turning one bad file into a reboot loop with no visible cause. Three interruptions is generous for bad luck; past that the job is held with a message saying so and naming what to try instead, and a person can still retry it by hand. |
 
-Rows 11 to 13 are the security pass's; rows 14 to 22 came from a fifth pass over the code that
-verification, the queue and the estimate actually run, reading for the gap between what something
-claims and what it does. The
-first ten came from reading the plugin end to end.
-
-Also in that first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
+Also in the first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
 navigating away and back one click on "pause queue" sent two requests; endpoints that reveal
 filesystem paths, list the queue, or make the server read an entire media file were available to
 any signed-in user; 10-bit files whose container omits the depth were being converted to 8-bit;
@@ -119,15 +117,7 @@ the part of a self-review that is actually worth reading.
    wrong thing is the one failure a measurement cannot have. The loop now always ends on a setting
    it has actually measured, and the test asserts exactly that relationship rather than a
    particular value.
-10. **Moving that work off the request took away the thing that stopped it.** A browser tab
-    closed mid-search sends nothing — the dialog's own cancel never happens — and a dropped
-    connection was exactly what used to stop the encoding. So an operation now has a deadline of
-    its own: an hour, which is long enough for the slowest server to finish a search on a long
-    film and short enough that a forgotten one cannot hold an ffmpeg for ever. Which of the two
-    stopped it is recorded rather than worked out from the clock, because a deadline's own timer
-    can fire a hair before the time it was set for — and "stopped" and "ran out of time" are not
-    the same message to whoever reads it.
-11. **Measuring and searching held an HTTP request open for minutes.** Sixty seconds is the default
+10. **Measuring and searching held an HTTP request open for minutes.** Sixty seconds is the default
     read timeout in nearly every reverse proxy in front of a Jellyfin server, so a one-minute
     measurement was already marginal and a five-minute search would have failed for most people —
     looking exactly like a broken feature while the server carried on encoding for another four
@@ -136,6 +126,14 @@ the part of a self-review that is actually worth reading.
     abandoning it. Writing that turned up one more thing worth fixing: the state a poll reads is
     now published in one go, because filling in a shared object field by field lets a poll landing
     in the middle of it see "finished" with no result attached.
+11. **Moving that work off the request took away the thing that stopped it.** A browser tab
+    closed mid-search sends nothing — the dialog's own cancel never happens — and a dropped
+    connection was exactly what used to stop the encoding. So an operation now has a deadline of
+    its own: an hour, which is long enough for the slowest server to finish a search on a long
+    film and short enough that a forgotten one cannot hold an ffmpeg for ever. Which of the two
+    stopped it is recorded rather than worked out from the clock, because a deadline's own timer
+    can fire a hair before the time it was set for — and "stopped" and "ran out of time" are not
+    the same message to whoever reads it.
 
 Each has a regression test. Two of them — the lost output line and the deadlock — are only visible
 under repetition, so their tests repeat.
@@ -149,9 +147,9 @@ under repetition, so their tests repeat.
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
   against a full encode of the same file, a worse encode actually scoring worse on VMAF than a
-  better one, the quality search's answer measuring at or above the target it was given, every content-tuning
-  name being one the real encoder accepts, and an output that lost a track being refused while the
-  complete one is not.
+  better one, the quality search's answer measuring at or above the target it was given, every
+  content-tuning name being one the real encoder accepts, and an output that lost a track being
+  refused while a complete one is not.
 - **Seven browser suites**, most in real Chromium: the injected UI grafting onto real jellyfin-web
   markup, the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px
   and 1280px, the dialog's teardown, the dashboard's rules panel and its reordering, the searched
@@ -188,19 +186,35 @@ This is the honest part, and it has not changed in kind since 1.4:
 
 ## Added after this review was first written
 
-Three things, each with the same treatment — tests over plain data for the decisions, and the
-Jellyfin-facing layer left honestly unverified:
+Most of this release arrived after the first draft of this document, which is itself worth
+recording: a review written once and never revisited describes a branch that no longer exists. Each
+piece got the same treatment — tests over plain data for the decisions, a real ffmpeg wherever the
+answer depends on one, and the Jellyfin-facing layer left honestly unverified.
 
-- **A rule can be confined to one library.** The library is worked out from the file's path against
-  the folders Jellyfin says each library is made of, so what a rule means is checkable by hand.
+- **A rule can be confined to one library.** Worked out from the file's path against the folders
+  Jellyfin says each library is made of, so what a rule means is checkable by hand.
 - **Concurrency is counted in ordinary jobs rather than in job slots.** A 4K encode counts as two,
   because two at once is not twice the work; a job that does not fit is skipped rather than
   blocking the queue behind it, and one job always starts on an idle server.
-- **The quality measurement described above.**
+- **The quality measurement**: how much worse it will look, as a number and in words, from the
+  samples that were being encoded anyway.
+- **Rules can be reordered**, because the order decides which of two overlapping rules takes a
+  file — and every job now records which rule queued it, which is what requiring a rule to have a
+  name was supposed to buy.
+- **"Find the setting"**: the quality number chosen by measuring rather than quoted from a forum.
+  About twenty settings in five short encodes, confirmed at three points across the film, where
+  the worst of the three is the one that has to meet the target.
+- **Content tuning**, passed through to the encoder's own setting only where the meaning is exact —
+  and refused, with a reason, where it is not.
+- **Measuring and searching moved off the HTTP request**, because sixty seconds is the read timeout
+  in front of most Jellyfin servers and a search takes minutes. They are started, polled and
+  cancellable, with a deadline of their own for the browser tab that simply disappears.
+- **Verification checks that the output kept the streams the plan mapped**, which is the one
+  conversion failure every other check is blind to.
 
 ## Dead weight removed rather than fixed
 
-The same pass turned up one method whose whole purpose rested on a misconception:
+The claims pass turned up one method whose whole purpose rested on a misconception:
 `MoveCompanionFiles` moved `.nfo` files, artwork and external subtitles alongside a replaced media
 file whose extension had changed. Jellyfin matches all of those on the file name *without* its
 extension, so nothing needed moving — and the code never moved anything either, because it began
@@ -239,30 +253,10 @@ including the case that would have caught it: a file called `Movie.2016.1080p.Bl
 1. Dolby Vision via `dovi_tool`, which is the last thing the plugin refuses outright.
 2. A search that runs during the conversion rather than before it, so a two-hour film can be
    sampled for longer without anybody waiting at the dialog.
-3. The rest of per-title tuning: psy-rd, aq-mode, AV1 grain synthesis. The content tune below is
-   the single most valuable of that family and the only one with an exact, checkable meaning in
-   both encoders; the others are numbers, and numbers want the search rather than a table.
+3. The rest of per-title tuning: psy-rd, aq-mode, AV1 grain synthesis. The content tune in this
+   release is the most valuable of that family and the only one with an exact, checkable meaning
+   in both encoders; the others are numbers, and numbers want the search rather than a table.
 
-Three items came off this list while the review was open:
-
-- **Reordering rules.** They are applied top to bottom and the first to take a file keeps it, so
-  that order decides which of two overlapping rules converts a film. It is now changed from the
-  same panel the rules are written in, and every job a rule queues records which rule queued it —
-  which is what requiring a rule to have a name was supposed to buy.
-- **Telling the encoder what it is looking at.** Grain and animation want opposite decisions, and
-  it is the one thing about a file a person can see instantly and no probe can tell reliably — so
-  it is asked, not guessed, and passed straight through to the encoder's own tuning. Only where the
-  meaning is exact: x264 takes all three, x265 has no film tune (its default already targets live
-  action) and the plan says so, and the hardware encoders are not offered it at all, because they
-  use the same flag for something else and this branch has already fixed one bug caused by two
-  `-tune` arguments fighting. A real ffmpeg accepts every name it emits, which is the only way to
-  know: there is no list to check against at runtime, ffmpeg simply refuses to start.
-- **Choosing the quality setting by measuring it.** "Find the setting" asks how close to the source
-  the result has to look and finds the smallest file that meets it on this file: about twenty
-  settings in five short encodes by halving the range, then confirmed at three points across the
-  film, where the worst of the three is the one that has to pass. The thresholds it searches to are
-  the same table the verdicts are written from, so a search for "very hard to tell apart" cannot
-  come back describing its own answer as something else — and a source that cannot reach the target
-  at any setting is told so, with the score it did reach, rather than being handed the best of a
-  bad set. Tested against a real encoder end to end: whatever it reports, the number it measured
-  has to actually meet the target it was given.
+Three items came off this list while the review was open — reordering rules, content tuning, and
+choosing the quality setting by measuring it. They are described under "Added after this review was
+first written" above, with what is tested about each.
