@@ -350,6 +350,13 @@
           fields.forEach(function (name) {
             var input = page.querySelector('#' + name);
             if (!input) { return; }
+
+            // A cleared number box means "I did not mean to change this", not zero. Number('')
+            // is 0, and 0 is a real setting for several of these — none of which anybody picks by
+            // emptying the field. The same mistake in the rule editor posted null and got a raw
+            // model-binding error back.
+            if (input.type === 'number' && String(input.value).trim() === '') { return; }
+
             config[name] = input.type === 'number' ? Number(input.value) : input.value;
           });
           checkboxes.forEach(function (name) {

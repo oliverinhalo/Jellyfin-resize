@@ -5,8 +5,9 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Thirty defect fixes, ten features, and the tests
-for both. Against the previous release the test suite goes from 174 to 453.
+**Scope:** ~70 files, ~8,200 lines added. Thirty-one defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 453, and the browser
+suites from three to seven.
 
 ---
 
@@ -61,7 +62,9 @@ for both. Against the previous release the test suite goes from 174 to 453.
 
 | 20 | The weakest estimate the plugin can make — a guess for a file that does not report its own video bitrate — was shown in exactly the same words as a good one, with no label at all. And the README's opening sentence claimed every number the interface shows "is measured rather than guessed", which the body of the same document then contradicts. | The one thing this plugin sells is that its numbers can be trusted, which depends entirely on each one saying what kind of number it is. The dialog now labels a guess as a guess and a file it can predict nothing about as exactly that, and the README's first paragraph says what is true. |
 
-Rows 11 to 13 are the security pass's; rows 14 to 20 came from a fifth pass over the code that
+| 21 | Clearing a number box on the settings page saved zero. `Number('')` is 0, and 0 is a real setting for several of them — none of which anybody chooses by emptying the field. | The same mistake as the rule editor's cleared limit, which posted null and produced a raw model-binding error; here it silently wrote "delete quarantined originals immediately" or "keep no job history". A cleared box now leaves the setting as it was. Found by writing the settings page its first test. |
+
+Rows 11 to 13 are the security pass's; rows 14 to 21 came from a fifth pass over the code that
 verification, the queue and the estimate actually run, reading for the gap between what something
 claims and what it does. The
 first ten came from reading the plugin end to end.
@@ -139,10 +142,14 @@ under repetition, so their tests repeat.
   better one, the quality search's answer measuring at or above the target it was given, every content-tuning
   name being one the real encoder accepts, and an output that lost a track being refused while the
   complete one is not.
-- **Six browser tests** in real Chromium: the injected UI grafting onto real jellyfin-web markup,
-  the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px and
-  1280px, the dialog's teardown, the dashboard's rules panel and its reordering, and the searched
-  quality setting reaching the form rather than only the screen.
+- **Seven browser suites**, most in real Chromium: the injected UI grafting onto real jellyfin-web
+  markup, the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px
+  and 1280px, the dialog's teardown, the dashboard's rules panel and its reordering, the searched
+  quality setting reaching the form rather than only the screen, weak estimates being labelled as
+  weak, and — new, and previously untested altogether — the settings page's round trip: every
+  control populated from what the server sent, checkboxes saved as booleans rather than the string
+  "on", numbers as numbers, and the settings the page does not show surviving a save, which for the
+  rules would otherwise mean deleting every rule somebody had written.
 - **The settings round-trip through `XmlSerializer`**, which is how Jellyfin persists them — the
   rules list, its nullable numbers and its nullable enum, plus a settings file written before rules
   existed. A settings file that will not load is a user losing every rule they wrote.
