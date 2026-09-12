@@ -84,6 +84,31 @@ public class AudioTrackRequest
     public int? Channels { get; set; }
 }
 
+/// <summary>
+/// What kind of footage this is, for the encoder's own content tuning.
+/// <para>
+/// This is the one thing about a file that a person can see instantly and no probe can tell
+/// reliably: grain and animation want opposite decisions from an encoder, and getting it wrong
+/// either smears the grain into blotches or spends a third of the bitrate preserving noise. It is
+/// asked rather than guessed, and passed through to the encoder's own setting rather than
+/// reinterpreted here.
+/// </para>
+/// </summary>
+public enum ContentTune
+{
+    /// <summary>Leave the encoder's own default alone.</summary>
+    Auto = 0,
+
+    /// <summary>Live action.</summary>
+    Film = 1,
+
+    /// <summary>Animation: large flat areas, hard edges.</summary>
+    Animation = 2,
+
+    /// <summary>Film grain or heavy sensor noise that should survive.</summary>
+    Grain = 3
+}
+
 /// <summary>A fully-specified conversion, as submitted by the dialog.</summary>
 public class EncodeRequest
 {
@@ -131,6 +156,9 @@ public class EncodeRequest
 
     /// <summary>Gets or sets the encoder preset, e.g. medium.</summary>
     public string? Preset { get; set; }
+
+    /// <summary>Gets or sets what kind of footage this is, for the encoder's content tuning.</summary>
+    public ContentTune Tune { get; set; } = ContentTune.Auto;
 
     /// <summary>Gets or sets a value indicating whether hardware encoding may be used.</summary>
     public bool UseHardware { get; set; }

@@ -167,6 +167,21 @@ cannot know about the twenty minutes of dark, grainy footage at the end of the f
 quality score is reported with the name of the metric that produced it, because SSIM 0.98 and
 VMAF 98 are not the same claim.
 
+### Telling it what it is looking at
+
+Grain and animation want opposite decisions from an encoder, and it is the one thing about a file
+a person can see instantly that no probe can tell reliably. **Content** in the dialog — *live
+action*, *animation*, *film grain* — is passed straight through to the encoder's own tuning: line
+art stops being smoothed, and grain is kept rather than smeared into blotches, at the cost of a
+bigger file.
+
+It is only offered for the x264 and x265 software encoders, because they are the only ones with a
+setting that means this. The hardware encoders use the same flag for something else entirely, so
+nothing is sent there, and if a preset was chosen for an encoder that cannot take it the plan says
+so rather than changing nothing silently. A rule can carry it too, which is where it fits best: a
+rule already narrows a library down, so "the anime library, tuned for animation" is true of every
+file that rule takes.
+
 ### Letting it choose the setting
 
 Once the difference can be measured, the question can be turned round. **Find the setting…** asks

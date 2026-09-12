@@ -511,4 +511,33 @@ public class AutomationServiceTests
         Assert.Equal(1, again.Queued);
         Assert.Equal("Runs second", Assert.Single(reversed.Store.Jobs).QueuedByRule);
     }
+
+    /// <summary>
+    /// A rule already narrows a library down, which makes it the one place where "this is all
+    /// animation" can be true of every file it takes — so the rule's answer has to reach the job
+    /// it queues, not stop at the form.
+    /// </summary>
+    [Fact]
+    public async Task A_rules_content_tuning_reaches_the_job_it_queues()
+    {
+        var rule = Rule("The anime library");
+        rule.Tune = ContentTune.Animation;
+
+        var (service, store, _, _) = Build([Item("An episode", 8, height: 1080)], rule);
+
+        var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+
+        Assert.Equal(1, result.Queued);
+        Assert.Equal(ContentTune.Animation, Assert.Single(store.Jobs).Request.Tune);
+    }
+
+    [Fact]
+    public async Task A_rule_that_says_nothing_about_content_leaves_the_encoders_default_alone()
+    {
+        var (service, store, _, _) = Build([Item("A film", 40)], Rule());
+
+        await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+
+        Assert.Equal(ContentTune.Auto, Assert.Single(store.Jobs).Request.Tune);
+    }
 }

@@ -266,4 +266,84 @@ public class ArgumentVectorTests
             + string.Join(", ", duplicated)
             + "\nFull vector: " + string.Join(' ', plan.Arguments));
     }
+
+    // --- content tuning ------------------------------------------------------------------------
+
+    private static async Task<PlanResult> PlanWithTune(string encoder, ContentTune tune)
+    {
+        var analysis = Source("h264", losslessVideo: false);
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = encoder,
+            RateControl = RateControlMode.ConstantQuality,
+            Quality = 26,
+            Tune = tune
+        };
+
+        return await Planner().PlanAsync(analysis, request, "/tmp/out.mkv", CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Grain and animation want opposite decisions from an encoder, and the encoder has a setting
+    /// for each. It is passed through as its own name, once.
+    /// </summary>
+    [Theory]
+    [InlineData(ContentTune.Animation, "animation")]
+    [InlineData(ContentTune.Grain, "grain")]
+    public async Task The_content_type_reaches_the_encoders_own_tuning(ContentTune tune, string expected)
+    {
+        var plan = await PlanWithTune("libx265", tune);
+
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+        Assert.Equal(1, Occurrences(plan.Arguments, "-tune"));
+        Assert.Equal(expected, ValueAfter(plan.Arguments, "-tune"));
+    }
+
+    [Fact]
+    public async Task Leaving_the_content_type_alone_emits_no_tuning_at_all()
+    {
+        var plan = await PlanWithTune("libx265", ContentTune.Auto);
+
+        Assert.Equal(0, Occurrences(plan.Arguments, "-tune"));
+        Assert.DoesNotContain(plan.Warnings, w => w.Code.StartsWith("TUNE", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// x265 has no film tuning — its defaults already target live action — so asking for it
+    /// changes nothing, and says so rather than passing a name x265 would reject.
+    /// </summary>
+    [Fact]
+    public async Task Asking_x265_for_film_tuning_explains_itself_instead_of_failing()
+    {
+        var plan = await PlanWithTune("libx265", ContentTune.Film);
+
+        Assert.True(plan.IsRunnable);
+        Assert.Equal(0, Occurrences(plan.Arguments, "-tune"));
+        Assert.Contains(plan.Warnings, w => w.Code == "TUNE_FILM_X265");
+    }
+
+    /// <summary>
+    /// The hardware encoders use -tune for something else entirely — NVENC's is hq/ll/lossless,
+    /// and this plugin already sets it — so a content tune must never be emitted there. FFmpeg
+    /// keeps the last occurrence of an option, so doing it anyway would silently replace a setting
+    /// that matters with one that does not apply.
+    /// </summary>
+    [Theory]
+    [InlineData(ContentTune.Film)]
+    [InlineData(ContentTune.Animation)]
+    [InlineData(ContentTune.Grain)]
+    public async Task A_content_tune_never_overwrites_a_hardware_encoders_own_tune(ContentTune tune)
+    {
+        var plan = await PlanWithTune("hevc_nvenc", tune);
+
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        // NVENC's own -tune hq is still there, exactly once, and it is still hq.
+        Assert.Equal(1, Occurrences(plan.Arguments, "-tune"));
+        Assert.Equal("hq", ValueAfter(plan.Arguments, "-tune"));
+        Assert.Contains(plan.Warnings, w => w.Code == "TUNE_UNSUPPORTED");
+    }
 }

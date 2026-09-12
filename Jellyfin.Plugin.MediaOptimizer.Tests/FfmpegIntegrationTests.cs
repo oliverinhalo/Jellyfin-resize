@@ -745,4 +745,43 @@ public class FfmpegIntegrationTests : IDisposable
         // Every sample it wrote is a throwaway, and none of them may be left in a media folder.
         Assert.Empty(Directory.GetFiles(_dir, ".mo-sample-*"));
     }
+
+    /// <summary>
+    /// A tuning name this plugin passes through has to be one the real encoder accepts. There is
+    /// no list to check it against at runtime — ffmpeg simply refuses to start — so the check is
+    /// to start it.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(ContentTune.Grain)]
+    [InlineData(ContentTune.Animation)]
+    [InlineData(ContentTune.Film)]
+    public async Task A_content_tune_is_a_name_the_real_encoder_accepts(ContentTune tune)
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateSourceAsync("aac");
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+
+        var output = Path.Combine(_dir, FormattableString.Invariant($"tuned-{tune}.mkv"));
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            Quality = 30,
+            Tune = tune,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "aac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        var run = await Runner.RunEncodeAsync(plan.Arguments, 4d, null, false, CancellationToken.None);
+
+        Assert.True(run.Success, "ffmpeg rejected the tuning: " + run.StandardError);
+        Assert.True(new FileInfo(output).Length > 0);
+    }
 }

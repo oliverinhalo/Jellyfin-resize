@@ -83,6 +83,13 @@ changelog: |
     animated series want settings four or five apart. It confirms its answer at three points across
     the film, where the worst of the three has to meet the target, and says plainly when a source
     cannot reach one at all.
+  - New: tell it what the footage is. Grain and animation want opposite decisions from an encoder,
+    and it is the one thing about a file you can see instantly and no probe can tell reliably, so
+    "Content" in the dialog — live action, animation, film grain — is passed straight through to
+    the encoder's own tuning. Line art stops being smoothed; grain is kept rather than smeared
+    into blotches. Offered only for the x264 and x265 encoders, which are the ones that have it,
+    and a rule can carry it too — which is where it fits best, since a rule already narrows a
+    library down.
   - Measuring and searching no longer hold the connection open while they work. A minute is
     longer than most reverse proxies will wait, so both now run on the server and the dialog asks
     how they are going — and closing the dialog stops the encoding instead of leaving it running.

@@ -263,6 +263,7 @@ public class AutomationService : IAutomationService
         }
 
         request.UseHardware = rule.UseHardware;
+        request.Tune = rule.Tune;
 
         var plan = await _planner
             .PlanAsync(analysis, request, "/dev/null", cancellationToken)

@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-three defect fixes, nine features, and the
-tests for both. Against the previous release the test suite goes from 174 to 418.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-three defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 430.
 
 ---
 
@@ -116,7 +116,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **418 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
+- **430 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
@@ -185,20 +185,27 @@ Jellyfin-facing layer left honestly unverified:
 
 ## What I would do next
 
-1. Per-title encoder tuning beyond the quality number: the settings that suit animation are not
-   the ones that suit film grain, and the plugin still offers one answer for both. The search
-   below covers the single most important of those settings; the rest — tune, psy-rd, grain
-   synthesis — it does not touch.
-2. Dolby Vision via `dovi_tool`, which is the last thing the plugin refuses outright.
-3. A search that runs during the conversion rather than before it, so a two-hour film can be
+1. Dolby Vision via `dovi_tool`, which is the last thing the plugin refuses outright.
+2. A search that runs during the conversion rather than before it, so a two-hour film can be
    sampled for longer without anybody waiting at the dialog.
+3. The rest of per-title tuning: psy-rd, aq-mode, AV1 grain synthesis. The content tune below is
+   the single most valuable of that family and the only one with an exact, checkable meaning in
+   both encoders; the others are numbers, and numbers want the search rather than a table.
 
-Two items came off this list while the review was open:
+Three items came off this list while the review was open:
 
 - **Reordering rules.** They are applied top to bottom and the first to take a file keeps it, so
   that order decides which of two overlapping rules converts a film. It is now changed from the
   same panel the rules are written in, and every job a rule queues records which rule queued it —
   which is what requiring a rule to have a name was supposed to buy.
+- **Telling the encoder what it is looking at.** Grain and animation want opposite decisions, and
+  it is the one thing about a file a person can see instantly and no probe can tell reliably — so
+  it is asked, not guessed, and passed straight through to the encoder's own tuning. Only where the
+  meaning is exact: x264 takes all three, x265 has no film tune (its default already targets live
+  action) and the plan says so, and the hardware encoders are not offered it at all, because they
+  use the same flag for something else and this branch has already fixed one bug caused by two
+  `-tune` arguments fighting. A real ffmpeg accepts every name it emits, which is the only way to
+  know: there is no list to check against at runtime, ffmpeg simply refuses to start.
 - **Choosing the quality setting by measuring it.** "Find the setting" asks how close to the source
   the result has to look and finds the smallest file that meets it on this file: about twenty
   settings in five short encodes by halving the range, then confirmed at three points across the

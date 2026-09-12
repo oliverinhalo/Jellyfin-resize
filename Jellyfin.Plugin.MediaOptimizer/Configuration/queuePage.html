@@ -456,6 +456,10 @@
         if (r.TargetHeight) { then.push('forced to ' + r.TargetHeight + 'p'); }
         if (r.OutputContainer) { then.push(String(r.OutputContainer).toUpperCase()); }
         if (r.KeepAudioLanguages) { then.push('keeping ' + r.KeepAudioLanguages + ' audio'); }
+        if (r.Tune && r.Tune !== 'Auto') {
+          then.push({ Film: 'tuned for live action', Animation: 'tuned for animation',
+                      Grain: 'tuned to keep grain' }[r.Tune] || r.Tune);
+        }
         if (r.UseHardware) { then.push('on the graphics card'); }
 
         return 'Takes ' + when.join(', ') + ' → ' + then.join(', ') +
@@ -622,6 +626,7 @@
         ['Strategy', 'Convert using', 'select', [['Standard', 'Standard — same resolution, better codec'], ['Medium', 'Medium — one step down'], ['HighReduction', 'High — one step down, lower bitrate'], ['LosslessOnly', 'Lossless only']]],
         ['TargetHeight', 'Force a resolution', 'select', [['', 'Let the preset decide'], ['2160', '2160p'], ['1440', '1440p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']]],
         ['OutputContainer', 'Container to write', 'select', [['', 'Best for each file'], ['mkv', 'MKV'], ['mp4', 'MP4']]],
+        ['Tune', 'Content', 'select', [['Auto', 'Leave it to the encoder'], ['Film', 'Live action'], ['Animation', 'Animation'], ['Grain', 'Film grain']]],
         ['OutputPolicy', 'The original file', 'select', [['', 'Plugin default'], ['Replace', 'Replace it'], ['ReplaceAndDelete', 'Replace and delete now'], ['Sidecar', 'Keep, save alongside'], ['AlternateVersion', 'Keep, add as a version']]],
         ['KeepAudioLanguages', 'Keep audio languages', 'text', null],
         ['KeepSubtitleLanguages', 'Keep subtitle languages', 'text', null],

@@ -541,6 +541,8 @@ public class EncodePlanner : IEncodePlanner
             args.Add(explicitPreset);
         }
 
+        AddContentTune(request.Tune, option, args, warnings);
+
         PlanHdr(video, option, args, warnings, x265Params);
 
         if (x265Params.Count > 0)
@@ -1044,6 +1046,79 @@ public class EncodePlanner : IEncodePlanner
         var bitrate = (long)(videoBits / analysis.DurationSeconds.Value);
         return bitrate > 1000 ? bitrate : null;
     }
+
+    /// <summary>
+    /// Passes the content type through to the encoder's own tuning, where that encoder has one
+    /// that means what the user was asked.
+    /// <para>
+    /// The names are not interchangeable between encoders and there is no table to guess from:
+    /// x264 has film, animation and grain; x265 has animation and grain but no film, because its
+    /// default already targets live action; the hardware encoders use <c>-tune</c> for something
+    /// else entirely (NVENC's is hq/ll/lossless, and this plugin already sets it), so passing a
+    /// content tune there would overwrite a setting that matters with one that does not apply.
+    /// Nothing is emitted where the meaning is not exact, and the plan says so.
+    /// </para>
+    /// </summary>
+    /// <param name="tune">What the user said the footage is.</param>
+    /// <param name="option">The chosen encoder.</param>
+    /// <param name="args">The argument vector being built.</param>
+    /// <param name="warnings">Warnings to add to.</param>
+    internal static void AddContentTune(
+        ContentTune tune,
+        EncoderOption option,
+        List<string> args,
+        List<PlanWarning> warnings)
+    {
+        ArgumentNullException.ThrowIfNull(option);
+        ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(warnings);
+
+        if (tune == ContentTune.Auto)
+        {
+            return;
+        }
+
+        var isX264 = string.Equals(option.Name, "libx264", StringComparison.OrdinalIgnoreCase);
+        var isX265 = string.Equals(option.Name, "libx265", StringComparison.OrdinalIgnoreCase);
+
+        if (!isX264 && !isX265)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Info,
+                "TUNE_UNSUPPORTED",
+                FormattableString.Invariant(
+                    $"{option.DisplayName} has no content tuning, so \"{Describe(tune)}\" is not applied. Only the x264 and x265 software encoders take it.")));
+            return;
+        }
+
+        if (isX265 && tune == ContentTune.Film)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Info,
+                "TUNE_FILM_X265",
+                "x265 has no separate film tuning: its defaults already target live action, so nothing is changed."));
+            return;
+        }
+
+        args.Add("-tune");
+        args.Add(tune switch
+        {
+            ContentTune.Animation => "animation",
+            ContentTune.Grain => "grain",
+            _ => "film"
+        });
+    }
+
+    /// <summary>Names a content tune the way it is named in the dialog.</summary>
+    /// <param name="tune">The tune.</param>
+    /// <returns>Its label.</returns>
+    internal static string Describe(ContentTune tune) => tune switch
+    {
+        ContentTune.Film => "live action",
+        ContentTune.Animation => "animation",
+        ContentTune.Grain => "film grain",
+        _ => "automatic"
+    };
 
     private static int DefaultQualityFor(string codec) => codec switch
     {

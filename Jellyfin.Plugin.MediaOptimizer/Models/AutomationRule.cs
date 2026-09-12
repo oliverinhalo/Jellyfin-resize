@@ -86,6 +86,15 @@ public class AutomationRule
     /// <summary>Gets or sets the subtitle languages to keep, or null for the plugin default.</summary>
     public string? KeepSubtitleLanguages { get; set; }
 
+    /// <summary>
+    /// Gets or sets what kind of footage this rule's files are, for the encoder's content tuning.
+    /// <para>
+    /// A rule already narrows a library down — "the anime library", "everything shot on film" — so
+    /// it is the one place where saying what the content is can be true of every file it takes.
+    /// </para>
+    /// </summary>
+    public ContentTune Tune { get; set; } = ContentTune.Auto;
+
     /// <summary>Gets or sets a value indicating whether hardware encoding may be used.</summary>
     public bool UseHardware { get; set; }
 

@@ -1029,6 +1029,24 @@
                         enc.Presets.map(function (p) { return { value: p, label: p }; }),
                         req.Preset, function (v) { req.Preset = v; rebuild(); });
                 }
+
+                // The one thing about a file a person can see instantly and no probe can tell:
+                // grain and animation want opposite decisions from an encoder. Only the software
+                // encoders have a setting that means this, so it is only offered for them.
+                if (enc && (enc.Name === 'libx264' || enc.Name === 'libx265')) {
+                    selectField(row2, 'Content', [
+                        { value: 'Auto', label: 'Leave it to the encoder' },
+                        { value: 'Film', label: 'Live action' },
+                        { value: 'Animation', label: 'Animation' },
+                        { value: 'Grain', label: 'Film grain' }
+                    ], req.Tune || 'Auto', function (v) { req.Tune = v; rebuild(); }, {
+                        Auto: 'The encoder\'s own default, which suits most live action.',
+                        Film: 'Live action.',
+                        Animation: 'Flat areas and hard edges; stops the encoder smoothing line art.',
+                        Grain: 'Keeps grain and sensor noise instead of smearing it into blotches. Makes a bigger file.'
+                    });
+                }
+
                 host.appendChild(row2);
 
                 var row3 = el('div', 'mopt-row');
