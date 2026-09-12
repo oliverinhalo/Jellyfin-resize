@@ -249,6 +249,35 @@
             or ssim filter; the status panel says which.
           </div>
 
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="MeasureQualityAfterEncoding" name="MeasureQualityAfterEncoding" />
+            <span>Measure the finished conversion against the original</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Everything else here measures a conversion before it happens, from short samples. This
+            compares the finished file with the original at three points and records what it found,
+            so the job history says what the conversion actually cost you rather than what was
+            predicted. Three short comparisons against a file that took hours to make.
+          </div>
+
+          <div class="selectContainer">
+            <label class="selectLabel" for="RefuseBelowQuality">Refuse a conversion that measures worse than</label>
+            <select is="emby-select" id="RefuseBelowQuality" name="RefuseBelowQuality" class="emby-select-withcolor emby-select">
+              <option value="Off">Nothing — measure and record, never refuse</option>
+              <option value="NoticeablySofter">Noticeably softer on detailed scenes</option>
+              <option value="SlightlySofter">Slightly softer; visible only side by side</option>
+              <option value="VeryClose">Very hard to tell apart from the source</option>
+            </select>
+            <div class="fieldDescription">
+              A conversion that measures worse than this is refused: the job fails, says what it
+              measured, and your original is left exactly as it was. Setting a floor measures every
+              conversion whether or not the box above is ticked, because a floor cannot be honoured
+              without measuring — and a conversion that cannot be measured at all is refused too,
+              for the same reason. A conversion that copies the video, or one verified bit-exact by
+              hash, clears every floor without being measured.
+            </div>
+          </div>
+
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="FileStabilitySeconds">File must be unchanged for (seconds)</label>
             <input is="emby-input" type="number" id="FileStabilitySeconds" name="FileStabilitySeconds" min="0" max="3600" />
@@ -319,12 +348,13 @@
       var fields = ['Injection', 'DefaultContainer', 'DefaultOutputPolicy', 'SidecarDirectory', 'TempDirectory',
         'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
         'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit',
-        'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed', 'RemoveFinishedJobsAfterDays'];
+        'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed', 'RemoveFinishedJobsAfterDays',
+        'RefuseBelowQuality'];
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
         'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
         'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace',
         'KeepOriginalsBesideMedia', 'EncodeBesideMedia', 'NotifyOnCompletion', 'NotifyOnFailure',
-        'MeasureQualityWhenSampling'];
+        'MeasureQualityWhenSampling', 'MeasureQualityAfterEncoding'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
         Dashboard.showLoadingMsg();

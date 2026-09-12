@@ -1362,6 +1362,10 @@
             'This runs on the server. You can close this — progress stays visible under ' +
             'Dashboard → Media Optimizer, and the original is not touched until the result passes verification.'));
 
+        var qualityLine = el('div', 'mopt-sub');
+        qualityLine.style.display = 'none';
+        pane.appendChild(qualityLine);
+
         // Its own line, because the poll below rewrites the status line every 1.5 seconds and
         // would wipe anything written there.
         var note = warningBox('blocker', '');
@@ -1414,6 +1418,14 @@
                 if (j.Status === 'Completed') {
                     bits.push(bytes(j.SourceSizeBytes) + ' → ' + bytes(j.OutputSizeBytes));
                     if (j.LosslessVerified === true) { bits.push('bit-exactness verified'); }
+                }
+
+                // Measured against the original after the fact, which makes it the only figure in
+                // this dialog that is not a prediction. The server's own sentence is used as-is:
+                // it names the metric, because SSIM 0.98 and VMAF 98 are different claims.
+                if (j.QualityNote) {
+                    qualityLine.textContent = j.QualityNote;
+                    qualityLine.style.display = '';
                 }
                 if (j.Error) { bits.push(j.Error); }
                 sub.textContent = bits.join(' · ');

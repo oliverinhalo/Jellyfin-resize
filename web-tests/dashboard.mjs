@@ -33,7 +33,9 @@ const JOBS = [
   { Id: 'j1', ItemName: 'Film 6', Status: 'Encoding', ProgressPercent: 43, Speed: 1.8,
     EtaSeconds: 4200, OutputPolicy: 'Replace', SourceSizeBytes: 5 * 1024 ** 3 },
   { Id: 'j2', ItemName: 'Film 9', Status: 'Completed', OutputPolicy: 'Replace',
-    SourceSizeBytes: 6 * 1024 ** 3, OutputSizeBytes: 3 * 1024 ** 3, QuarantinePath: '/media/f9.mkv.mooriginal' },
+    SourceSizeBytes: 6 * 1024 ** 3, OutputSizeBytes: 3 * 1024 ** 3, QuarantinePath: '/media/f9.mkv.mooriginal',
+    QualityMetric: 'SSIM', QualityScore: 0.9831,
+    QualityNote: 'measured SSIM 0.9831 at its worst across 3 point(s) of the finished file: very hard to tell apart from the source (average 0.9880)' },
   { Id: 'j3', ItemName: 'Film 4', Status: 'Failed', OutputPolicy: 'Replace', Error: 'FFmpeg failed: no space left' },
   { Id: 'j4', ItemName: 'Film 12', Status: 'Completed', OutputPolicy: 'Sidecar',
     SourceSizeBytes: 8 * 1024 ** 3, OutputSizeBytes: 4 * 1024 ** 3, IsLossless: true,
@@ -198,6 +200,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
           const name = (box.querySelector('.moptJobName') || {}).textContent;
           rows[name] = {
             meta: (box.querySelector('.moptJobMeta') || {}).textContent || '',
+            quality: (box.querySelector('.moptJobQuality') || {}).textContent || '',
             error: (box.querySelector('.moptErr') || {}).textContent || '',
             progress: box.querySelector('.moptBar i') ? box.querySelector('.moptBar i').style.width : null,
             actions: Array.from(box.querySelectorAll('.moptActions button')).map(b => b.textContent)
@@ -249,6 +252,13 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
 
   check(/no space left/.test(failed.error), `a failed job shows the reason (${failed.error})`);
   check((failed.actions || []).includes('Try again'), 'a failed job can be retried');
+
+  // The only number on this page measured after the conversion rather than predicted before it,
+  // so it gets its own line and names the metric: SSIM 0.98 and VMAF 98 are different claims.
+  check(/SSIM 0\.9831/.test(undoable.quality),
+    `a measured conversion says what it came out looking like (${undoable.quality})`);
+  check(/very hard to tell apart/.test(undoable.quality), 'and what that means in words');
+  check(byRule.quality === '', 'and a job nobody measured makes no claim about quality');
 
   check(/queued by "Big 4K films"/.test(byRule.meta), `a job queued by a rule says which (${byRule.meta})`);
   check(/hash verified/.test(byRule.meta), 'and a bit-exact conversion says it was verified');

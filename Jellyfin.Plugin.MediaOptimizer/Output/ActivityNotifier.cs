@@ -144,6 +144,14 @@ public class ActivityNotifier : IJobNotifier
         {
             verdict += " Bit-exactness verified by hash.";
         }
+        else if (job.QualityMetric is not null && job.QualityScore is { } score)
+        {
+            // What it came out looking like, measured against the original after the fact. The
+            // feed entry is where somebody finds this weeks later, when the working files are
+            // long gone and the only remaining question is whether the conversion was worth it.
+            verdict += FormattableString.Invariant(
+                $" Picture quality {job.QualityMetric} {Core.QualityProbe.FormatScore(job.QualityMetric, score)} at its worst against the original: {Core.QualityProbe.Describe(job.QualityMetric, score)}.");
+        }
 
         if (job.QuarantinePath is not null)
         {

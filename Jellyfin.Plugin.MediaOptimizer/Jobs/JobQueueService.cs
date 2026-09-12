@@ -36,6 +36,8 @@ public class JobQueueService : BackgroundService, IJobQueueService
     private readonly ISizeEstimator _estimator;
     private readonly IFfmpegRunner _runner;
     private readonly IVerificationService _verifier;
+    private readonly IOutputQualityService _quality;
+    private readonly ICapabilityService _capabilities;
     private readonly IOutputPolicyService _output;
     private readonly IJobNotifier _notifier;
     private readonly ISessionManager _sessionManager;
@@ -50,6 +52,8 @@ public class JobQueueService : BackgroundService, IJobQueueService
     /// <param name="estimator">Size estimator.</param>
     /// <param name="runner">FFmpeg runner.</param>
     /// <param name="verifier">Verification service.</param>
+    /// <param name="quality">Measures the finished file against the original.</param>
+    /// <param name="capabilities">Capability service, for which quality metric this FFmpeg has.</param>
     /// <param name="output">Output policy service.</param>
     /// <param name="notifier">Writes finished jobs to Jellyfin's activity feed.</param>
     /// <param name="sessionManager">Session manager, for playback-aware pausing.</param>
@@ -61,6 +65,8 @@ public class JobQueueService : BackgroundService, IJobQueueService
         ISizeEstimator estimator,
         IFfmpegRunner runner,
         IVerificationService verifier,
+        IOutputQualityService quality,
+        ICapabilityService capabilities,
         IOutputPolicyService output,
         IJobNotifier notifier,
         ISessionManager sessionManager,
@@ -72,6 +78,8 @@ public class JobQueueService : BackgroundService, IJobQueueService
         _estimator = estimator;
         _runner = runner;
         _verifier = verifier;
+        _quality = quality;
+        _capabilities = capabilities;
         _output = output;
         _notifier = notifier;
         _sessionManager = sessionManager;
@@ -365,6 +373,21 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 return;
             }
 
+            // Everything up to here measured this conversion before it existed. This is the only
+            // step that looks at what actually came out, and it happens while the output is still
+            // a working file and the original is still untouched — the last moment at which a
+            // conversion that came out worse than asked for can simply be refused.
+            var quality = await MeasureOutputQualityAsync(analysis, plan, job, tempPath, cancellationToken)
+                .ConfigureAwait(false);
+
+            var refusal = OutputQualityService.Refuse(quality, Config.RefuseBelowQuality);
+            if (refusal is not null)
+            {
+                Fail(job, refusal);
+                TryDelete(tempPath);
+                return;
+            }
+
             job.Status = JobStatus.Applying;
             _store.Update(job);
 
@@ -398,6 +421,98 @@ public class JobQueueService : BackgroundService, IJobQueueService
             Fail(job, ex.Message);
             TryDelete(tempPath);
         }
+    }
+
+    /// <summary>
+    /// Compares the finished file against the original at a few points, when there is any point
+    /// in doing so.
+    /// <para>
+    /// A conversion that copied the video stream is the same pictures, and one verified bit-exact
+    /// by hash is the same file: both are recorded as identical rather than measured, because
+    /// three comparisons of a file against itself is a minute spent proving arithmetic. A quality
+    /// floor treats them as clearing any floor, which they do.
+    /// </para>
+    /// </summary>
+    /// <param name="analysis">The source.</param>
+    /// <param name="plan">The plan that ran, for what it did to the video.</param>
+    /// <param name="job">The job, which carries the result.</param>
+    /// <param name="outputPath">The finished working file.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What was measured, or why nothing was.</returns>
+    private async Task<OutputQuality> MeasureOutputQualityAsync(
+        FileAnalysis analysis,
+        PlanResult plan,
+        EncodeJob job,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        var identical = job.LosslessVerified == true
+            || job.Request.Video == VideoAction.Copy;
+
+        if (identical)
+        {
+            var quality = new OutputQuality
+            {
+                IdenticalByConstruction = true,
+                FailureReason = job.LosslessVerified == true
+                    ? "bit-exact, verified by hash — identical to the source"
+                    : "the video was copied rather than re-encoded — the same pictures"
+            };
+
+            job.QualityNote = quality.FailureReason;
+            _store.Update(job);
+            return quality;
+        }
+
+        // Switched off means switched off — but a floor cannot be honoured without measuring, so
+        // setting one turns the measurement back on rather than passing everything silently.
+        if (!Config.MeasureQualityAfterEncoding && Config.RefuseBelowQuality == QualityFloor.Off)
+        {
+            return new OutputQuality();
+        }
+
+        string? metric;
+        try
+        {
+            var capabilities = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+            metric = capabilities.QualityMetric;
+        }
+#pragma warning disable CA1031 // A missing measurement must not fail a conversion on its own.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not work out which quality metric this FFmpeg has");
+            metric = null;
+        }
+
+        if (string.IsNullOrEmpty(metric))
+        {
+            var unavailable = new OutputQuality
+            {
+                FailureReason = "this FFmpeg build has neither the VMAF nor the SSIM filter, so "
+                    + "the result could not be compared with the original"
+            };
+
+            job.QualityNote = unavailable.FailureReason;
+            _store.Update(job);
+            return unavailable;
+        }
+
+        var measured = await _quality
+            .MeasureAsync(analysis, outputPath, metric!, cancellationToken)
+            .ConfigureAwait(false);
+
+        job.QualityMetric = measured.Succeeded ? measured.Metric : null;
+        job.QualityScore = measured.WorstScore;
+        job.QualityNote = OutputQualityService.Summarise(measured);
+        _store.Update(job);
+
+        _logger.LogInformation(
+            "[MediaOptimizer] Job {JobId} quality: {Note}",
+            job.Id,
+            job.QualityNote);
+
+        return measured;
     }
 
     /// <summary>

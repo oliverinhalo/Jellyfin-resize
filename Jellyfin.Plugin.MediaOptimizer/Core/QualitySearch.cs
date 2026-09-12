@@ -150,14 +150,14 @@ public class QualitySearch : IQualitySearch
     /// <returns>The minimum acceptable score.</returns>
     public static double ThresholdFor(string metric, QualityTarget target)
     {
-        var vmaf = string.Equals(metric, QualityProbe.Vmaf, StringComparison.OrdinalIgnoreCase);
-
-        return target switch
+        // The numbers live in QualityProbe, with the words that describe them, because a target
+        // the search aims at and a verdict the interface prints have to be the same threshold.
+        return QualityProbe.FloorFor(metric, target switch
         {
-            QualityTarget.Indistinguishable => vmaf ? 97d : 0.99d,
-            QualityTarget.VeryClose => vmaf ? 93d : 0.98d,
-            _ => vmaf ? 88d : 0.96d
-        };
+            QualityTarget.Indistinguishable => QualityVerdict.Indistinguishable,
+            QualityTarget.VeryClose => QualityVerdict.VeryClose,
+            _ => QualityVerdict.SlightlySofter
+        });
     }
 
     /// <summary>

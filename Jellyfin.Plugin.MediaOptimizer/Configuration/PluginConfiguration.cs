@@ -53,6 +53,28 @@ public enum SpeedPreference
     SmallestFile = 2
 }
 
+/// <summary>
+/// How good a finished conversion has to measure before it is allowed to replace an original.
+/// <para>
+/// The bands are the ones the plugin describes results in, so the setting and the outcome are in
+/// the same words rather than in a number whose meaning depends on which metric was available.
+/// </para>
+/// </summary>
+public enum QualityFloor
+{
+    /// <summary>Measure and report, refuse nothing.</summary>
+    Off = 0,
+
+    /// <summary>Refuse anything worse than "noticeably softer on detailed scenes".</summary>
+    NoticeablySofter = 1,
+
+    /// <summary>Refuse anything worse than "slightly softer; visible only side by side".</summary>
+    SlightlySofter = 2,
+
+    /// <summary>Refuse anything worse than "very hard to tell apart from the source".</summary>
+    VeryClose = 3
+}
+
 /// <summary>Plugin settings, persisted by Jellyfin as XML.</summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
@@ -198,6 +220,22 @@ public class PluginConfiguration : BasePluginConfiguration
     /// will this look?".
     /// </summary>
     public bool MeasureQualityWhenSampling { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a finished conversion is compared against the
+    /// original before anything is done with it, and the result recorded on the job. On by
+    /// default: it is three short comparisons against a file that took hours to make, and it is
+    /// the only thing that ever checks whether the quality this plugin predicted is the quality
+    /// it delivered.
+    /// </summary>
+    public bool MeasureQualityAfterEncoding { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets how good a conversion has to measure before it may replace an original.
+    /// Off by default, because a floor turns a conversion that came out badly into a failed job —
+    /// which is the right outcome, but only for somebody who asked for it.
+    /// </summary>
+    public QualityFloor RefuseBelowQuality { get; set; } = QualityFloor.Off;
 
     /// <summary>
     /// Gets or sets a value indicating whether a finished conversion is written to Jellyfin's

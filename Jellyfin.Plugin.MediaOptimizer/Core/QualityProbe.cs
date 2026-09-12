@@ -25,14 +25,48 @@ public class QualityMeasurement
     public bool Succeeded => FailureReason is null && !string.IsNullOrEmpty(Metric);
 }
 
+/// <summary>
+/// How close a result looked, in terms that do not depend on which metric measured it.
+/// <para>
+/// The point of naming the bands is that a number cannot be compared across metrics but a verdict
+/// can: "very hard to tell apart" means the same thing whether it came from VMAF 94 or SSIM 0.984,
+/// and it is the form a person can actually hold an outcome to.
+/// </para>
+/// </summary>
+public enum QualityVerdict
+{
+    /// <summary>Worse than "visibly worse".</summary>
+    ClearlyDegraded = 0,
+
+    /// <summary>Plainly worse than the source without needing a comparison.</summary>
+    VisiblyWorse = 1,
+
+    /// <summary>Softer on detailed scenes, noticeable while watching.</summary>
+    NoticeablySofter = 2,
+
+    /// <summary>Slightly softer; findable side by side.</summary>
+    SlightlySofter = 3,
+
+    /// <summary>Very hard to tell apart from the source.</summary>
+    VeryClose = 4,
+
+    /// <summary>Indistinguishable from the source.</summary>
+    Indistinguishable = 5
+}
+
 /// <summary>Compares an encoded segment against the source it was made from.</summary>
 public interface IQualityProbe
 {
-    /// <summary>Scores one encoded segment against the matching stretch of the source.</summary>
+    /// <summary>Scores one stretch of an encoded file against the matching stretch of the source.</summary>
     /// <param name="referencePath">The original file.</param>
-    /// <param name="startSeconds">Where in the original the segment came from.</param>
-    /// <param name="seconds">How long the segment is.</param>
-    /// <param name="encodedPath">The encoded segment.</param>
+    /// <param name="referenceStartSeconds">Where in the original the comparison starts.</param>
+    /// <param name="encodedPath">The encoded file — a short sample, or a whole conversion.</param>
+    /// <param name="encodedStartSeconds">
+    /// Where in the encoded file the same moment is. Zero for a sample, which begins at the
+    /// moment being compared; the same offset as the reference for a finished conversion, which
+    /// is the whole film.
+    /// </param>
+    /// <param name="seconds">How long a stretch to compare.</param>
     /// <param name="referenceWidth">The source's width, so a downscaled encode can be compared at the size it will be watched.</param>
     /// <param name="referenceHeight">The source's height.</param>
     /// <param name="metric">"VMAF" or "SSIM".</param>
@@ -40,9 +74,10 @@ public interface IQualityProbe
     /// <returns>The measurement, or a reason none could be made.</returns>
     Task<QualityMeasurement> CompareAsync(
         string referencePath,
-        double startSeconds,
-        double seconds,
+        double referenceStartSeconds,
         string encodedPath,
+        double encodedStartSeconds,
+        double seconds,
         int? referenceWidth,
         int? referenceHeight,
         string metric,
@@ -162,46 +197,92 @@ public partial class QualityProbe : IQualityProbe
             : score.ToString("F4", CultureInfo.InvariantCulture);
 
     /// <summary>
+    /// The one table of thresholds, best band first. Both scales in one place on purpose: they are
+    /// not convertible, and three copies of these numbers — a verdict, a search target and a floor
+    /// a conversion has to clear — is three chances for the words on screen to stop meaning the
+    /// number behind them. The values are the ones in common use: VMAF 97 is where a difference
+    /// stops being findable side by side, and 88 is the usual floor for an archive re-encode.
+    /// </summary>
+    private static readonly (QualityVerdict Verdict, double Vmaf, double Ssim, string Words)[] Bands =
+    [
+        (QualityVerdict.Indistinguishable, 97d, 0.99d, "indistinguishable from the source"),
+        (QualityVerdict.VeryClose, 93d, 0.98d, "very hard to tell apart from the source"),
+        (QualityVerdict.SlightlySofter, 88d, 0.96d, "slightly softer; visible only side by side"),
+        (QualityVerdict.NoticeablySofter, 80d, 0.93d, "noticeably softer on detailed scenes"),
+        (QualityVerdict.VisiblyWorse, 70d, 0.88d, "visibly worse"),
+        (QualityVerdict.ClearlyDegraded, double.MinValue, double.MinValue, "clearly degraded")
+    ];
+
+    /// <summary>Which band a score falls in.</summary>
+    /// <param name="metric">Which metric produced the score.</param>
+    /// <param name="score">The score, in that metric's units.</param>
+    /// <returns>The verdict.</returns>
+    public static QualityVerdict VerdictFor(string metric, double score)
+    {
+        var vmaf = string.Equals(metric, Vmaf, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var band in Bands)
+        {
+            if (score >= (vmaf ? band.Vmaf : band.Ssim))
+            {
+                return band.Verdict;
+            }
+        }
+
+        return QualityVerdict.ClearlyDegraded;
+    }
+
+    /// <summary>The lowest score that still counts as a given verdict.</summary>
+    /// <param name="metric">Which metric the score will be in.</param>
+    /// <param name="verdict">The verdict to reach.</param>
+    /// <returns>The score at which that band starts.</returns>
+    public static double FloorFor(string metric, QualityVerdict verdict)
+    {
+        var vmaf = string.Equals(metric, Vmaf, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var band in Bands)
+        {
+            if (band.Verdict == verdict)
+            {
+                return vmaf ? band.Vmaf : band.Ssim;
+            }
+        }
+
+        return vmaf ? 0d : 0d;
+    }
+
+    /// <summary>
     /// Turns a score into a sentence. The number is the honest part; the words are what makes it
     /// usable by somebody who has never heard of VMAF.
     /// </summary>
     /// <param name="metric">Which metric produced the score.</param>
     /// <param name="score">The score.</param>
     /// <returns>A short verdict.</returns>
-    public static string Describe(string metric, double score)
+    public static string Describe(string metric, double score) => Describe(VerdictFor(metric, score));
+
+    /// <summary>The words for a verdict, so a target or a floor reads the same as a result.</summary>
+    /// <param name="verdict">The verdict.</param>
+    /// <returns>A short description.</returns>
+    public static string Describe(QualityVerdict verdict)
     {
-        // Thresholds are the ones in common use: VMAF 95+ is the point at which a difference stops
-        // being findable in a side-by-side, and 90+ is the usual target for an archive re-encode.
-        if (string.Equals(metric, Vmaf, StringComparison.OrdinalIgnoreCase))
+        foreach (var band in Bands)
         {
-            return score switch
+            if (band.Verdict == verdict)
             {
-                >= 97d => "indistinguishable from the source",
-                >= 93d => "very hard to tell apart from the source",
-                >= 88d => "slightly softer; visible only side by side",
-                >= 80d => "noticeably softer on detailed scenes",
-                >= 70d => "visibly worse",
-                _ => "clearly degraded"
-            };
+                return band.Words;
+            }
         }
 
-        return score switch
-        {
-            >= 0.99d => "indistinguishable from the source",
-            >= 0.98d => "very hard to tell apart from the source",
-            >= 0.96d => "slightly softer; visible only side by side",
-            >= 0.93d => "noticeably softer on detailed scenes",
-            >= 0.88d => "visibly worse",
-            _ => "clearly degraded"
-        };
+        return "clearly degraded";
     }
 
     /// <inheritdoc />
     public async Task<QualityMeasurement> CompareAsync(
         string referencePath,
-        double startSeconds,
-        double seconds,
+        double referenceStartSeconds,
         string encodedPath,
+        double encodedStartSeconds,
+        double seconds,
         int? referenceWidth,
         int? referenceHeight,
         string metric,
@@ -218,10 +299,23 @@ public partial class QualityProbe : IQualityProbe
         List<string> arguments =
         [
             "-nostdin",
-            "-ss", startSeconds.ToString("F3", CultureInfo.InvariantCulture),
+            "-ss", referenceStartSeconds.ToString("F3", CultureInfo.InvariantCulture),
             "-t", seconds.ToString("F3", CultureInfo.InvariantCulture),
             "-i", referencePath,
+        ];
 
+        // A finished conversion is the whole film, so the same moment has to be sought out in it
+        // as well; a sample file starts at that moment already. The seek goes before -i, where
+        // ffmpeg can jump to the nearest keyframe instead of decoding everything up to it, which
+        // on a two-hour file is the difference between seconds and minutes.
+        if (encodedStartSeconds > 0d)
+        {
+            arguments.Add("-ss");
+            arguments.Add(encodedStartSeconds.ToString("F3", CultureInfo.InvariantCulture));
+        }
+
+        arguments.AddRange(
+        [
             // Both inputs are cut to the same length. A comparison of streams that end at
             // different moments is where these filters get into trouble.
             "-t", seconds.ToString("F3", CultureInfo.InvariantCulture),
@@ -230,7 +324,7 @@ public partial class QualityProbe : IQualityProbe
             "-lavfi", BuildFilter(metric, referenceWidth, referenceHeight),
             "-f", "null",
             "-"
-        ];
+        ]);
 
         // A comparison is a nicety; a hung one must never hold up the job it was measuring. This
         // is not theoretical -- an earlier version of this graph hung ffmpeg outright, and only a

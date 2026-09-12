@@ -14,10 +14,10 @@ converts it with FFmpeg — by hand, in bulk, or by saved rules that run on a sc
 measures what it is about to do: the size and the picture quality of a conversion, by encoding
 short stretches of the real file, and it can search the quality scale for the smallest file that
 still meets a stated target. Roughly 14,600 lines of C# (tests included), ~1,450 lines of injected client
-JavaScript, two dashboard pages, **463 tests** and **eight browser suites**.
+JavaScript, two dashboard pages, **482 tests** and **eight browser suites**.
 
 Read `README.md` first, then `docs/self-review-1.5.0.md` — the review is the honest account of what
-is checked, what is not, and the thirty-three defects the last pass through this code found,
+is checked, what is not, and the thirty-seven defects the last pass through this code found,
 including the eleven that were mine. `docs/implementation-plan.html` explains why the architecture
 is the way it is, including what Jellyfin genuinely does not allow.
 
@@ -42,7 +42,7 @@ cd web-tests && npm install
 
 ```bash
 dotnet build -c Release          # must be clean: no errors, no warnings
-dotnet test                      # 463 tests, all pass, none skipped when ffmpeg is present
+dotnet test                      # 482 tests, all pass, none skipped when ffmpeg is present
 cd web-tests && npm test         # eight suites: DOM, lifecycle, hostile CSS, dialog, dashboard,
                                  # encoder selection, analysis, settings page
 ./tools/package.sh 1.5.x.0 claude/jellyfin-media-optimizer-92xiw8
@@ -128,7 +128,10 @@ tuning, activity-feed notifications, and the worklist ranked by what there is to
    the one piece of metadata nobody can check by eye.
 2. **A search that runs during the conversion rather than before it.** The quality search costs
    eight to eleven short encodes up front. Sampling more of the film — or refining the setting
-   against the encode already in progress — would be both more accurate and free.
+   against the encode already in progress — would be both more accurate and free. The finished
+   file is now measured after the encode (`IOutputQualityService`), so the loop is closed at the
+   end; what is missing is using that measurement to correct the setting *during* the encode, and
+   remembering what a search settled on for the next file that looks like this one.
 3. **The rest of per-title tuning**: psy-rd, aq-mode, AV1 grain synthesis. These are numbers, and
    numbers want the search rather than a table: extend the search to them rather than adding
    dropdowns nobody can reason about.

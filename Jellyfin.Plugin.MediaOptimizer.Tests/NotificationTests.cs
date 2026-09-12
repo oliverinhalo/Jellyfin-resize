@@ -34,6 +34,37 @@ public class NotificationTests
     }
 
     /// <summary>
+    /// The feed entry is where somebody finds a conversion weeks later, when the working files
+    /// are gone and the only remaining question is whether it was worth doing. The measured
+    /// quality belongs there, with the metric named, because SSIM 0.98 and VMAF 98 are not the
+    /// same claim.
+    /// </summary>
+    [Fact]
+    public void A_measured_conversion_says_what_it_came_out_looking_like()
+    {
+        var job = Completed(20L * 1024 * 1024 * 1024, 8L * 1024 * 1024 * 1024);
+        job.QualityMetric = "SSIM";
+        job.QualityScore = 0.9831d;
+
+        var text = ActivityNotifier.DescribeCompletion(job);
+
+        Assert.Contains("SSIM 0.9831", text, StringComparison.Ordinal);
+        Assert.Contains("very hard to tell apart", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>A conversion nobody measured does not get a sentence about quality.</summary>
+    [Fact]
+    public void An_unmeasured_conversion_makes_no_claim_about_quality()
+    {
+        var text = ActivityNotifier.DescribeCompletion(
+            Completed(20L * 1024 * 1024 * 1024, 8L * 1024 * 1024 * 1024));
+
+        Assert.DoesNotContain("Picture quality", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("SSIM", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("VMAF", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A conversion can legitimately produce a bigger file — a lossless repack of a lossy source,
     /// say. Reporting that as "freeing -2 GiB" would be nonsense, and quietly not reporting it
     /// would be worse.

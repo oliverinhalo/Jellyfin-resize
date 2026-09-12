@@ -43,6 +43,8 @@ public class ConfigurationPersistenceTests
             FreeSpaceSafetyFactor = 2.5d,
             Speed = SpeedPreference.SmallestFile,
             DefaultOutputPolicy = OutputPolicy.ReplaceAndDelete,
+            RefuseBelowQuality = QualityFloor.SlightlySofter,
+            MeasureQualityAfterEncoding = false,
             NotifyOnFailure = false
         };
 
@@ -53,6 +55,11 @@ public class ConfigurationPersistenceTests
         Assert.Equal(2.5d, restored.FreeSpaceSafetyFactor);
         Assert.Equal(SpeedPreference.SmallestFile, restored.Speed);
         Assert.Equal(OutputPolicy.ReplaceAndDelete, restored.DefaultOutputPolicy);
+
+        // A floor that failed to persist would quietly stop refusing anything, which is the one
+        // failure of this setting nobody would notice until an original had been replaced.
+        Assert.Equal(QualityFloor.SlightlySofter, restored.RefuseBelowQuality);
+        Assert.False(restored.MeasureQualityAfterEncoding);
         Assert.False(restored.NotifyOnFailure);
     }
 

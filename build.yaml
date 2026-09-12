@@ -137,6 +137,14 @@ changelog: |
     stale number, it is a sentence that is no longer true, and it is what somebody reads when
     deciding whether to wait up for a conversion. The conversion itself is unaffected, and the
     message goes away when the server answers again.
+  - New: the finished conversion is measured against the original. Everything else here measures
+    a conversion before it happens, from short samples; this compares three stretches of the
+    finished file with the same moments of the original and records what it found, so the job
+    history and the activity feed say what the conversion actually cost rather than what was
+    predicted. It also makes a promise possible: "refuse a conversion that measures worse than…"
+    fails the job instead of replacing your original, and your file is left exactly as it was.
+    Off by default. A conversion that copied the video, or one verified bit-exact by hash, is not
+    measured — it cannot have changed the picture.
   - A cancel the server refuses now says so, in the dialog and on the dashboard. "Cancel
     conversion" greyed out its own button and said nothing, so a refused cancel looked exactly
     like an accepted one while the encode carried on — and on the dashboard, "run the rules now",

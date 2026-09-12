@@ -167,8 +167,8 @@ public class QualityProbeTests : IDisposable
         var probe = new QualityProbe(Runner, NullLogger<QualityProbe>.Instance);
         var metric = await DetectMetricAsync();
 
-        var goodScore = await probe.CompareAsync(source, 0d, 3d, good, 320, 240, metric, CancellationToken.None);
-        var badScore = await probe.CompareAsync(source, 0d, 3d, bad, 320, 240, metric, CancellationToken.None);
+        var goodScore = await probe.CompareAsync(source, 0d, good, 0d, 3d, 320, 240, metric, CancellationToken.None);
+        var badScore = await probe.CompareAsync(source, 0d, bad, 0d, 3d, 320, 240, metric, CancellationToken.None);
 
         Assert.True(goodScore.Succeeded, goodScore.FailureReason);
         Assert.True(badScore.Succeeded, badScore.FailureReason);
@@ -207,7 +207,7 @@ public class QualityProbeTests : IDisposable
         // The encode is 240 lines tall and the source 480: comparing them means scaling the
         // encode back up, which is what the viewer's screen does anyway.
         var measurement = await probe.CompareAsync(
-            source, 0d, 3d, small, 640, 480, await DetectMetricAsync(), CancellationToken.None);
+            source, 0d, small, 0d, 3d, 640, 480, await DetectMetricAsync(), CancellationToken.None);
 
         Assert.True(measurement.Succeeded, measurement.FailureReason);
         Assert.True(measurement.Score > 0d);
@@ -248,7 +248,7 @@ public class QualityProbeTests : IDisposable
         for (var attempt = 0; attempt < 5; attempt++)
         {
             var measurement = await probe.CompareAsync(
-                source, 0d, 1.5d, encoded, 320, 240, metric, CancellationToken.None);
+                source, 0d, encoded, 0d, 1.5d, 320, 240, metric, CancellationToken.None);
 
             Assert.True(
                 measurement.Succeeded,
@@ -313,9 +313,10 @@ public class QualityProbeTests : IDisposable
 
         public Task<QualityMeasurement> CompareAsync(
             string referencePath,
-            double startSeconds,
-            double seconds,
+            double referenceStartSeconds,
             string encodedPath,
+            double encodedStartSeconds,
+            double seconds,
             int? referenceWidth,
             int? referenceHeight,
             string metric,

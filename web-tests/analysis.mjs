@@ -249,9 +249,19 @@ console.log('\n=== the progress view when the server stops answering ===');
               : Promise.resolve('{}');
           }
 
-          return window.__failPoll
-            ? Promise.reject({ status: 502, statusText: 'Bad Gateway' })
-            : Promise.resolve(JSON.stringify({
+          if (window.__failPoll) {
+            return Promise.reject({ status: 502, statusText: 'Bad Gateway' });
+          }
+
+          return Promise.resolve(JSON.stringify(window.__finished
+            ? {
+              Id: 'job-1', ItemName: 'Kung Fu Panda 4', Status: 'Completed',
+              ProgressPercent: 100, SourceSizeBytes: 24374173696, OutputSizeBytes: 9000000000,
+              QualityMetric: 'SSIM', QualityScore: 0.9831,
+              QualityNote: 'measured SSIM 0.9831 at its worst across 3 point(s) of the finished '
+                + 'file: very hard to tell apart from the source'
+            }
+            : {
               Id: 'job-1', ItemName: 'Kung Fu Panda 4', Status: 'Encoding',
               ProgressPercent: 43, Speed: 1.8, EtaSeconds: 1800
             }));
@@ -325,6 +335,20 @@ console.log('\n=== the progress view when the server stops answering ===');
   check(/still running/.test(refused.text), 'and that the conversion is still running');
   check(refused.disabled === false, 'and the button can be pressed again');
   check(errors.length === 0, `no page errors${errors.length ? ': ' + errors[0] : ''}`);
+
+  // And when it finishes: what it came out looking like, measured against the original rather
+  // than predicted from samples — the only figure in this dialog that is not a forecast.
+  const finished = await page.evaluate(async () => {
+    window.__finished = true;
+    await new Promise(r => setTimeout(r, 2000));
+    const root = window.MediaOptimizer.shadowRoot();
+    return Array.from(root.querySelectorAll('.mopt-sub'))
+      .map(n => n.textContent).join(' | ');
+  });
+
+  check(/SSIM 0\.9831/.test(finished),
+    `a finished conversion reports its measured quality (${finished.slice(-90)})`);
+  check(/very hard to tell apart/.test(finished), 'and says what the number means');
 
   await context.close();
 }

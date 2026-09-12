@@ -6,7 +6,7 @@ checked and what was not, and because the useful half of a self-review is the ha
 is still wrong.
 
 **Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-seven defect fixes, twelve features,
-and the tests for both. Against the previous release the test suite goes from 174 to 463, and the
+and the tests for both. Against the previous release the test suite goes from 174 to 482, and the
 browser suites from three to eight.
 
 ---
@@ -154,14 +154,19 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **463 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **482 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
   against a full encode of the same file, a worse encode actually scoring worse on VMAF than a
   better one, the quality search's answer measuring at or above the target it was given, every
-  content-tuning name being one the real encoder accepts, and an output that lost a track being
-  refused while a complete one is not.
+  content-tuning name being one the real encoder accepts, an output that lost a track being
+  refused while a complete one is not, and — the one that matters most for the check added last —
+  a stream copy of a source measuring as indistinguishable from it when compared at three points
+  well into the file. That last one is the only thing that can catch a misaligned comparison:
+  seeking to the same moment in the original and to the start of the output compares unrelated
+  frames, scores every conversion as ruined, and with a floor set refuses it. Broken deliberately,
+  the copy measured "clearly degraded".
 - **Eight browser suites**, most in real Chromium: the injected UI grafting onto real jellyfin-web
   markup, the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px
   and 1280px, the dialog's teardown, the dashboard's rules panel and its reordering, the searched
@@ -235,6 +240,25 @@ answer depends on one, and the Jellyfin-facing layer left honestly unverified.
   they are applied in.
 - **Opening a file that is already converting shows the conversion**, with its progress and a way
   to stop it, rather than a form whose "Start conversion" the server would refuse.
+- **The finished conversion is measured against the original**, which is the other half of a
+  promise this plugin had only ever half kept. Everything else here measures a conversion *before*
+  it happens — the sampled estimate, and the search that picks a quality setting by encoding short
+  stretches — and both are honest about being samples. The setting they choose is then applied to
+  the whole film, and nothing ever went back to look at what came out. Now three stretches of the
+  finished file are compared with the same moments of the original, the worst of them is recorded
+  on the job, shown on the dashboard and written into the activity feed, and it can be made a
+  condition: a quality floor refuses a conversion that measures worse than the verdict you chose,
+  while the original is still untouched. The floor is off by default, because turning a
+  disappointing conversion into a failed job is the right outcome only for somebody who asked for
+  it — and a floor that cannot be measured refuses too, since "we could not tell" does not keep
+  the promise the setting makes.
+
+  Two things fell out of building it. The thresholds existed in three places — the words a result
+  is described in, the target the search aims at, and now a floor — so they are one table with the
+  words beside the numbers; three copies is three chances for what the interface says to stop
+  meaning the number behind it. And a conversion that copied the video, or one already verified
+  bit-exact by hash, is recorded as identical rather than measured: three comparisons of a file
+  against itself is a minute spent proving arithmetic.
 
 ## Dead weight removed rather than fixed
 

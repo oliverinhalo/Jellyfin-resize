@@ -316,8 +316,10 @@ public class SampleEncoder : ISampleEncoder
                         var quality = await _quality!.CompareAsync(
                             analysis.Path,
                             offset,
-                            SampleSeconds,
                             samplePath,
+                            // A sample is exactly the stretch being compared, so it starts there.
+                            0d,
+                            SampleSeconds,
                             analysis.Video?.Width,
                             analysis.Video?.Height,
                             qualityMetric!,

@@ -108,6 +108,19 @@ public class EncodeJob
     /// <summary>Gets or sets the result of the lossless hash comparison, when one ran.</summary>
     public bool? LosslessVerified { get; set; }
 
+    /// <summary>Gets or sets which metric measured the finished file: VMAF or SSIM.</summary>
+    public string? QualityMetric { get; set; }
+
+    /// <summary>
+    /// Gets or sets the worst score the finished file produced across the stretches compared with
+    /// the original. The worst rather than the average, because it is the one that decides whether
+    /// the conversion was good enough — an average hides the scene that went wrong.
+    /// </summary>
+    public double? QualityScore { get; set; }
+
+    /// <summary>Gets or sets what the measurement found, in words, or why there is none.</summary>
+    public string? QualityNote { get; set; }
+
     /// <summary>
     /// Gets or sets encoded pixels per second measured on this job. Feeds the time estimate for
     /// later jobs, so predictions come from this server's real speed rather than a guess.

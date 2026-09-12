@@ -208,6 +208,32 @@ It takes a few minutes of real encoding, and it says so before it starts. If the
 reach the target at any setting — already heavily compressed, or damaged — it says that instead of
 quietly returning the best of a bad set.
 
+### Checking what actually came out
+
+Everything above measures a conversion *before* it happens, and says honestly that it is sampling:
+three eight-second stretches cannot know about the twenty minutes of dark, grainy footage at the
+end of the film. The setting they choose is then applied to the whole film — so the last step is to
+go back and look at what came out.
+
+Before anything is done with the finished file, three stretches of it are compared with the same
+moments of the original, and the **worst** of them is recorded on the job, shown on the dashboard
+and written into Jellyfin's activity feed: "measured SSIM 0.9831 at its worst across 3 points of
+the finished file: very hard to tell apart from the source". The worst rather than the average,
+because an average hides the one scene that fell apart, which is the only thing you wanted to know.
+
+And because it happens while your original is still untouched, it can be a condition rather than a
+report. **Refuse a conversion that measures worse than…** — noticeably softer, slightly softer, or
+very hard to tell apart — fails the job instead of replacing your file, tells you what it measured
+and what you asked for, and leaves the original exactly as it was. It is off by default: turning a
+disappointing conversion into a failed job is the right outcome, but only for somebody who asked
+for it. With a floor set, a conversion that *cannot* be measured is refused too — "we could not
+tell" does not keep the promise the setting makes — and the message says how to fix that or turn
+it off.
+
+A conversion that copied the video stream, or one already verified bit-exact by hash, is not
+measured. It cannot have changed the picture, and comparing a file with itself is a minute spent
+proving arithmetic.
+
 ---
 
 ## MP4 or MKV

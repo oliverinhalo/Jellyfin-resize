@@ -57,6 +57,8 @@ const stored = {
     NotifyOnCompletion: true,
     NotifyOnFailure: true,
     MeasureQualityWhenSampling: true,
+    MeasureQualityAfterEncoding: true,
+    RefuseBelowQuality: 'SlightlySofter',
     Rules: [{ Id: 'r1', Name: 'The anime library', Enabled: true, MaxItemsPerRun: 3 }]
 };
 
@@ -112,6 +114,10 @@ ok(value('KeepAudioLanguages') === 'eng, jpn', 'a list field is populated');
 ok(value('PauseWhilePlaybackActive') === true, 'a checkbox that is on shows as on');
 ok(value('LowProcessPriority') === false, 'a checkbox that is off shows as off');
 ok(value('MeasureQualityWhenSampling') === true, 'the quality-measurement checkbox is populated too');
+// A floor that loads as "Off" when the server has one set is the worst case for this setting: the
+// next save writes the blank back and it silently stops refusing anything.
+ok(value('RefuseBelowQuality') === 'SlightlySofter',
+    `the quality floor shows what the server has (got: ${value('RefuseBelowQuality')})`);
 
 // Every control the page renders for a setting has to have been filled in by the load, or it
 // shows a default the server never sent — and then saves it.
@@ -139,6 +145,8 @@ ok(saved !== null, 'the form saved something');
 ok(saved && saved.DeepVerifyBeforeReplace === true, 'a ticked checkbox saves as true, not "on"');
 ok(saved && saved.MaxConcurrentJobs === 4, `a number saves as a number (got: ${JSON.stringify(saved && saved.MaxConcurrentJobs)})`);
 ok(saved && saved.TempDirectory === '/faster/disk', 'a typed path saves');
+ok(saved && saved.RefuseBelowQuality === 'SlightlySofter',
+    `a setting the user did not touch is saved as it was (got: ${JSON.stringify(saved && saved.RefuseBelowQuality)})`);
 ok(saved && saved.QuarantineRetentionDays === 14,
     `a cleared number box leaves the setting alone rather than saving zero (got: ${JSON.stringify(saved && saved.QuarantineRetentionDays)})`);
 

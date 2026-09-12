@@ -178,6 +178,7 @@
     .moptJobName{font-weight:600}
     .moptJobStatus{font-size:12px;text-transform:uppercase;letter-spacing:.07em;opacity:.75}
     .moptJobMeta{font-size:13px;opacity:.7;margin-top:5px}
+    .moptJobQuality{font-size:13px;opacity:.85;margin-top:4px}
     .moptBar{height:5px;border-radius:3px;background:rgba(128,128,128,.3);overflow:hidden;margin-top:8px}
     .moptBar i{display:block;height:100%;background:#00a4dc;transition:width .3s ease}
     .moptActions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
@@ -822,6 +823,14 @@
           if (j.ResumeCount > 0) { bits.push('resumed after restart'); }
           if (j.QueuedByRule) { bits.push('queued by "' + j.QueuedByRule + '"'); }
           box.appendChild(el('div', 'moptJobMeta', bits.join(' · ')));
+
+          // What it actually came out looking like, which is the one number here that was
+          // measured after the fact rather than predicted before it. Its own line: it is a
+          // sentence, and the metric has to be named because SSIM 0.98 and VMAF 98 are not the
+          // same claim.
+          if (j.QualityNote) {
+            box.appendChild(el('div', 'moptJobQuality', j.QualityNote));
+          }
 
           if (j.Status === 'Encoding' || j.Status === 'Verifying') {
             var bar = el('div', 'moptBar');
