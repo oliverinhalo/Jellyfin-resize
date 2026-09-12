@@ -120,6 +120,13 @@ public class AutomationService : IAutomationService
             var queuedForRule = 0;
             var ceiling = Math.Max(0, rule.MaxItemsPerRun);
 
+            // Matching is free; deciding is not. Every item that passes the filters is probed with
+            // ffprobe and planned, and a rule whose files all fall below its saving floor would
+            // otherwise walk the entire library doing that -- inside one HTTP request, when this
+            // is a preview. Stop after a sensible multiple of what the rule could queue anyway.
+            var examineLimit = Math.Max(25, ceiling * 10);
+            var examined = 0;
+
             // Biggest first: the whole point of an automatic rule is to reclaim space, and the
             // 40 GB remux is worth more than fifty episodes of a sitcom.
             foreach (var candidate in candidates.OrderByDescending(c => c.SizeBytes ?? 0))
@@ -148,6 +155,18 @@ public class AutomationService : IAutomationService
 
                     continue;
                 }
+
+                if (examined >= examineLimit)
+                {
+                    items.Add(Skip(
+                        rule,
+                        candidate,
+                        FormattableString.Invariant(
+                            $"Stopped after examining {examineLimit} matching item(s). Narrow the rule, or raise its per-run limit, to reach further down the library.")));
+                    break;
+                }
+
+                examined++;
 
                 var outcome = await ConsiderAsync(rule, candidate, caps, config, dryRun, cancellationToken)
                     .ConfigureAwait(false);

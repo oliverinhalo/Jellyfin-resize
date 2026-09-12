@@ -74,6 +74,35 @@ public class NotificationTests
         Assert.Contains("restored", text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A sidecar or an alternate version keeps both files, so the disk went up by the size of the
+    /// new one. Reporting that as "freeing 12 GiB" is not a rounding error, it is the opposite of
+    /// what happened.
+    /// </summary>
+    [Theory]
+    [InlineData(OutputPolicy.Sidecar)]
+    [InlineData(OutputPolicy.AlternateVersion)]
+    public void A_conversion_that_kept_the_original_never_claims_to_have_freed_anything(OutputPolicy policy)
+    {
+        var job = Completed(20L * 1024 * 1024 * 1024, 8L * 1024 * 1024 * 1024);
+        job.OutputPolicy = policy;
+
+        var text = ActivityNotifier.DescribeCompletion(job);
+
+        Assert.DoesNotContain("freeing", text, StringComparison.Ordinal);
+        Assert.Contains("alongside the original", text, StringComparison.Ordinal);
+        Assert.Contains("8.0 GiB more disk", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_replace_that_did_free_space_still_says_so()
+    {
+        var job = Completed(20L * 1024 * 1024 * 1024, 8L * 1024 * 1024 * 1024);
+        job.OutputPolicy = OutputPolicy.ReplaceAndDelete;
+
+        Assert.Contains("freeing 12.0 GiB", ActivityNotifier.DescribeCompletion(job), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_job_with_no_sizes_still_says_something_true()
     {

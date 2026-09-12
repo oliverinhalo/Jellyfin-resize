@@ -200,8 +200,12 @@ public class SampleEncoder : ISampleEncoder
         }
 
         var rates = new List<double>();
-        var startedAt = DateTime.UtcNow;
         var sampled = 0d;
+
+        // Timed per sample rather than across the whole loop: a sample that failed still took
+        // time, and counting it would report an encode as slower than it is -- under a label that
+        // says "measured", which is exactly the kind of number this feature exists to avoid.
+        var encodingSeconds = 0d;
 
         foreach (var offset in offsets)
         {
@@ -210,6 +214,8 @@ public class SampleEncoder : ISampleEncoder
             var samplePath = Path.Combine(
                 workDirectory,
                 FormattableString.Invariant($".mo-sample-{Guid.NewGuid():N}.{plan.OutputExtension}.motmp"));
+
+            var sampleStartedAt = DateTime.UtcNow;
 
             try
             {
@@ -241,6 +247,7 @@ public class SampleEncoder : ISampleEncoder
                 {
                     rates.Add(length / SampleSeconds);
                     sampled += SampleSeconds;
+                    encodingSeconds += (DateTime.UtcNow - sampleStartedAt).TotalSeconds;
                 }
             }
             catch (OperationCanceledException)
@@ -263,14 +270,15 @@ public class SampleEncoder : ISampleEncoder
             return result;
         }
 
-        var elapsed = (DateTime.UtcNow - startedAt).TotalSeconds;
-
         result.Samples = rates.Count;
         result.SampledSeconds = sampled;
         result.BytesPerSecond = rates.Average();
         result.LowBytesPerSecond = rates.Min();
         result.HighBytesPerSecond = rates.Max();
-        result.SpeedFactor = elapsed > 0.5d ? sampled / elapsed : null;
+        // The floor only guards against dividing by a clock that barely moved; a stream-copy
+        // sample genuinely does finish in a fraction of a second, and suppressing that would make
+        // the fastest jobs the ones with no time estimate.
+        result.SpeedFactor = encodingSeconds > 0.05d ? sampled / encodingSeconds : null;
 
         _logger.LogInformation(
             "[MediaOptimizer] Measured {Count} sample(s) of {Name}: {Rate} bytes/second of content",

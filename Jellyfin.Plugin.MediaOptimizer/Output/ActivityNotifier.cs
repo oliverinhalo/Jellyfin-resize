@@ -104,20 +104,41 @@ public class ActivityNotifier : IJobNotifier
         var saved = from.Value - to.Value;
         var percent = saved * 100d / from.Value;
 
-        var verdict = saved >= 0
-            ? string.Format(
+        // Only a policy that took the original away freed anything. A sidecar or an alternate
+        // version keeps both files, so the disk went up by the size of the new one -- saying it
+        // "freed 12 GiB" would be the opposite of what happened.
+        var replaced = job.OutputPolicy is Configuration.OutputPolicy.Replace
+            or Configuration.OutputPolicy.ReplaceAndDelete;
+
+        string verdict;
+        if (!replaced)
+        {
+            verdict = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0} → {1}, written alongside the original, so this uses {2} more disk.",
+                Size(from.Value),
+                Size(to.Value),
+                Size(to.Value));
+        }
+        else if (saved >= 0)
+        {
+            verdict = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0} → {1}, freeing {2} ({3:F0}%).",
                 Size(from.Value),
                 Size(to.Value),
                 Size(saved),
-                percent)
-            : string.Format(
+                percent);
+        }
+        else
+        {
+            verdict = string.Format(
                 CultureInfo.InvariantCulture,
                 "{0} → {1}, which is {2} larger.",
                 Size(from.Value),
                 Size(to.Value),
                 Size(-saved));
+        }
 
         if (job.LosslessVerified == true)
         {

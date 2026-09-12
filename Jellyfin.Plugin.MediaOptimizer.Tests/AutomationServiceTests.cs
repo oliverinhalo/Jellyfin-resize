@@ -47,8 +47,13 @@ public class AutomationServiceTests
 
         public HashSet<Guid> Ineligible { get; } = new HashSet<Guid>();
 
+        /// <summary>Gets how many files were probed, which is the cost a preview has to bound.</summary>
+        public int Analyses { get; private set; }
+
         public Task<FileAnalysis?> AnalyzeAsync(Guid itemId, CancellationToken cancellationToken)
         {
+            Analyses++;
+
             var candidate = _items.FirstOrDefault(i => i.ItemId == itemId);
             if (candidate is null)
             {
@@ -359,6 +364,31 @@ public class AutomationServiceTests
 
         Assert.Equal(1, result.Queued);
         Assert.Single(store.Jobs);
+    }
+
+    /// <summary>
+    /// Matching is free; deciding is not — every item that passes the filters is probed and
+    /// planned. A rule whose matches all fall below its saving floor would otherwise walk the
+    /// whole library doing that, inside a single HTTP request when this is a preview.
+    /// </summary>
+    [Fact]
+    public async Task A_rule_whose_matches_all_fall_short_stops_instead_of_probing_the_library()
+    {
+        var items = Enumerable.Range(1, 200).Select(i => Item("Film " + i, 40, height: 1080, codec: "hevc")).ToList();
+
+        var rule = Rule();
+        rule.Strategy = OptimizationStrategy.Standard;
+        rule.MinSavingPercent = 90;   // nothing will ever clear this
+        rule.MaxItemsPerRun = 1;      // so the examine limit is its floor of 25
+
+        var (service, store, _, probe) = Build(items, rule);
+
+        var result = await service.RunAsync(dryRun: true, ruleId: rule.Id, CancellationToken.None);
+
+        Assert.Equal(0, result.Queued);
+        Assert.Empty(store.Jobs);
+        Assert.Equal(25, probe.Analyses);
+        Assert.Contains(result.Items, i => i.SkippedReason!.Contains("Stopped after examining", StringComparison.Ordinal));
     }
 
     [Fact]

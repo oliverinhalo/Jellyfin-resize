@@ -639,10 +639,20 @@
             input.value = draft[key] === null || draft[key] === undefined ? '' : draft[key];
           }
 
+          // Two of these are not filters and have no "unset": a rule always has a per-run limit
+          // and a saving floor. Posting null for them fails model binding before the server's own
+          // validation can explain anything, so clearing the box restores the default instead.
+          var required = { MaxItemsPerRun: 3, MinSavingPercent: 15 };
+
           input.addEventListener('change', function () {
             var value = input.value;
-            // An empty field means "no filter", which the server reads as null rather than as 0 —
-            // a minimum height of 0 and no minimum height are not the same rule.
+            if (value === '' && Object.prototype.hasOwnProperty.call(required, key)) {
+              draft[key] = required[key];
+              input.value = required[key];
+              return;
+            }
+            // Everywhere else an empty field means "no filter", which the server reads as null
+            // rather than as 0 — a minimum height of 0 and no minimum height are different rules.
             if (value === '') { draft[key] = null; return; }
             draft[key] = (kind === 'number' || /^(MinHeight|MinSizeMb|TargetHeight)$/.test(key))
               ? Number(value) : value;

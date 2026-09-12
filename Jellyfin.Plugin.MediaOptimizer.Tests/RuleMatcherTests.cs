@@ -70,6 +70,28 @@ public class RuleMatcherTests
         Assert.Contains("Already converted", decision.Reason!, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// "Already converted" is reported to the user, so it has to be the reason for items the rule
+    /// would otherwise have taken. Checking it before the filters meant a preview of a rule for 4K
+    /// films listed every converted episode in the library and buried the real near-misses.
+    /// </summary>
+    [Fact]
+    public void An_item_the_rule_would_never_take_is_refused_for_that_reason_first()
+    {
+        var rule = Rule();
+        rule.MinHeight = 2160;
+
+        var candidate = Candidate();
+        candidate.Height = 720;
+        candidate.PreviouslyOptimized = true;
+
+        var decision = RuleMatcher.Evaluate(rule, candidate, Now);
+
+        Assert.False(decision.Matches);
+        Assert.Contains("720p is below", decision.Reason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Already converted", decision.Reason!, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void An_item_already_in_the_queue_is_not_queued_twice()
     {

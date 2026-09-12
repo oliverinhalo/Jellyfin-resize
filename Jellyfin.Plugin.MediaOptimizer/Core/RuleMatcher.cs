@@ -40,18 +40,6 @@ public static class RuleMatcher
             return RuleDecision.No("The rule is switched off.");
         }
 
-        // These two come first: they are about the item's history with this plugin rather than
-        // about the filters, and they are the reasons a user is most likely to ask about.
-        if (candidate.HasActiveJob)
-        {
-            return RuleDecision.No("Already queued or converting.");
-        }
-
-        if (candidate.PreviouslyOptimized)
-        {
-            return RuleDecision.No("Already converted by this plugin. Re-encoding an encode compounds quality loss.");
-        }
-
         var kindMatches = rule.Kinds switch
         {
             RuleItemKinds.MoviesOnly => string.Equals(candidate.ItemType, "Movie", StringComparison.OrdinalIgnoreCase),
@@ -129,6 +117,20 @@ public static class RuleMatcher
                     Math.Max(0d, age.TotalDays),
                     rule.AddedMoreThanDaysAgo.Value == 1 ? "1 day" : rule.AddedMoreThanDaysAgo.Value + " days"));
             }
+        }
+
+        // Last, deliberately. These two are reported to the user, and reporting them before the
+        // filters meant a preview listed every already-converted item in the library -- including
+        // the thousands the rule could never have taken -- and buried the near-misses that
+        // actually say something about the rule.
+        if (candidate.HasActiveJob)
+        {
+            return RuleDecision.No("Already queued or converting.");
+        }
+
+        if (candidate.PreviouslyOptimized)
+        {
+            return RuleDecision.No("Already converted by this plugin. Re-encoding an encode compounds quality loss.");
         }
 
         return RuleDecision.Yes();

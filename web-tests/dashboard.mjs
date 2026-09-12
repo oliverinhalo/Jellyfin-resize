@@ -180,6 +180,19 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
     };
   });
 
+  // Clearing a box that has no "unset" — a rule always has a per-run limit — used to post null
+  // into a non-nullable field, which fails model binding before the server's own validation can
+  // explain anything. The form restores the default instead.
+  const clearedRequiredField = await page.evaluate(() => {
+    const labels = Array.from(document.querySelectorAll('#moptRuleEditor .moptFilter'));
+    const box = labels.find(f => f.querySelector('label').textContent.includes('Files per run'));
+    const input = box.querySelector('input');
+    input.value = '';
+    input.dispatchEvent(new Event('change'));
+    return input.value;
+  });
+  check(clearedRequiredField === '3', `clearing a required number restores its default (got "${clearedRequiredField}")`);
+
   check(/2 saved, 1 on/.test(rulesView.hint || ''), `rules panel summarises (${rulesView.hint})`);
   check(rulesView.count === 2, `both rules render (${rulesView.count})`);
   check(/films/.test(rulesView.firstDescription) && /20 GB/.test(rulesView.firstDescription)
