@@ -21,6 +21,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IMediaProbeService, MediaProbeService>();
         serviceCollection.AddSingleton<IEncodePlanner, EncodePlanner>();
         serviceCollection.AddSingleton<ISizeEstimator, SizeEstimator>();
+        serviceCollection.AddSingleton<IQualityProbe, QualityProbe>();
         serviceCollection.AddSingleton<ISampleEncoder, SampleEncoder>();
 
         serviceCollection.AddSingleton<LibraryReconciler>();

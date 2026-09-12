@@ -311,6 +311,7 @@ public partial class CapabilityService : ICapabilityService
         caps.VideoEncoders = video;
         caps.AudioEncoders = audio;
         caps.Containers = ["mkv", "mp4"];
+        caps.QualityMetric = await DetectQualityMetricAsync(ffmpegPath, cancellationToken).ConfigureAwait(false);
         caps.ProbeError = video.Count == 0
             ? probeError ?? FormattableString.Invariant(
                 $"FFmpeg at {ffmpegPath} was reachable but reported none of the encoders this plugin can use.")
@@ -342,6 +343,49 @@ public partial class CapabilityService : ICapabilityService
             audio.Count);
 
         return caps;
+    }
+
+    /// <summary>
+    /// Finds the best quality metric this build can measure. VMAF is a model trained on what
+    /// people actually said about video, which is the question being asked; SSIM is a structural
+    /// comparison that correlates less well but is present in every build.
+    /// </summary>
+    /// <param name="ffmpegPath">Path to the ffmpeg binary.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>"VMAF", "SSIM", or null.</returns>
+    private async Task<string?> DetectQualityMetricAsync(string? ffmpegPath, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ffmpegPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await _runner
+                .RunAsync(ffmpegPath, ["-hide_banner", "-filters"], cancellationToken)
+                .ConfigureAwait(false);
+
+            var text = result.StandardOutput + "\n" + result.StandardError;
+
+            if (text.Contains(" libvmaf ", StringComparison.Ordinal))
+            {
+                return QualityProbe.Vmaf;
+            }
+
+            return text.Contains(" ssim ", StringComparison.Ordinal) ? QualityProbe.Ssim : null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // Not knowing simply means no quality number is offered.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogDebug(ex, "[MediaOptimizer] Could not list ffmpeg filters");
+            return null;
+        }
     }
 
     private List<EncoderOption> BuildVideoOptions(HashSet<string> available)

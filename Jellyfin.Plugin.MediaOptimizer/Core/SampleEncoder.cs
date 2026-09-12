@@ -31,6 +31,15 @@ public class SampleMeasurement
     /// <summary>Gets or sets how fast the encode ran, as a multiple of realtime.</summary>
     public double? SpeedFactor { get; set; }
 
+    /// <summary>Gets or sets the quality metric used, when the samples were also compared.</summary>
+    public string? QualityMetric { get; set; }
+
+    /// <summary>Gets or sets the average score across the samples, in the metric's own units.</summary>
+    public double? QualityScore { get; set; }
+
+    /// <summary>Gets or sets the worst score any single sample produced.</summary>
+    public double? WorstQualityScore { get; set; }
+
     /// <summary>Gets or sets why no measurement could be made, when none could.</summary>
     public string? FailureReason { get; set; }
 
@@ -48,12 +57,17 @@ public interface ISampleEncoder
     /// <param name="analysis">The source analysis.</param>
     /// <param name="plan">The plan whose arguments should be sampled.</param>
     /// <param name="workDirectory">Where the throwaway samples are written.</param>
+    /// <param name="qualityMetric">
+    /// The metric to compare each sample against the source with — "VMAF" or "SSIM" — or null to
+    /// measure size alone.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The measurement, or a reason it could not be made.</returns>
     Task<SampleMeasurement> MeasureAsync(
         FileAnalysis analysis,
         PlanResult plan,
         string workDirectory,
+        string? qualityMetric,
         CancellationToken cancellationToken);
 }
 
@@ -84,12 +98,25 @@ public class SampleEncoder : ISampleEncoder
     private const double MinimumSourceSeconds = 45d;
 
     private readonly IFfmpegRunner _runner;
+    private readonly IQualityProbe? _quality;
     private readonly ILogger<SampleEncoder> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="SampleEncoder"/> class.</summary>
     /// <param name="runner">FFmpeg runner.</param>
+    /// <param name="quality">Quality probe, for comparing each sample against the source.</param>
     /// <param name="logger">Logger.</param>
-    public SampleEncoder(IFfmpegRunner runner, ILogger<SampleEncoder> logger)
+    public SampleEncoder(IFfmpegRunner runner, IQualityProbe quality, ILogger<SampleEncoder> logger)
+    {
+        _runner = runner;
+        _quality = quality;
+        _logger = logger;
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="SampleEncoder"/> class without a
+    /// quality probe, for callers that only want the size.</summary>
+    /// <param name="runner">FFmpeg runner.</param>
+    /// <param name="logger">Logger.</param>
+    internal SampleEncoder(IFfmpegRunner runner, ILogger<SampleEncoder> logger)
     {
         _runner = runner;
         _logger = logger;
@@ -172,6 +199,7 @@ public class SampleEncoder : ISampleEncoder
         FileAnalysis analysis,
         PlanResult plan,
         string workDirectory,
+        string? qualityMetric,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(analysis);
@@ -200,7 +228,14 @@ public class SampleEncoder : ISampleEncoder
         }
 
         var rates = new List<double>();
+        var scores = new List<double>();
         var sampled = 0d;
+
+        // Nothing to compare when the video stream is copied: they are the same pictures, and
+        // running a comparison to conclude "identical" would just cost a minute.
+        var compare = _quality is not null
+            && !string.IsNullOrEmpty(qualityMetric)
+            && !plan.VideoIsCopied;
 
         // Timed per sample rather than across the whole loop: a sample that failed still took
         // time, and counting it would report an encode as slower than it is -- under a label that
@@ -247,7 +282,28 @@ public class SampleEncoder : ISampleEncoder
                 {
                     rates.Add(length / SampleSeconds);
                     sampled += SampleSeconds;
+
+                    // Timed before the comparison, which is measurement rather than encoding and
+                    // would otherwise make every encode look slower than it is.
                     encodingSeconds += (DateTime.UtcNow - sampleStartedAt).TotalSeconds;
+
+                    if (compare)
+                    {
+                        var quality = await _quality!.CompareAsync(
+                            analysis.Path,
+                            offset,
+                            SampleSeconds,
+                            samplePath,
+                            analysis.Video?.Width,
+                            analysis.Video?.Height,
+                            qualityMetric!,
+                            cancellationToken).ConfigureAwait(false);
+
+                        if (quality.Succeeded)
+                        {
+                            scores.Add(quality.Score);
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException)
@@ -279,6 +335,16 @@ public class SampleEncoder : ISampleEncoder
         // sample genuinely does finish in a fraction of a second, and suppressing that would make
         // the fastest jobs the ones with no time estimate.
         result.SpeedFactor = encodingSeconds > 0.05d ? sampled / encodingSeconds : null;
+
+        if (scores.Count > 0)
+        {
+            result.QualityMetric = qualityMetric;
+            result.QualityScore = scores.Average();
+
+            // The worst sample is reported alongside the average, because one bad stretch is what
+            // somebody would actually notice, and averaging it away would hide exactly that.
+            result.WorstQualityScore = scores.Min();
+        }
 
         _logger.LogInformation(
             "[MediaOptimizer] Measured {Count} sample(s) of {Name}: {Rate} bytes/second of content",

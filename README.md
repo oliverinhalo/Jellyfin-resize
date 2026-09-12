@@ -148,9 +148,17 @@ a prediction. **Measure it** in the dialog encodes three eight-second stretches 
 with the real settings and reports what they produced: a measured size, a measured range, and a
 time estimate taken from how fast those samples actually ran on this machine.
 
+It also answers the question nobody could answer before: **how much worse will it look?** Each
+sample is compared with the source frame by frame — VMAF where your FFmpeg has it, SSIM otherwise —
+and the result is reported as a score *and* in words: "VMAF 96.4 — indistinguishable from the
+source", or "VMAF 81.2 — noticeably softer on detailed scenes". A conversion that keeps the video
+stream untouched is not compared at all; there is nothing to compare.
+
 It costs about a minute, which is why it is a button rather than something that happens as you
 type. The spread between the samples is shown rather than averaged away, because three samples
-cannot know about the twenty minutes of dark, grainy footage at the end of the film.
+cannot know about the twenty minutes of dark, grainy footage at the end of the film, and the
+quality score is reported with the name of the metric that produced it, because SSIM 0.98 and
+VMAF 98 are not the same claim.
 
 ---
 

@@ -114,6 +114,12 @@ public class PlanResult
     public bool IsLossless { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the video stream is copied rather than re-encoded.
+    /// Nothing that compares pictures needs to run in that case: they are the same pictures.
+    /// </summary>
+    public bool VideoIsCopied { get; set; }
+
+    /// <summary>
     /// Gets or sets the audio tracks whose decoded output must hash-match the source, each paired
     /// with the position it occupies in the output.
     /// </summary>

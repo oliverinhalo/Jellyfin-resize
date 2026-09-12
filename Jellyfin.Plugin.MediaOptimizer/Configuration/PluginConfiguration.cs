@@ -192,6 +192,14 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool RegenerateTrickplayAfterReplace { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether "Measure it" also compares the samples against the
+    /// source and reports how close they looked. On by default: it rides along with sample
+    /// encodes that are happening anyway, and it is the only honest answer to "how much worse
+    /// will this look?".
+    /// </summary>
+    public bool MeasureQualityWhenSampling { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets a value indicating whether a finished conversion is written to Jellyfin's
     /// activity feed. On by default: the plugin's own history is not somewhere anyone keeps open,
     /// and a conversion that replaced a file should leave a trace where a person will find it.

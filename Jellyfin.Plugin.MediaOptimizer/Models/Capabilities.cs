@@ -55,6 +55,12 @@ public class Capabilities
     /// <summary>Gets or sets a value indicating whether the server permits AV1 encoding.</summary>
     public bool AllowAv1Encoding { get; set; }
 
+    /// <summary>
+    /// Gets or sets the quality metric this FFmpeg can measure with — "VMAF", "SSIM", or null when
+    /// it can do neither. VMAF is preferred: it is built to predict what a person would say.
+    /// </summary>
+    public string? QualityMetric { get; set; }
+
     /// <summary>Gets or sets a value indicating whether the caller may start conversions.</summary>
     public bool CanConvert { get; set; }
 

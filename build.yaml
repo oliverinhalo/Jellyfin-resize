@@ -26,6 +26,11 @@ changelog: |
     modelled; this one encodes three short stretches of the real file with the real settings and
     reports what they actually produced, including how much the samples varied and how long the
     whole thing would take at the speed they ran.
+  - New: it also measures how much worse it will look. The samples are compared with the source
+    frame by frame — VMAF where FFmpeg has it, SSIM otherwise — and the answer is given both as a
+    score and in words, so "how much quality am I losing?" stops being answered with a preset name.
+  - Fixed the last line of FFmpeg's output occasionally going missing, which is the line carrying
+    the error, the hash or the score. It cost about one run in twenty-five.
   - New: the dashboard file list now ranks the library by what there is to gain rather than by
     size, and says where the saving would come from. The biggest file in most libraries is a remux
     that is already efficiently encoded.

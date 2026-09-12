@@ -520,8 +520,8 @@
         // encode and measures it, which takes about a minute and is the only number here that is
         // not a prediction.
         var measureBtn = el('button', 'mopt-btn', 'Measure it');
-        measureBtn.title = 'Encodes three short stretches of this file with these settings and '
-            + 'measures the result. Takes about a minute.';
+        measureBtn.title = 'Encodes three short stretches of this file with these settings, measures '
+            + 'what they produced, and compares the picture against the source. Takes about a minute.';
         foot.appendChild(measureBtn);
 
         var startBtn = el('button', 'mopt-btn mopt-btn-primary', 'Start conversion');
@@ -532,7 +532,8 @@
             if (!req) { return; }
             measureBtn.disabled = true;
             measureBtn.textContent = 'Measuring…';
-            estSub.textContent = 'Encoding three short samples of this file. This takes about a minute.';
+            estSub.textContent = 'Encoding three short samples of this file and comparing them with the '
+                + 'source. This takes about a minute.';
             request('POST', 'MediaOptimizer/Estimate/Sample', req).then(function (result) {
                 renderEstimate(result);
             }).catch(function (e) {
@@ -604,6 +605,13 @@
             } else if (result.TimeBasis === 'unmeasured') {
                 parts.push('encode time shown once it starts');
             }
+            // A measured quality score is the one number nothing else here can offer, so it goes
+            // in the summary line rather than only in the note underneath.
+            if (result.QualityScore && result.QualityMetric) {
+                parts.push(result.QualityMetric + ' ' + result.QualityScore.toFixed(1) +
+                    (result.QualityVerdict ? ' — ' + result.QualityVerdict : ''));
+            }
+
             parts.push(result.IsLossless ? 'bit-exact — hash verified afterwards' : 'lossy');
             estSub.textContent = parts.join(' · ');
 

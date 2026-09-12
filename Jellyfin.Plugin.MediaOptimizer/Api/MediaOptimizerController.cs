@@ -683,8 +683,15 @@ public class MediaOptimizerController : ControllerBase
             return Ok(modelled);
         }
 
+        // The comparison rides along with the sample encodes that are happening anyway, so the
+        // quality number costs a fraction of what it would to measure on its own.
+        var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+        var metric = (Plugin.Instance?.Configuration.MeasureQualityWhenSampling ?? true)
+            ? caps.QualityMetric
+            : null;
+
         var measurement = await _sampler
-            .MeasureAsync(analysis, plan, workDirectory, cancellationToken)
+            .MeasureAsync(analysis, plan, workDirectory, metric, cancellationToken)
             .ConfigureAwait(false);
 
         if (!measurement.Succeeded)

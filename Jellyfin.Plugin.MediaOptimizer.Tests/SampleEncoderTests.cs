@@ -122,7 +122,7 @@ public class SampleEncoderTests : IDisposable
         var runner = new StubRunner(failuresFirst: 1, failureMilliseconds: 500, successMilliseconds: 40);
         var encoder = new SampleEncoder(runner, NullLogger<SampleEncoder>.Instance);
 
-        var measurement = await encoder.MeasureAsync(Source(7200d), Plan(), _dir, CancellationToken.None);
+        var measurement = await encoder.MeasureAsync(Source(7200d), Plan(), _dir, null, CancellationToken.None);
 
         Assert.True(measurement.Succeeded, measurement.FailureReason);
         Assert.Equal(2, measurement.Samples);
@@ -142,7 +142,7 @@ public class SampleEncoderTests : IDisposable
         var runner = new StubRunner(failuresFirst: 99, failureMilliseconds: 1, successMilliseconds: 1);
         var encoder = new SampleEncoder(runner, NullLogger<SampleEncoder>.Instance);
 
-        var measurement = await encoder.MeasureAsync(Source(7200d), Plan(), _dir, CancellationToken.None);
+        var measurement = await encoder.MeasureAsync(Source(7200d), Plan(), _dir, null, CancellationToken.None);
 
         Assert.False(measurement.Succeeded);
         Assert.Contains("would fail too", measurement.FailureReason!, StringComparison.Ordinal);
@@ -154,7 +154,7 @@ public class SampleEncoderTests : IDisposable
         var runner = new StubRunner(failuresFirst: 0, failureMilliseconds: 1, successMilliseconds: 1);
         var encoder = new SampleEncoder(runner, NullLogger<SampleEncoder>.Instance);
 
-        await encoder.MeasureAsync(Source(7200d), Plan(), _dir, CancellationToken.None);
+        await encoder.MeasureAsync(Source(7200d), Plan(), _dir, null, CancellationToken.None);
 
         var offsets = runner.Invocations
             .Select(a => a[a.IndexOf("-ss", StringComparer.Ordinal) + 1])
@@ -192,7 +192,7 @@ public class SampleEncoderTests : IDisposable
         var runner = new StubRunner(failuresFirst: 0, failureMilliseconds: 1, successMilliseconds: 1);
         var encoder = new SampleEncoder(runner, NullLogger<SampleEncoder>.Instance);
 
-        await encoder.MeasureAsync(Source(7200d), Plan(), _dir, CancellationToken.None);
+        await encoder.MeasureAsync(Source(7200d), Plan(), _dir, null, CancellationToken.None);
 
         Assert.Empty(Directory.GetFiles(_dir));
     }

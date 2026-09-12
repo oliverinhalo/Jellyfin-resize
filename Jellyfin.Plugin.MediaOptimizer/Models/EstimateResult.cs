@@ -61,6 +61,18 @@ public class EstimateResult
     /// </summary>
     public string? MeasurementNote { get; set; }
 
+    /// <summary>
+    /// Gets or sets how close the sampled encode looked to the source, in the units of
+    /// <see cref="QualityMetric"/>. Null when no comparison was made.
+    /// </summary>
+    public double? QualityScore { get; set; }
+
+    /// <summary>Gets or sets which metric produced the score: VMAF or SSIM. They are not the same scale.</summary>
+    public string? QualityMetric { get; set; }
+
+    /// <summary>Gets or sets the score in plain words, so it is usable without knowing the metric.</summary>
+    public string? QualityVerdict { get; set; }
+
     /// <summary>Gets or sets the planner messages for this configuration.</summary>
     public System.Collections.Generic.IReadOnlyList<PlanWarning> Warnings { get; set; }
         = System.Array.Empty<PlanWarning>();

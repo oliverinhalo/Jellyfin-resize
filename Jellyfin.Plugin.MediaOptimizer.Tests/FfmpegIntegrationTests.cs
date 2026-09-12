@@ -469,7 +469,7 @@ public class FfmpegIntegrationTests : IDisposable
         Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
 
         var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
-        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, CancellationToken.None);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, CancellationToken.None);
 
         Assert.True(measurement.Succeeded, measurement.FailureReason);
         Assert.Equal(3, measurement.Samples);
@@ -511,7 +511,7 @@ public class FfmpegIntegrationTests : IDisposable
             analysis, request, Path.Combine(_dir, "short.mkv"), CancellationToken.None);
 
         var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
-        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, CancellationToken.None);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, CancellationToken.None);
 
         Assert.False(measurement.Succeeded);
         Assert.Contains("too short", measurement.FailureReason!, StringComparison.OrdinalIgnoreCase);
