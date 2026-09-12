@@ -310,6 +310,13 @@ public class JobStore : IJobStore
         }
     }
 
+    /// <summary>
+    /// How many times a job is started again after the server stopped mid-encode before it is
+    /// held for a person to look at. Three is generous for bad luck — a power cut, a container
+    /// restart, an upgrade — and short of the point where the job is plainly the cause.
+    /// </summary>
+    internal const int MaxAutomaticResumes = 3;
+
     /// <inheritdoc />
     public IReadOnlyList<EncodeJob> ReconcileInterrupted()
     {
@@ -329,6 +336,17 @@ public class JobStore : IJobStore
                     job.Status = JobStatus.Interrupted;
                     job.Error = "The server stopped while the finished file was being moved into place. "
                         + "Check the file and the quarantine folder before requeueing.";
+                    job.FinishedAt = DateTime.UtcNow;
+                }
+                else if (resume && job.ResumeCount >= MaxAutomaticResumes)
+                {
+                    // Resuming is right up to the point where this job is what stopped the
+                    // server. Something about this file or these settings is taking the machine
+                    // down, and requeueing it on every boot makes the plugin the cause of a
+                    // reboot loop rather than the victim of one. A person can still retry it.
+                    job.Status = JobStatus.Interrupted;
+                    job.Error = FormattableString.Invariant(
+                        $"This job has been interrupted {job.ResumeCount} times, so it is being held rather than started again. Something about this file or these settings is stopping the server mid-encode: try a different codec or preset, or switch off hardware encoding, before running it again. The original file was not modified.");
                     job.FinishedAt = DateTime.UtcNow;
                 }
                 else if (resume)

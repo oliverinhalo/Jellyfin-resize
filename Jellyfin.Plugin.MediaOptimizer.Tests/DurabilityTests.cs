@@ -154,6 +154,48 @@ public class DurabilityTests : IDisposable
         Assert.Contains("quarantine", recovered[0].Error!, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Resuming automatically is right up to the point where the job is what stopped the server.
+    /// A file or a setting that kills the machine mid-encode would otherwise be requeued on every
+    /// boot, take the server down again, and be requeued again — the plugin turning one bad file
+    /// into a reboot loop nobody can see the cause of.
+    /// </summary>
+    [Fact]
+    public void A_job_that_keeps_taking_the_server_down_stops_being_resumed()
+    {
+        var store = NewStore();
+        var job = Job("Kills the box", JobStatus.Encoding);
+        job.ResumeCount = JobStore.MaxAutomaticResumes;
+        store.Add(job);
+
+        var recovered = NewStore().ReconcileInterrupted();
+
+        Assert.Single(recovered);
+        Assert.Equal(JobStatus.Interrupted, recovered[0].Status);
+        Assert.Contains(
+            JobStore.MaxAutomaticResumes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            recovered[0].Error!,
+            StringComparison.Ordinal);
+
+        // And it is still there to retry by hand, because the person deciding is the whole point.
+        Assert.Equal(JobStore.MaxAutomaticResumes, recovered[0].ResumeCount);
+    }
+
+    /// <summary>One interruption short of the limit is still resumed.</summary>
+    [Fact]
+    public void A_job_that_has_been_interrupted_once_is_still_resumed()
+    {
+        var store = NewStore();
+        var job = Job("Unlucky", JobStatus.Encoding);
+        job.ResumeCount = JobStore.MaxAutomaticResumes - 1;
+        store.Add(job);
+
+        var recovered = NewStore().ReconcileInterrupted();
+
+        Assert.Equal(JobStatus.Queued, recovered[0].Status);
+        Assert.Equal(JobStore.MaxAutomaticResumes, recovered[0].ResumeCount);
+    }
+
     [Fact]
     public void Finished_jobs_are_left_alone_by_recovery()
     {

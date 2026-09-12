@@ -83,6 +83,10 @@ changelog: |
     animated series want settings four or five apart. It confirms its answer at three points across
     the film, where the worst of the three has to meet the target, and says plainly when a source
     cannot reach one at all.
+  - A job interrupted by the server stopping is no longer resumed for ever. If a file or a setting
+    is what takes the server down mid-encode, requeueing it on every boot makes the plugin the
+    cause of a reboot loop; after three interruptions the job is held with a note saying what to
+    try instead, and you can still run it by hand.
   - Every number in the conversion dialog now says what kind of number it is. A prediction made
     without the file's own bitrate is labelled a rough guess, and a file nothing can be predicted
     from says so, instead of both being shown exactly as confidently as a measurement.

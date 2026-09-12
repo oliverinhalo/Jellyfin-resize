@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Thirty-one defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 453, and the browser
+**Scope:** ~70 files, ~8,200 lines added. Thirty-two defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 455, and the browser
 suites from three to seven.
 
 ---
@@ -64,7 +64,9 @@ suites from three to seven.
 
 | 21 | Clearing a number box on the settings page saved zero. `Number('')` is 0, and 0 is a real setting for several of them — none of which anybody chooses by emptying the field. | The same mistake as the rule editor's cleared limit, which posted null and produced a raw model-binding error; here it silently wrote "delete quarantined originals immediately" or "keep no job history". A cleared box now leaves the setting as it was. Found by writing the settings page its first test. |
 
-Rows 11 to 13 are the security pass's; rows 14 to 21 came from a fifth pass over the code that
+| 22 | An interrupted job was resumed on every restart, for ever, with no limit. | Resuming is right up to the point where the job is what stopped the server. A file or a setting that takes the machine down mid-encode — a hardware encoder wedging a driver, an ffmpeg that exhausts memory — would be requeued on the next boot, take the server down again, and be requeued again: the plugin turning one bad file into a reboot loop with no visible cause. Three interruptions is generous for bad luck; past that the job is held with a message saying so and naming what to try instead, and a person can still retry it by hand. |
+
+Rows 11 to 13 are the security pass's; rows 14 to 22 came from a fifth pass over the code that
 verification, the queue and the estimate actually run, reading for the gap between what something
 claims and what it does. The
 first ten came from reading the plugin end to end.
@@ -134,7 +136,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **453 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **455 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
