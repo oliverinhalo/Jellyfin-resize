@@ -243,6 +243,7 @@ public class EncodePlanner : IEncodePlanner
             OutputExtension = extension,
             IsLossless = isLossless,
             VideoIsCopied = videoAction == VideoAction.Copy,
+            VideoIsAbsent = videoAction == VideoAction.Drop || video is null,
             LosslessAudioChecks = losslessAudioChecks
         };
     }

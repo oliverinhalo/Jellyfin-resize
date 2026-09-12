@@ -606,9 +606,11 @@
                 parts.push('encode time shown once it starts');
             }
             // A measured quality score is the one number nothing else here can offer, so it goes
-            // in the summary line rather than only in the note underneath.
-            if (result.QualityScore && result.QualityMetric) {
-                parts.push(result.QualityMetric + ' ' + result.QualityScore.toFixed(1) +
+            // in the summary line rather than only in the note underneath. The server formats it:
+            // VMAF and SSIM are on different scales, and rounding an SSIM to one decimal turns
+            // every possible answer into "1.0".
+            if (result.QualityScoreText && result.QualityMetric) {
+                parts.push(result.QualityMetric + ' ' + result.QualityScoreText +
                     (result.QualityVerdict ? ' — ' + result.QualityVerdict : ''));
             }
 

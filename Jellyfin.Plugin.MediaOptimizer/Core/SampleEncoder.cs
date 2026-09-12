@@ -231,11 +231,13 @@ public class SampleEncoder : ISampleEncoder
         var scores = new List<double>();
         var sampled = 0d;
 
-        // Nothing to compare when the video stream is copied: they are the same pictures, and
-        // running a comparison to conclude "identical" would just cost a minute.
+        // Nothing to compare when the video stream is copied -- they are the same pictures, and
+        // proving it would cost a minute -- nor when there is no video in the output at all, where
+        // the comparison would launch an ffmpeg that immediately fails for want of a stream.
         var compare = _quality is not null
             && !string.IsNullOrEmpty(qualityMetric)
-            && !plan.VideoIsCopied;
+            && !plan.VideoIsCopied
+            && !plan.VideoIsAbsent;
 
         // Timed per sample rather than across the whole loop: a sample that failed still took
         // time, and counting it would report an encode as slower than it is -- under a label that

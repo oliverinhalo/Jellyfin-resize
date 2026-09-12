@@ -145,6 +145,23 @@ public partial class QualityProbe : IQualityProbe
     }
 
     /// <summary>
+    /// Formats a score for display in the units it is actually in.
+    /// <para>
+    /// VMAF runs 0-100 and one decimal place is plenty. SSIM runs 0-1, where everything
+    /// interesting happens in the third and fourth decimal — 0.982 and 0.995 are different
+    /// answers, and both round to "1.0". Most builds of jellyfin-ffmpeg have no VMAF, so SSIM is
+    /// the common case rather than the exotic one.
+    /// </para>
+    /// </summary>
+    /// <param name="metric">Which metric produced the score.</param>
+    /// <param name="score">The score.</param>
+    /// <returns>The score as text.</returns>
+    public static string FormatScore(string metric, double score) =>
+        string.Equals(metric, Vmaf, StringComparison.OrdinalIgnoreCase)
+            ? score.ToString("F1", CultureInfo.InvariantCulture)
+            : score.ToString("F4", CultureInfo.InvariantCulture);
+
+    /// <summary>
     /// Turns a score into a sentence. The number is the honest part; the words are what makes it
     /// usable by somebody who has never heard of VMAF.
     /// </summary>

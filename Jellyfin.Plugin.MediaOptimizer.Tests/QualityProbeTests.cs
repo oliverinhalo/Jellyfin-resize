@@ -112,6 +112,28 @@ public class QualityProbeTests : IDisposable
     }
 
     /// <summary>
+    /// SSIM runs 0-1, where everything interesting happens in the third and fourth decimal.
+    /// Formatting it the way VMAF is formatted turns 0.9825 and 0.9950 — two different verdicts —
+    /// into the same "1.0", and most builds of jellyfin-ffmpeg have no VMAF, so that is the
+    /// common case rather than the exotic one.
+    /// </summary>
+    [Fact]
+    public void A_score_is_formatted_on_its_own_scale()
+    {
+        Assert.Equal("96.4", QualityProbe.FormatScore("VMAF", 96.402831d));
+        Assert.Equal("0.9825", QualityProbe.FormatScore("SSIM", 0.982531d));
+
+        // The two SSIM scores below are different verdicts, and must not print the same.
+        Assert.NotEqual(
+            QualityProbe.FormatScore("SSIM", 0.9825d),
+            QualityProbe.FormatScore("SSIM", 0.9950d));
+
+        Assert.NotEqual(
+            QualityProbe.Describe("SSIM", 0.9825d),
+            QualityProbe.Describe("SSIM", 0.9950d));
+    }
+
+    /// <summary>
     /// The real test: a heavily compressed encode must score worse than a light one, and a
     /// downscale-and-back must score worse still. A metric that does not move with the thing it
     /// measures is a number with no meaning, which is worse than no number at all.

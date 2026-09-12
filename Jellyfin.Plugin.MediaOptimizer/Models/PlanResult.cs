@@ -120,6 +120,12 @@ public class PlanResult
     public bool VideoIsCopied { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the output has no video stream, either because it
+    /// was dropped or because the source had none. There is nothing to compare pictures against.
+    /// </summary>
+    public bool VideoIsAbsent { get; set; }
+
+    /// <summary>
     /// Gets or sets the audio tracks whose decoded output must hash-match the source, each paired
     /// with the position it occupies in the output.
     /// </summary>

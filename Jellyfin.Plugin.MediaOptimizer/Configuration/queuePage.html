@@ -369,8 +369,10 @@
         });
       }
 
+      var facetsLoaded = null;
+
       function loadFacets() {
-        api('GET', 'MediaOptimizer/Library/Facets').then(function (f) {
+        facetsLoaded = api('GET', 'MediaOptimizer/Library/Facets').then(function (f) {
           function fill(id, values) {
             var select = page.querySelector(id);
             (values || []).forEach(function (v) {
@@ -383,6 +385,8 @@
           fill('#moptCodec', f.codecs);
           libraries = f.libraries || [];
         }).catch(function () { /* filters simply stay at "Any" */ });
+
+        return facetsLoaded;
       }
 
       // The dialog lives in the injected client bundle, so the dashboard and the in-app buttons
@@ -606,6 +610,18 @@
       ];
 
       function openRuleEditor(existing) {
+        // The library list arrives with the facets. Building the form before it does would label
+        // a perfectly good library as "no longer on this server", so wait for it — it is almost
+        // always already there, since the facets load with the page.
+        if (!libraries.length && facetsLoaded) {
+          facetsLoaded.then(function () { buildRuleEditor(existing); });
+          return;
+        }
+
+        buildRuleEditor(existing);
+      }
+
+      function buildRuleEditor(existing) {
         var host = page.querySelector('#moptRuleEditor');
         host.innerHTML = '';
         page.querySelector('#moptRulePreview').innerHTML = '';

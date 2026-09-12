@@ -36,6 +36,75 @@ public static class ConcurrencyPolicy
         return sourceHeight >= LargeHeight ? 2 : 1;
     }
 
+    /// <summary>
+    /// How long a job at the front of the queue may be passed over before the queue starts holding
+    /// room for it instead. Backfilling is worth having — a 720p episode should use the space a 4K
+    /// film cannot — but only while it does not turn into "the big job never runs".
+    /// </summary>
+    public static readonly TimeSpan HeadOfQueueGrace = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// Chooses which queued job to start, given what is already running.
+    /// <para>
+    /// Taking the first job that fits is the obvious rule and it silently inverts priority: a 4K
+    /// job marked "run this next" costs two slots, so with two ordinary jobs arriving steadily it
+    /// is passed over every single time. So: a job may only be passed over by one that is at least
+    /// as urgent, and once it has been waiting longer than the grace period the queue holds room
+    /// for it rather than filling the space again.
+    /// </para>
+    /// </summary>
+    /// <param name="queued">The queued jobs, already in the order they should run.</param>
+    /// <param name="fits">Whether a given job can start right now.</param>
+    /// <param name="priorityOf">The job's priority; lower numbers run first.</param>
+    /// <param name="queuedAtOf">When the job joined the queue.</param>
+    /// <param name="now">The current time.</param>
+    /// <typeparam name="T">The job type.</typeparam>
+    /// <returns>The job to start, or null to wait.</returns>
+    public static T? Choose<T>(
+        IReadOnlyList<T> queued,
+        Func<T, bool> fits,
+        Func<T, int> priorityOf,
+        Func<T, DateTime> queuedAtOf,
+        DateTime now)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(queued);
+        ArgumentNullException.ThrowIfNull(fits);
+        ArgumentNullException.ThrowIfNull(priorityOf);
+        ArgumentNullException.ThrowIfNull(queuedAtOf);
+
+        if (queued.Count == 0)
+        {
+            return null;
+        }
+
+        var head = queued[0];
+        if (fits(head))
+        {
+            return head;
+        }
+
+        // The job at the front has waited long enough. Stop filling the space in front of it.
+        if (now - queuedAtOf(head) > HeadOfQueueGrace)
+        {
+            return null;
+        }
+
+        var headPriority = priorityOf(head);
+
+        foreach (var candidate in queued)
+        {
+            // Only a job that is at least as urgent may go first. Anything less urgent jumping the
+            // queue is the inversion this exists to prevent.
+            if (priorityOf(candidate) <= headPriority && fits(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Whether another job may start alongside the ones already running.</summary>
     /// <param name="runningHeights">The source heights of the jobs currently running.</param>
     /// <param name="candidateHeight">The source height of the job being considered.</param>

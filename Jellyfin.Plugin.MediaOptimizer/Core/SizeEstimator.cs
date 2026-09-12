@@ -92,7 +92,8 @@ public class SizeEstimator : ISizeEstimator
         if (measurement.QualityScore is not null && !string.IsNullOrEmpty(measurement.QualityMetric))
         {
             result.QualityMetric = measurement.QualityMetric;
-            result.QualityScore = Math.Round(measurement.QualityScore.Value, 2);
+            result.QualityScore = measurement.QualityScore.Value;
+            result.QualityScoreText = QualityProbe.FormatScore(measurement.QualityMetric, measurement.QualityScore.Value);
             result.QualityVerdict = QualityProbe.Describe(measurement.QualityMetric, measurement.QualityScore.Value);
         }
 
@@ -113,11 +114,11 @@ public class SizeEstimator : ISizeEstimator
         {
             result.MeasurementNote += string.Format(
                 CultureInfo.InvariantCulture,
-                " Picture quality was compared frame by frame against the source: {0} {1:F1} on average, "
-                + "{2:F1} at its worst — {3}.",
+                " Picture quality was compared frame by frame against the source: {0} {1} on average, "
+                + "{2} at its worst — {3}.",
                 result.QualityMetric,
-                result.QualityScore,
-                measurement.WorstQualityScore,
+                result.QualityScoreText,
+                QualityProbe.FormatScore(result.QualityMetric!, measurement.WorstQualityScore.Value),
                 result.QualityVerdict);
         }
 

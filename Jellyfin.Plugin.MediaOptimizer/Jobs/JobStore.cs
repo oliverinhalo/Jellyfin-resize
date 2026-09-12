@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
+using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Models;
 using MediaBrowser.Common.Configuration;
 using Microsoft.Extensions.Logging;
@@ -226,14 +227,24 @@ public class JobStore : IJobStore
 
         lock (_lock)
         {
-            // Lower Priority numbers run first; ties fall back to arrival order. A job the caller
-            // cannot start yet is skipped rather than blocking the ones behind it, so a queue of
-            // 4K films does not stop a 720p episode running in the room that is left.
-            var next = _jobs.Values
+            // Lower Priority numbers run first; ties fall back to arrival order.
+            var ordered = _jobs.Values
                 .Where(j => j.Status == JobStatus.Queued)
                 .OrderBy(j => j.Priority)
                 .ThenBy(j => j.QueuedAt)
-                .FirstOrDefault(j => canStart is null || canStart(j));
+                .ToList();
+
+            // Which of those can start now is the caller's business, and the rules about passing
+            // one over for another live in ConcurrencyPolicy, where they can be tested on their
+            // own: a job may only be overtaken by one at least as urgent, and not indefinitely.
+            var next = canStart is null
+                ? ordered.FirstOrDefault()
+                : ConcurrencyPolicy.Choose(
+                    ordered,
+                    job => canStart(job),
+                    job => job.Priority,
+                    job => job.QueuedAt,
+                    DateTime.UtcNow);
 
             if (next is null)
             {

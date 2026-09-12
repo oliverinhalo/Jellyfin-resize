@@ -73,6 +73,12 @@ public class EstimateResult
     /// <summary>Gets or sets the score in plain words, so it is usable without knowing the metric.</summary>
     public string? QualityVerdict { get; set; }
 
+    /// <summary>
+    /// Gets or sets the score already formatted for its own scale. VMAF and SSIM are not on the
+    /// same one, and formatting an SSIM to one decimal place turns every answer into "1.0".
+    /// </summary>
+    public string? QualityScoreText { get; set; }
+
     /// <summary>Gets or sets the planner messages for this configuration.</summary>
     public System.Collections.Generic.IReadOnlyList<PlanWarning> Warnings { get; set; }
         = System.Array.Empty<PlanWarning>();

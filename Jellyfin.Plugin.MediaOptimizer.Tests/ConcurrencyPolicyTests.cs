@@ -161,6 +161,86 @@ public class ConcurrencyPolicyTests
         }
     }
 
+    // --- which job to start, not merely whether one can ------------------------------------
+
+    private sealed record Queued(string Name, int Priority, DateTime QueuedAt, bool Fits);
+
+    private static string? Choose(DateTime now, params Queued[] jobs) =>
+        ConcurrencyPolicy.Choose(jobs, j => j.Fits, j => j.Priority, j => j.QueuedAt, now)?.Name;
+
+    /// <summary>
+    /// Taking the first job that fits is the obvious rule, and it silently inverts priority: a 4K
+    /// job costs two slots, so "run this next" on one means it is passed over every single time
+    /// while ordinary jobs keep arriving. That is not a scheduling nicety, it is the urgent job
+    /// never running.
+    /// </summary>
+    [Fact]
+    public void An_urgent_job_is_not_passed_over_by_ordinary_ones()
+    {
+        var now = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        var chosen = Choose(
+            now,
+            new Queued("Urgent 4K", -1, now.AddMinutes(-1), Fits: false),
+            new Queued("Ordinary 1080p", 0, now.AddMinutes(-1), Fits: true));
+
+        Assert.Null(chosen);
+    }
+
+    /// <summary>
+    /// But the room a large job cannot use should not sit empty either, so a job of the same
+    /// urgency may still fill it.
+    /// </summary>
+    [Fact]
+    public void A_job_of_equal_urgency_may_fill_the_space_a_large_one_cannot()
+    {
+        var now = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        var chosen = Choose(
+            now,
+            new Queued("Big", 0, now.AddMinutes(-1), Fits: false),
+            new Queued("Small", 0, now.AddMinutes(-1), Fits: true));
+
+        Assert.Equal("Small", chosen);
+    }
+
+    /// <summary>
+    /// And backfilling has to stop eventually, or a steady trickle of small jobs is a large one
+    /// that never runs at all.
+    /// </summary>
+    [Fact]
+    public void After_long_enough_the_queue_holds_room_for_the_job_at_the_front()
+    {
+        var now = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+        var waiting = now - ConcurrencyPolicy.HeadOfQueueGrace - TimeSpan.FromMinutes(1);
+
+        var chosen = Choose(
+            now,
+            new Queued("Big, waiting", 0, waiting, Fits: false),
+            new Queued("Small", 0, now.AddMinutes(-1), Fits: true));
+
+        Assert.Null(chosen);
+    }
+
+    [Fact]
+    public void The_job_at_the_front_is_taken_whenever_it_fits()
+    {
+        var now = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(
+            "First",
+            Choose(
+                now,
+                new Queued("First", 0, now.AddMinutes(-5), Fits: true),
+                new Queued("Second", 0, now.AddMinutes(-1), Fits: true)));
+    }
+
+    [Fact]
+    public void An_empty_queue_chooses_nothing()
+    {
+        Assert.Null(Choose(DateTime.UtcNow));
+    }
+
     /// <summary>Every path that queues a job has to record the height, or the weighting is blind.</summary>
     [Fact]
     public void Every_way_of_queueing_a_job_records_the_resolution()
