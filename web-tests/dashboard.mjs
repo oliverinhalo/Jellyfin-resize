@@ -32,7 +32,10 @@ const JOBS = [
     EtaSeconds: 4200, OutputPolicy: 'Replace', SourceSizeBytes: 5 * 1024 ** 3 },
   { Id: 'j2', ItemName: 'Film 9', Status: 'Completed', OutputPolicy: 'Replace',
     SourceSizeBytes: 6 * 1024 ** 3, OutputSizeBytes: 3 * 1024 ** 3, QuarantinePath: '/media/f9.mkv.mooriginal' },
-  { Id: 'j3', ItemName: 'Film 4', Status: 'Failed', OutputPolicy: 'Replace', Error: 'FFmpeg failed: no space left' }
+  { Id: 'j3', ItemName: 'Film 4', Status: 'Failed', OutputPolicy: 'Replace', Error: 'FFmpeg failed: no space left' },
+  { Id: 'j4', ItemName: 'Film 12', Status: 'Completed', OutputPolicy: 'Sidecar',
+    SourceSizeBytes: 8 * 1024 ** 3, OutputSizeBytes: 4 * 1024 ** 3, IsLossless: true,
+    LosslessVerified: true, QueuedByRule: 'Big 4K films' }
 ];
 const STATS = {
   CompletedJobs: 12, BytesSaved: 41 * 1024 ** 3, SourceBytesProcessed: 90 * 1024 ** 3,
@@ -148,7 +151,23 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
       savingLines: Array.from(document.querySelectorAll('.moptItemMeta'))
         .filter(n => n.textContent.includes('to gain')).map(n => n.textContent),
       sortOptions: Array.from(document.querySelectorAll('#moptSort option')).map(o => o.value),
-      bodyScrollsSideways: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
+      bodyScrollsSideways: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      // What each job row actually says, and what it offers to do about it. These are the rows
+      // somebody reads the morning after an overnight run.
+      rows: (function () {
+        const rows = {};
+        for (const box of document.querySelectorAll('.moptJob')) {
+          const name = (box.querySelector('.moptJobName') || {}).textContent;
+          rows[name] = {
+            meta: (box.querySelector('.moptJobMeta') || {}).textContent || '',
+            error: (box.querySelector('.moptErr') || {}).textContent || '',
+            progress: box.querySelector('.moptBar i') ? box.querySelector('.moptBar i').style.width : null,
+            actions: Array.from(box.querySelectorAll('.moptActions button')).map(b => b.textContent)
+          };
+        }
+
+        return rows;
+      })()
     };
   });
 
@@ -159,9 +178,9 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   check(r.pickerOpen === true, 'the file picker is open by default');
   check(/6 shown/.test(r.pickerHint || ''), `picker summarises its contents (${r.pickerHint})`);
   check(r.historyCollapsed === true, 'history is tucked into a collapsed panel');
-  check(/2 finished/.test(r.historyHint || ''), `history summarises its contents (${r.historyHint})`);
+  check(/3 finished/.test(r.historyHint || ''), `history summarises its contents (${r.historyHint})`);
   check(r.activeJobs === 1, `running jobs stay visible (${r.activeJobs})`);
-  check(r.historyJobs === 2, `finished jobs move into history (${r.historyJobs})`);
+  check(r.historyJobs === 3, `finished jobs move into history (${r.historyJobs})`);
   check(r.stats >= 4, `statistics render (${r.stats} tiles)`);
   check(r.results === 6, `file list renders (${r.results})`);
   check(r.savingLines.length === 2, `files with something to gain say so (${r.savingLines.length})`);
@@ -170,6 +189,31 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   check(r.sortOptions[0] === 'SavingDescending', 'the list can be ordered by what there is to gain');
   check(!r.bodyScrollsSideways, 'page does not scroll sideways');
   check(logs.length === 0, `no page errors${logs.length ? ': ' + logs[0] : ''}`);
+
+  // --- what a job row says -------------------------------------------------------------------
+  // The counts above say the rows are there. These say what is in them, which is what somebody
+  // actually reads the morning after an overnight run.
+  const running = r.rows['Film 6'] || {};
+  const undoable = r.rows['Film 9'] || {};
+  const failed = r.rows['Film 4'] || {};
+  const byRule = r.rows['Film 12'] || {};
+
+  check(running.progress === '43%', `a running job shows its progress (${running.progress})`);
+  check(/1\.80× realtime/.test(running.meta), `and how fast it is going (${running.meta})`);
+  check(/70 min remaining/.test(running.meta), 'and how long is left');
+  check((running.actions || []).includes('Cancel'), 'a running job can be cancelled');
+
+  check(/6\.00 GiB → 3\.00 GiB/.test(undoable.meta), `a finished job shows what it produced (${undoable.meta})`);
+  check((undoable.actions || []).includes('Put the original back'),
+    'a job still holding its original offers to put it back');
+  check(!(undoable.actions || []).includes('Remove from history'),
+    'and is not offered a "forget this" that would orphan the original it is keeping');
+
+  check(/no space left/.test(failed.error), `a failed job shows the reason (${failed.error})`);
+  check((failed.actions || []).includes('Try again'), 'a failed job can be retried');
+
+  check(/queued by "Big 4K films"/.test(byRule.meta), `a job queued by a rule says which (${byRule.meta})`);
+  check(/hash verified/.test(byRule.meta), 'and a bit-exact conversion says it was verified');
 
   const rulesView = await page.evaluate(async () => {
     const panel = document.querySelector('#moptRulesPanel');
