@@ -38,6 +38,7 @@ public class MediaOptimizerController : ControllerBase
     private readonly ISizeEstimator _estimator;
     private readonly ISampleEncoder _sampler;
     private readonly IQualitySearch _qualitySearch;
+    private readonly IOperationRegistry _operations;
     private readonly IJobStore _store;
     private readonly IJobQueueService _queue;
     private readonly IOutputPolicyService _output;
@@ -54,6 +55,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="estimator">Size estimator.</param>
     /// <param name="sampler">Sample encoder, for a measured estimate.</param>
     /// <param name="qualitySearch">Quality search, for finding a setting by measuring.</param>
+    /// <param name="operations">Registry of work that outlives the request that started it.</param>
     /// <param name="store">Job store.</param>
     /// <param name="queue">Job queue.</param>
     /// <param name="output">Output policy service.</param>
@@ -69,6 +71,7 @@ public class MediaOptimizerController : ControllerBase
         ISizeEstimator estimator,
         ISampleEncoder sampler,
         IQualitySearch qualitySearch,
+        IOperationRegistry operations,
         IJobStore store,
         IJobQueueService queue,
         IOutputPolicyService output,
@@ -84,6 +87,7 @@ public class MediaOptimizerController : ControllerBase
         _estimator = estimator;
         _sampler = sampler;
         _qualitySearch = qualitySearch;
+        _operations = operations;
         _store = store;
         _queue = queue;
         _output = output;
@@ -703,14 +707,20 @@ public class MediaOptimizerController : ControllerBase
     /// samples were, which is the part a single averaged number would hide.
     /// </para>
     /// </summary>
+    /// <para>
+    /// It answers with an id rather than the measurement: a minute of encoding is longer than the
+    /// sixty-second read timeout in front of most Jellyfin servers, and a request that dies in a
+    /// proxy looks exactly like a broken feature. Ask
+    /// <see cref="GetOperation"/> how it is going.
+    /// </para>
     /// <param name="request">The proposed settings.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The measured estimate, or the modelled one when nothing could be sampled.</returns>
+    /// <param name="cancellationToken">Cancellation token for starting it, not for the work.</param>
+    /// <returns>The id of the measurement now running.</returns>
     [HttpPost("Estimate/Sample")]
     [Authorize(Policy = "RequiresElevation")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<EstimateResult>> SampleEstimate(
+    public async Task<ActionResult<OperationHandle>> SampleEstimate(
         [FromBody] EncodeRequest request,
         CancellationToken cancellationToken)
     {
@@ -722,6 +732,20 @@ public class MediaOptimizerController : ControllerBase
             return NotFound();
         }
 
+        var id = _operations.Start("measure", token => MeasureAsync(analysis, request, token));
+        return Accepted(new OperationHandle { Id = id });
+    }
+
+    /// <summary>Does the measuring, once the request that asked for it has already answered.</summary>
+    /// <param name="analysis">The source analysis.</param>
+    /// <param name="request">The proposed settings.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The measured estimate, or the modelled one when nothing could be sampled.</returns>
+    private async Task<object> MeasureAsync(
+        FileAnalysis analysis,
+        EncodeRequest request,
+        CancellationToken cancellationToken)
+    {
         var workDirectory = _output.GetWorkDirectoryFor(analysis.Path);
 
         // The samples are written with the same naming rules as a real working file -- leading
@@ -733,7 +757,7 @@ public class MediaOptimizerController : ControllerBase
         var modelled = _estimator.Estimate(analysis, request, plan);
         if (!plan.IsRunnable)
         {
-            return Ok(modelled);
+            return modelled;
         }
 
         // The comparison rides along with the sample encodes that are happening anyway, so the
@@ -750,10 +774,10 @@ public class MediaOptimizerController : ControllerBase
         if (!measurement.Succeeded)
         {
             modelled.MeasurementNote = measurement.FailureReason;
-            return Ok(modelled);
+            return modelled;
         }
 
-        return Ok(SizeEstimator.FromMeasurement(analysis, measurement, modelled));
+        return SizeEstimator.FromMeasurement(analysis, measurement, modelled);
     }
 
     /// <summary>
@@ -767,15 +791,20 @@ public class MediaOptimizerController : ControllerBase
     /// something that happens on its own.
     /// </para>
     /// </summary>
+    /// <para>
+    /// Like the measurement, it answers with an id and gets on with it: this one runs for several
+    /// minutes, which no HTTP request between a browser and a Jellyfin server should be asked to
+    /// survive.
+    /// </para>
     /// <param name="request">The settings to search within. Its quality is what moves.</param>
     /// <param name="target">How close to the source the result has to look.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The setting it found, or why it found none.</returns>
+    /// <param name="cancellationToken">Cancellation token for starting it, not for the work.</param>
+    /// <returns>The id of the search now running.</returns>
     [HttpPost("Estimate/FindQuality")]
     [Authorize(Policy = "RequiresElevation")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<QualitySearchResult>> FindQuality(
+    public async Task<ActionResult<OperationHandle>> FindQuality(
         [FromBody] EncodeRequest request,
         [FromQuery] QualityTarget target,
         CancellationToken cancellationToken)
@@ -791,11 +820,44 @@ public class MediaOptimizerController : ControllerBase
         var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
         var workDirectory = _output.GetWorkDirectoryFor(analysis.Path);
 
-        var result = await _qualitySearch
-            .SearchAsync(analysis, request, target, caps.QualityMetric, workDirectory, cancellationToken)
-            .ConfigureAwait(false);
+        var id = _operations.Start("search", async token => await _qualitySearch
+            .SearchAsync(analysis, request, target, caps.QualityMetric, workDirectory, token)
+            .ConfigureAwait(false));
 
-        return Ok(result);
+        return Accepted(new OperationHandle { Id = id });
+    }
+
+    /// <summary>
+    /// Reports how a measurement or a search is going, and hands over its answer when it has one.
+    /// </summary>
+    /// <param name="id">The operation id.</param>
+    /// <returns>Its state, or 404 once it has been forgotten.</returns>
+    [HttpGet("Operations/{id}")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult<OperationState> GetOperation([FromRoute] Guid id)
+    {
+        var state = _operations.Get(id);
+        return state is null ? NotFound() : Ok(state);
+    }
+
+    /// <summary>
+    /// Stops a measurement or a search.
+    /// <para>
+    /// This is what closing the dialog does. Without it, walking away from a five-minute search
+    /// would leave the server encoding for five minutes with nobody left to tell.
+    /// </para>
+    /// </summary>
+    /// <param name="id">The operation id.</param>
+    /// <returns>No content, whether or not there was anything still running.</returns>
+    [HttpDelete("Operations/{id}")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public ActionResult CancelOperation([FromRoute] Guid id)
+    {
+        _operations.Cancel(id);
+        return NoContent();
     }
 
     /// <summary>Measures a stream's exact bitrate. Reads the whole file, so it is opt-in.</summary>

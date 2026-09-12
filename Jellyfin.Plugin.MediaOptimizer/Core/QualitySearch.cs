@@ -283,7 +283,7 @@ public class QualitySearch : IQualitySearch
         var chosen = best.Value;
         SampleMeasurement? confirmation = null;
 
-        for (var step = 0; step <= ConfirmationSteps; step++)
+        for (var step = 0; ; step++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -299,7 +299,11 @@ public class QualitySearch : IQualitySearch
                 return result;
             }
 
-            if (confirmation.WorstQualityScore >= threshold || chosen <= low)
+            // The loop ends on a setting that has been measured, never on one it stepped to and
+            // did not: everything reported below -- the score, the verdict, the size -- describes
+            // whatever `chosen` holds, and a step taken after the last measurement would attach
+            // one setting's number to a different setting's name.
+            if (confirmation.WorstQualityScore >= threshold || chosen <= low || step >= ConfirmationSteps)
             {
                 break;
             }

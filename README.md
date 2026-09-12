@@ -160,7 +160,9 @@ source", or "VMAF 81.2 — noticeably softer on detailed scenes". A conversion t
 stream untouched is not compared at all; there is nothing to compare.
 
 It costs about a minute, which is why it is a button rather than something that happens as you
-type. The spread between the samples is shown rather than averaged away, because three samples
+type. It runs on the server rather than inside the request that asked for it — a minute is longer
+than most reverse proxies will hold a connection open — so the dialog asks how it is going, and
+closing the dialog stops it rather than leaving the server encoding for nobody. The spread between the samples is shown rather than averaged away, because three samples
 cannot know about the twenty minutes of dark, grainy footage at the end of the film, and the
 quality score is reported with the name of the metric that produced it, because SSIM 0.98 and
 VMAF 98 are not the same claim.

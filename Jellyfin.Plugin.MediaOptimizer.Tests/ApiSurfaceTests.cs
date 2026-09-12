@@ -92,6 +92,7 @@ public class ApiSurfaceTests
     [InlineData(nameof(MediaOptimizerController.GetJobs))]
     [InlineData(nameof(MediaOptimizerController.GetJob))]
     [InlineData(nameof(MediaOptimizerController.MeasureBitrate))]
+    [InlineData(nameof(MediaOptimizerController.GetOperation))]
     public void Sensitive_reads_demand_an_administrator(string methodName)
     {
         var action = typeof(MediaOptimizerController).GetMethod(methodName);

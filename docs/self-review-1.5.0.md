@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-one defect fixes, nine features, and the tests
-for both. Against the previous release the test suite goes from 174 to 408.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-three defect fixes, nine features, and the
+tests for both. Against the previous release the test suite goes from 174 to 418.
 
 ---
 
@@ -92,6 +92,22 @@ the part of a self-review that is actually worth reading.
 8. **"Try again" built a job without its own resolution or size**, which the new
    concurrency weighting then read as "unknown, assume expensive". Found by writing the test that
    every path queueing a job records what it will cost.
+9. **The quality search could report one setting's score under another setting's name.** When the
+   confirmation across the whole film disagreed with the sample the search decided on, it stepped
+   down to a better setting — and on its last permitted step it stepped without measuring again,
+   so the answer named quality 21 and quoted quality 22's score. A measured number attached to the
+   wrong thing is the one failure a measurement cannot have. The loop now always ends on a setting
+   it has actually measured, and the test asserts exactly that relationship rather than a
+   particular value.
+10. **Measuring and searching held an HTTP request open for minutes.** Sixty seconds is the default
+    read timeout in nearly every reverse proxy in front of a Jellyfin server, so a one-minute
+    measurement was already marginal and a five-minute search would have failed for most people —
+    looking exactly like a broken feature while the server carried on encoding for another four
+    minutes with nobody left to tell. Both now start the work, hand back an id and are polled, the
+    way the conversion queue already was; closing the dialog stops the encoding rather than
+    abandoning it. Writing that turned up one more thing worth fixing: the state a poll reads is
+    now published in one go, because filling in a shared object field by field lets a poll landing
+    in the middle of it see "finished" with no result attached.
 
 Each has a regression test. Two of them — the lost output line and the deadlock — are only visible
 under repetition, so their tests repeat.
@@ -100,7 +116,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **408 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
+- **418 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared

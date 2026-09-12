@@ -548,6 +548,50 @@
         // wipe out the one measured answer on the screen.
         var searchNote = null;
 
+        // Measuring takes a minute and searching takes several, so the server starts the work,
+        // answers with an id, and this asks how it is going. A request held open that long does
+        // not survive the reverse proxy in front of most Jellyfin servers.
+        var operationTimer = null;
+        var operationId = null;
+
+        shell.onClose(function () {
+            clearInterval(operationTimer);
+            // Closing the dialog stops the encoding. Without this, walking away from a search
+            // leaves the server working for five minutes with nobody left to tell.
+            if (operationId) {
+                request('DELETE', 'MediaOptimizer/Operations/' + operationId).catch(function () {});
+                operationId = null;
+            }
+        });
+
+        function operation(path, body, onProgress) {
+            return request('POST', path, body).then(function (handle) {
+                if (!handle || !handle.Id) { throw new Error('The server did not start it.'); }
+                operationId = handle.Id;
+
+                return new Promise(function (resolve, reject) {
+                    clearInterval(operationTimer);
+                    operationTimer = setInterval(function () {
+                        request('GET', 'MediaOptimizer/Operations/' + handle.Id).then(function (state) {
+                            if (!state || state.Status === 'Running') {
+                                if (onProgress && state) { onProgress(state); }
+                                return;
+                            }
+
+                            clearInterval(operationTimer);
+                            operationId = null;
+                            if (state.Status === 'Completed') { resolve(state.Result); }
+                            else { reject(new Error(state.Error || 'It stopped before it finished.')); }
+                        }).catch(function (e) {
+                            clearInterval(operationTimer);
+                            operationId = null;
+                            reject(e);
+                        });
+                    }, 2000);
+                });
+            });
+        }
+
         findBtn.addEventListener('click', function () {
             if (!req) { return; }
             targetHost.innerHTML = '';
@@ -573,7 +617,11 @@
             estSub.textContent = 'Encoding short stretches at different settings and comparing each '
                 + 'with the source. This takes a few minutes.';
 
-            request('POST', 'MediaOptimizer/Estimate/FindQuality?target=' + encodeURIComponent(target.key), req)
+            operation('MediaOptimizer/Estimate/FindQuality?target=' + encodeURIComponent(target.key), req,
+                function (state) {
+                    estSub.textContent = 'Encoding short stretches at different settings and comparing '
+                        + 'each with the source — ' + Math.round(state.ElapsedSeconds) + 's so far.';
+                })
                 .then(function (result) {
                     if (!result.Quality) {
                         searchNote = null;
@@ -606,7 +654,10 @@
             measureBtn.textContent = 'Measuring…';
             estSub.textContent = 'Encoding three short samples of this file and comparing them with the '
                 + 'source. This takes about a minute.';
-            request('POST', 'MediaOptimizer/Estimate/Sample', req).then(function (result) {
+            operation('MediaOptimizer/Estimate/Sample', req, function (state) {
+                estSub.textContent = 'Encoding three short samples of this file and comparing them with '
+                    + 'the source — ' + Math.round(state.ElapsedSeconds) + 's so far.';
+            }).then(function (result) {
                 renderEstimate(result);
             }).catch(function (e) {
                 estSub.textContent = 'Could not measure it: ' + e.message;

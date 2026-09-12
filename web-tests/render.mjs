@@ -89,11 +89,25 @@ for (const vp of widths) {
           VideoCodec:'libx265', TargetHeight: u.indexOf('Medium')>=0 ? 1440 : null, BitDepth:10,
           RateControl:'ConstantQuality', Quality:28, Preset:'medium', UseHardware:false,
           AudioTracks:[{Index:1,Action:'Copy'}], KeepAttachments:true, KeepChapters:true, OutputPolicy:'Replace' }));
-        if (u.includes('FindQuality')) return Promise.resolve(JSON.stringify({
-          Quality: 24, Metric: 'SSIM', WorstScore: 0.9821, AverageScore: 0.9863,
-          WorstScoreText: '0.9821', Verdict: 'very hard to tell apart from the source',
-          Probes: 8, SecondsConfirmed: 24, EstimatedSizeBytes: 2952790016,
-          SavingFraction: 0.45, Note: null, FailureReason: null }));
+        // Measuring and searching are started, not awaited: the server answers with an id and
+        // the dialog polls. The stub answers "running" once so the polling path is exercised
+        // rather than skipped.
+        if (u.includes('FindQuality')) return Promise.resolve(JSON.stringify({ Id: 'op-search' }));
+        if (u.includes('Operations/op-search')) {
+          window.__searchPolls = (window.__searchPolls || 0) + 1;
+          if (window.__searchPolls < 2) {
+            return Promise.resolve(JSON.stringify({
+              Id: 'op-search', Kind: 'search', Status: 'Running', ElapsedSeconds: 12 }));
+          }
+
+          return Promise.resolve(JSON.stringify({
+            Id: 'op-search', Kind: 'search', Status: 'Completed', ElapsedSeconds: 140,
+            Result: {
+              Quality: 24, Metric: 'SSIM', WorstScore: 0.9821, AverageScore: 0.9863,
+              WorstScoreText: '0.9821', Verdict: 'very hard to tell apart from the source',
+              Probes: 8, SecondsConfirmed: 24, EstimatedSizeBytes: 2952790016,
+              SavingFraction: 0.45, Note: null, FailureReason: null } }));
+        }
         if (u.includes('Estimate')) return Promise.resolve(JSON.stringify(estimate));
         return Promise.resolve('{}');
       }
@@ -182,7 +196,8 @@ for (const vp of widths) {
     if (!choice) { return { error: 'no target buttons', targets }; }
 
     choice.click();
-    await new Promise(r => setTimeout(r, 700));
+    // Two polling rounds at two seconds each, plus room to render.
+    await new Promise(r => setTimeout(r, 4600));
 
     const quality = Array.from(root.querySelectorAll('input, select'))
       .map(i => ({ id: i.id || i.name || '', value: i.value }));

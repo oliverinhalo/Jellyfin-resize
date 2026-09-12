@@ -24,6 +24,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IQualityProbe, QualityProbe>();
         serviceCollection.AddSingleton<ISampleEncoder, SampleEncoder>();
         serviceCollection.AddSingleton<IQualitySearch, QualitySearch>();
+        serviceCollection.AddSingleton<IOperationRegistry, OperationRegistry>();
 
         serviceCollection.AddSingleton<LibraryReconciler>();
         serviceCollection.AddSingleton<ILibraryReconciler>(sp => sp.GetRequiredService<LibraryReconciler>());

@@ -72,6 +72,8 @@ const estimate = {
 };
 
 let jobPolls = 0;
+let operationPolls = 0;
+const cancelled = [];
 
 window.ApiClient = {
     getUrl: p => 'http://localhost:8096/' + p,
@@ -88,6 +90,14 @@ window.ApiClient = {
         if (url.includes('MediaOptimizer/Jobs')) {
             return Promise.resolve(JSON.stringify({ Id: jobId, Status: 'Queued' }));
         }
+        if (url.includes('Operations/op-1')) {
+            if ((options.type || 'GET') === 'DELETE') { cancelled.push(url); return Promise.resolve(''); }
+            operationPolls++;
+            return Promise.resolve(JSON.stringify({
+                Id: 'op-1', Kind: 'measure', Status: 'Running', ElapsedSeconds: operationPolls * 2
+            }));
+        }
+        if (url.includes('Estimate/Sample')) { return Promise.resolve(JSON.stringify({ Id: 'op-1' })); }
         if (url.includes('Analyze')) { return Promise.resolve(JSON.stringify(analysis)); }
         if (url.includes('Capabilities')) { return Promise.resolve(JSON.stringify(capabilities)); }
         if (url.includes('ResolveStrategy')) { return Promise.resolve(JSON.stringify(resolved)); }
@@ -152,6 +162,34 @@ const pollsAtClose = jobPolls;
 await tick(3600);
 ok(jobPolls === pollsAtClose,
     `polling stops when the dialog closes (${pollsAtClose} before, ${jobPolls} after two more intervals)`);
+
+// --- a measurement that outlives its request ----------------------------------------------------
+console.log('\nClosing the dialog stops a measurement');
+
+window.MediaOptimizer.open(itemId);
+await tick(400);
+
+const measureRoot = window.MediaOptimizer.shadowRoot();
+const measure = Array.prototype.find.call(measureRoot.querySelectorAll('button'),
+    b => b.textContent.includes('Measure it'));
+ok(!!measure, 'the dialog offers to measure');
+
+measure.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await tick(2400);
+
+ok(operationPolls > 0, `the measurement is polled while it runs (polls: ${operationPolls})`);
+
+// Walking away from a minute of encoding has to stop the encoding, or the server works for
+// nobody -- which is the whole risk of doing this work outside the request that asked for it.
+measureRoot.querySelector('.mopt-close').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await tick(80);
+
+ok(cancelled.length === 1, `closing the dialog stops the measurement (${cancelled.length} cancellation(s))`);
+
+const pollsAtDialogClose = operationPolls;
+await tick(4800);
+ok(operationPolls === pollsAtDialogClose,
+    `and stops asking about it (${pollsAtDialogClose} before, ${operationPolls} after)`);
 
 console.log(failures === 0 ? '\nAll lifecycle checks passed.' : `\n${failures} lifecycle check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

@@ -348,4 +348,32 @@ public class QualitySearchTests
         Assert.False(result.Succeeded);
         Assert.NotNull(result.FailureReason);
     }
+
+    /// <summary>
+    /// Whatever it reports, the score it reports has to be the score of the setting it reports.
+    /// Stepping back from a setting the film disagreed with and then quoting the measurement from
+    /// the setting above it would be a number attached to the wrong thing — the single failure
+    /// mode a measured answer cannot have.
+    /// </summary>
+    [Fact]
+    public async Task The_score_it_reports_belongs_to_the_setting_it_reports()
+    {
+        // The film as a whole is ten points worse than its middle, so every confirmation fails
+        // and the search runs out of steps.
+        double Middle(int q) => 100d - ((q - 20) * 1.5d);
+        double Worst(int q) => Middle(q) - 10d;
+
+        var (search, _) = Build(score: Middle, worst: Worst);
+
+        var result = await search.SearchAsync(
+            Source(), Request(), QualityTarget.VeryClose, QualityProbe.Vmaf, "/tmp", CancellationToken.None);
+
+        Assert.NotNull(result.Quality);
+        Assert.Equal(Worst(result.Quality!.Value), result.WorstScore);
+        Assert.Equal(Middle(result.Quality.Value), result.AverageScore);
+
+        // And it says so, rather than presenting a target it never reached as if it had.
+        Assert.NotNull(result.Note);
+        Assert.Equal(QualityProbe.Describe(QualityProbe.Vmaf, result.WorstScore!.Value), result.Verdict);
+    }
 }
