@@ -105,6 +105,8 @@
             while anyone is streaming, and the original untouched until the result passes
             verification. Each rule takes the largest matching files first and stops at its own
             per-run limit. Preview a rule before switching it on; a preview queues nothing.
+            Rules are applied top to bottom and the first one to take a file keeps it, so use
+            "Move up" and "Move down" to decide which of two overlapping rules wins.
           </div>
           <div id="moptRules"></div>
           <div class="moptQueueBar">
@@ -505,6 +507,19 @@
             actions.appendChild(b);
           }
 
+          // The order is which rule gets to convert a file, not a display preference, so it is
+          // changed from the same place the rules are read.
+          if (rules.length > 1) {
+            var position = rules.indexOf(r);
+            if (position > 0) {
+              button('Move up', function () { return moveRule(r, 'up'); });
+            }
+
+            if (position < rules.length - 1) {
+              button('Move down', function () { return moveRule(r, 'down'); });
+            }
+          }
+
           button('Preview', function () { return previewRule(r); });
           button(r.Enabled ? 'Switch off' : 'Switch on', function () {
             var copy = JSON.parse(JSON.stringify(r));
@@ -528,6 +543,11 @@
           box.appendChild(actions);
           host.appendChild(box);
         });
+      }
+
+      function moveRule(rule, direction) {
+        return api('POST', 'MediaOptimizer/Rules/' + rule.Id + '/Move?direction=' + direction)
+          .then(function (updated) { rules = updated || rules; renderRules(); });
       }
 
       function loadRules() {
@@ -768,6 +788,7 @@
           if (j.IsLossless) { bits.push('lossless'); }
           if (j.LosslessVerified === true) { bits.push('hash verified'); }
           if (j.ResumeCount > 0) { bits.push('resumed after restart'); }
+          if (j.QueuedByRule) { bits.push('queued by "' + j.QueuedByRule + '"'); }
           box.appendChild(el('div', 'moptJobMeta', bits.join(' · ')));
 
           if (j.Status === 'Encoding' || j.Status === 'Verifying') {

@@ -314,7 +314,8 @@ public class AutomationService : IAutomationService
             Request = request,
             OutputPolicy = request.OutputPolicy,
             Warnings = plan.Warnings,
-            IsLossless = plan.IsLossless
+            IsLossless = plan.IsLossless,
+            QueuedByRule = rule.Name
         };
 
         _store.Add(job);

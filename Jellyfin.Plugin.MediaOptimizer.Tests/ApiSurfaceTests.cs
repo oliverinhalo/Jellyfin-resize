@@ -292,4 +292,44 @@ public class ApiSurfaceTests
         var body = text[start..Math.Min(text.Length, start + 2500)];
         Assert.Contains("RedactServerPaths", body, StringComparison.Ordinal);
     }
+
+    // --- the order rules are applied in --------------------------------------------------------
+
+    private static List<Jellyfin.Plugin.MediaOptimizer.Models.AutomationRule> ThreeRules() =>
+    [
+        new() { Id = Guid.NewGuid(), Name = "First" },
+        new() { Id = Guid.NewGuid(), Name = "Second" },
+        new() { Id = Guid.NewGuid(), Name = "Third" }
+    ];
+
+    /// <summary>
+    /// Rules are applied in list order and the first one to take a file claims it, so the order is
+    /// which rule gets to convert a film — not a display preference.
+    /// </summary>
+    [Fact]
+    public void A_rule_can_be_moved_past_its_neighbour()
+    {
+        var rules = ThreeRules();
+
+        Assert.True(RulesController.Move(rules, rules[2].Id, -1));
+        Assert.Equal(["First", "Third", "Second"], rules.Select(r => r.Name));
+
+        Assert.True(RulesController.Move(rules, rules[0].Id, 1));
+        Assert.Equal(["Third", "First", "Second"], rules.Select(r => r.Name));
+    }
+
+    /// <summary>Moving off either end does nothing, and loses nothing.</summary>
+    [Fact]
+    public void A_rule_at_the_end_of_the_list_stays_where_it_is()
+    {
+        var rules = ThreeRules();
+        var names = rules.Select(r => r.Name).ToList();
+
+        Assert.False(RulesController.Move(rules, rules[0].Id, -1));
+        Assert.False(RulesController.Move(rules, rules[^1].Id, 1));
+        Assert.False(RulesController.Move(rules, Guid.NewGuid(), 1));
+
+        Assert.Equal(names, rules.Select(r => r.Name));
+        Assert.Equal(3, rules.Count);
+    }
 }

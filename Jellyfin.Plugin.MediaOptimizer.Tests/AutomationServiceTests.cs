@@ -479,4 +479,36 @@ public class AutomationServiceTests
         Assert.Empty(store.Jobs);
         Assert.Contains(result.Items, i => !i.Queued && i.SkippedReason!.StartsWith("Already converted", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// Two rules that both match a file: the first one in the list takes it, and the second never
+    /// sees it. That is the whole reason the order can be changed from the dashboard — "keep the
+    /// 4K films as they are, shrink everything else" is only that sentence if the keeping rule is
+    /// above the shrinking one.
+    /// </summary>
+    [Fact]
+    public async Task The_first_rule_in_the_list_claims_a_file_the_second_would_also_take()
+    {
+        var film = Item("Overlapping film", 40);
+
+        var first = Rule("Runs first");
+        first.Strategy = OptimizationStrategy.Medium;
+        var second = Rule("Runs second");
+        second.Strategy = OptimizationStrategy.HighReduction;
+
+        var (service, store, _, _) = Build([film], first, second);
+
+        var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+
+        Assert.Equal(1, result.Queued);
+        var job = Assert.Single(store.Jobs);
+        Assert.Equal("Runs first", job.QueuedByRule);
+
+        // And with the order reversed, the other rule takes it -- same library, same two rules.
+        var reversed = Build([film], second, first);
+        var again = await reversed.Service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+
+        Assert.Equal(1, again.Queued);
+        Assert.Equal("Runs second", Assert.Single(reversed.Store.Jobs).QueuedByRule);
+    }
 }

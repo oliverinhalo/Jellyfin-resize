@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-one defect fixes, seven features, and the tests
-for both. Against the previous release the test suite goes from 174 to 383.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-one defect fixes, eight features, and the tests
+for both. Against the previous release the test suite goes from 174 to 386.
 
 ---
 
@@ -100,7 +100,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **383 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
+- **386 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, and the sampled estimate being
@@ -168,9 +168,13 @@ Jellyfin-facing layer left honestly unverified:
 
 ## What I would do next
 
-1. Reordering rules in the dashboard; they apply in list order and there is no way to change it.
-2. Per-title encoder tuning: the settings that suit animation are not the ones that suit film
+1. Per-title encoder tuning: the settings that suit animation are not the ones that suit film
    grain, and the plugin currently offers one answer for both.
-3. Use the measured quality to *choose* settings rather than only to report them — "find me the
+2. Use the measured quality to *choose* settings rather than only to report them — "find me the
    smallest file that still scores 95" is a search the sampler could run.
-4. Dolby Vision via `dovi_tool`, which is the last thing the plugin refuses outright.
+3. Dolby Vision via `dovi_tool`, which is the last thing the plugin refuses outright.
+
+Reordering rules was the first item on this list and is now done: rules are applied top to bottom,
+the first to take a file keeps it, and that order decides which of two overlapping rules converts a
+film — so it is changed from the same panel the rules are written in, and every job a rule queues
+now records which rule queued it, which is what a rule having a name was supposed to buy.

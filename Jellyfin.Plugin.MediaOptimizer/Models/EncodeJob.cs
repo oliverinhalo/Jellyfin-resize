@@ -119,6 +119,16 @@ public class EncodeJob
     /// </summary>
     public int Priority { get; set; }
 
+    /// <summary>
+    /// Gets or sets the name of the automatic rule that queued this job, when one did.
+    /// <para>
+    /// A conversion nobody started by hand should say where it came from. It is also the only way
+    /// to tell, weeks later, which of several rules is the one actually doing the work — and the
+    /// reason a rule is required to have a name at all.
+    /// </para>
+    /// </summary>
+    public string? QueuedByRule { get; set; }
+
     /// <summary>Gets or sets how many times this job has been resumed after a server restart.</summary>
     public int ResumeCount { get; set; }
 

@@ -101,6 +101,20 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
         if (u.includes('Statistics')) return Promise.resolve(JSON.stringify(stats));
         if (u.includes('Rules/') && u.includes('Preview')) return Promise.resolve(JSON.stringify(preview));
+        if (u.includes('Rules/') && u.includes('/Move')) {
+          // The server swaps the rule with its neighbour and answers with the new order; the
+          // dashboard has to render what came back rather than what it had.
+          const id = u.split('Rules/')[1].split('/')[0];
+          const at = rules.findIndex(r => r.Id === id);
+          const to = u.includes('direction=up') ? at - 1 : at + 1;
+          if (at >= 0 && to >= 0 && to < rules.length) {
+            const moved = rules[at];
+            rules[at] = rules[to];
+            rules[to] = moved;
+          }
+
+          return Promise.resolve(JSON.stringify(rules));
+        }
         if (u.includes('Rules')) return Promise.resolve(JSON.stringify(rules));
         if (u.includes('Jobs')) return Promise.resolve(JSON.stringify(jobs));
         return Promise.resolve('{}');
@@ -174,6 +188,8 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
       secondIsOff: boxes[1].classList.contains('off'),
       firstStats: boxes[0].querySelector('.moptRuleStats').textContent,
       preview: preview,
+      firstHasNoMoveUp: !Array.from(boxes[0].querySelectorAll('button')).some(b => b.textContent === 'Move up'),
+      lastHasNoMoveDown: !Array.from(boxes[boxes.length - 1].querySelectorAll('button')).some(b => b.textContent === 'Move down'),
       editorEmptyBeforeAdding: document.querySelector('#moptRuleEditor').textContent === '',
       fieldsAfterAdding: (document.querySelector('#moptAddRule').click(),
         document.querySelectorAll('#moptRuleEditor .moptFilter').length)
@@ -213,6 +229,25 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   check(/2 file\(s\) would be converted/.test(rulesView.preview), 'preview says how many files it would take');
   check(/Already converted/.test(rulesView.preview), 'preview explains the near-misses too');
   check(/912/.test(rulesView.preview), 'preview says how many items it looked at');
+  check(rulesView.firstHasNoMoveUp, 'the first rule is not offered "Move up"');
+  check(rulesView.lastHasNoMoveDown, 'the last rule is not offered "Move down"');
+
+  // Which rule is above the other decides which of two overlapping rules converts a file, so the
+  // dashboard has to reorder them, not just display them.
+  const reordered = await page.evaluate(async () => {
+    const before = Array.from(document.querySelectorAll('.moptRuleName')).map(n => n.textContent);
+    const first = document.querySelectorAll('.moptRule')[0];
+    Array.from(first.querySelectorAll('button')).find(b => b.textContent === 'Move down').click();
+    await new Promise(r => setTimeout(r, 300));
+    return {
+      before: before,
+      after: Array.from(document.querySelectorAll('.moptRuleName')).map(n => n.textContent)
+    };
+  });
+
+  check(reordered.before[0] === reordered.after[1] && reordered.before[1] === reordered.after[0],
+    `moving a rule down reorders the list (${reordered.before.join(', ')} -> ${reordered.after.join(', ')})`);
+
   check(rulesView.editorEmptyBeforeAdding, 'the rule editor is closed until asked for');
   check(rulesView.fieldsAfterAdding >= 12, `the editor offers the rule's fields (${rulesView.fieldsAfterAdding})`);
 

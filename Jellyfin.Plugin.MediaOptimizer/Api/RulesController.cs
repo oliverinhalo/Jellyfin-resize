@@ -109,6 +109,77 @@ public class RulesController : ControllerBase
     }
 
     /// <summary>
+    /// Moves a rule up or down the list.
+    /// <para>
+    /// The order is not cosmetic. Rules are applied in it, and the first rule to take a file
+    /// claims it, so which of two overlapping rules converts a film is decided entirely by which
+    /// one is above the other — "keep the 4K films, but shrink everything older than a year" only
+    /// means that if the rule that keeps them runs first.
+    /// </para>
+    /// </summary>
+    /// <param name="id">The rule to move.</param>
+    /// <param name="direction">"up" or "down".</param>
+    /// <returns>The rules in their new order.</returns>
+    [HttpPost("{id}/Move")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult<IReadOnlyList<AutomationRule>> MoveRule(
+        [FromRoute] Guid id,
+        [FromQuery] string direction)
+    {
+        var delta = string.Equals(direction, "up", StringComparison.OrdinalIgnoreCase) ? -1
+            : string.Equals(direction, "down", StringComparison.OrdinalIgnoreCase) ? 1
+            : 0;
+
+        if (delta == 0)
+        {
+            return BadRequest(new { error = "A rule can be moved \"up\" or \"down\"." });
+        }
+
+        var rules = Rules;
+        if (rules.All(r => r.Id != id))
+        {
+            return NotFound();
+        }
+
+        // A rule already at the end has nowhere to go, which is not an error -- the dashboard
+        // disables the button, and a second click that arrives anyway should be a no-op rather
+        // than a message.
+        if (Move(rules, id, delta))
+        {
+            _settings.Save();
+        }
+
+        return Ok(rules);
+    }
+
+    /// <summary>Swaps a rule with its neighbour.</summary>
+    /// <param name="rules">The rules, in the order they are applied.</param>
+    /// <param name="id">The rule to move.</param>
+    /// <param name="delta">-1 to move it earlier, 1 to move it later.</param>
+    /// <returns>Whether anything moved.</returns>
+    internal static bool Move(List<AutomationRule> rules, Guid id, int delta)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+
+        var from = rules.FindIndex(r => r.Id == id);
+        if (from < 0)
+        {
+            return false;
+        }
+
+        var to = from + delta;
+        if (to < 0 || to >= rules.Count)
+        {
+            return false;
+        }
+
+        (rules[from], rules[to]) = (rules[to], rules[from]);
+        return true;
+    }
+
+    /// <summary>
     /// Reports what a rule would queue, without queueing anything. This is the answer to "what
     /// will this do to my library", and it is why a rule can be written with some confidence
     /// before it is switched on.
