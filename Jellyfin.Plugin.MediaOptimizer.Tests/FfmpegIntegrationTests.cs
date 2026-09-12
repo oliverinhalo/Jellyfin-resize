@@ -163,6 +163,29 @@ public class FfmpegIntegrationTests : IDisposable
     }
 
     /// <summary>
+    /// Builds a clip long enough to sample: the sampler refuses anything under 45 seconds, on the
+    /// grounds that such a file is quicker to convert than to measure.
+    /// </summary>
+    /// <returns>The path of the generated file.</returns>
+    private async Task<string> CreateLongSourceAsync()
+    {
+        var path = Path.Combine(_dir, "long.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=60",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=60",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "96k",
+            path
+        ];
+
+        var result = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(result.Success, "Could not build the long test source: " + result.StandardError);
+        return path;
+    }
+
+    /// <summary>
     /// Builds a clip whose first audio track is lossy and whose second is lossless, which is how a
     /// remux with a commentary track in front of the main audio is laid out.
     /// </summary>
@@ -412,6 +435,86 @@ public class FfmpegIntegrationTests : IDisposable
         Assert.False(verification.Passed);
         Assert.False(verification.LosslessVerified);
         Assert.Contains("bit-identically", verification.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The sampled estimate is the only number this plugin offers that is a measurement rather
+    /// than a model, so the thing worth proving is that it actually predicts the full encode. This
+    /// samples the file, then encodes the whole thing, and compares.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_sampled_estimate_predicts_the_full_encode()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateLongSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.DurationSeconds = 60d;
+        analysis.SizeBytes = new FileInfo(source).Length;
+
+        var output = Path.Combine(_dir, "full.mkv");
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            Quality = 30,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "aac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, CancellationToken.None);
+
+        Assert.True(measurement.Succeeded, measurement.FailureReason);
+        Assert.Equal(3, measurement.Samples);
+
+        // Nothing may be left behind in the working directory.
+        Assert.Empty(Directory.GetFiles(_dir, ".mo-sample-*"));
+
+        var full = await Runner.RunEncodeAsync(plan.Arguments, 60d, null, false, CancellationToken.None);
+        Assert.True(full.Success, "ffmpeg failed: " + full.StandardError);
+
+        var actual = new FileInfo(output).Length;
+        var predicted = (long)(measurement.BytesPerSecond * 60d);
+
+        // Within 35%: three eight-second samples of a synthetic clip will not be exact, and
+        // claiming they would be is precisely the overclaiming this replaces. What matters is
+        // that it is in the right place -- a model that was out by 3x would pass no test worth
+        // having.
+        Assert.InRange(predicted, (long)(actual * 0.65d), (long)(actual * 1.35d));
+    }
+
+    /// <summary>A file shorter than the samples is refused with a reason rather than measured badly.</summary>
+    [SkippableFact]
+    public async Task A_file_too_short_to_sample_says_so()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateSourceAsync("flac");
+        var analysis = AnalysisFor(source, "flac", audioLossless: true);
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(
+            analysis, request, Path.Combine(_dir, "short.mkv"), CancellationToken.None);
+
+        var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, CancellationToken.None);
+
+        Assert.False(measurement.Succeeded);
+        Assert.Contains("too short", measurement.FailureReason!, StringComparison.OrdinalIgnoreCase);
     }
 
     [SkippableFact]

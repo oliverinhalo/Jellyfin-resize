@@ -17,6 +17,15 @@ artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
   ### 1.5.0.0
+  - New: "Measure it" in the conversion dialog. Every other number shown before a conversion is
+    modelled; this one encodes three short stretches of the real file with the real settings and
+    reports what they actually produced, including how much the samples varied and how long the
+    whole thing would take at the speed they ran.
+  - New: the dashboard file list now ranks the library by what there is to gain rather than by
+    size, and says where the saving would come from. The biggest file in most libraries is a remux
+    that is already efficiently encoded.
+  - New: finished and failed conversions are written to Jellyfin's activity feed, with what the
+    file went from and to, how much was freed, and until when the original can be put back.
   - New: automatic rules. A rule says which files it takes — films or episodes, resolution, size,
     container, codec, whether anyone has watched it, how long it has been in the library — and what
     to do with them, and a nightly task applies it. Every rule has a ceiling on how many files it

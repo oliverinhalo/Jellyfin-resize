@@ -516,9 +516,32 @@
         cancelBtn.addEventListener('click', shell.close);
         foot.appendChild(cancelBtn);
 
+        // Everything else shown before a conversion is modelled. This runs a little of the real
+        // encode and measures it, which takes about a minute and is the only number here that is
+        // not a prediction.
+        var measureBtn = el('button', 'mopt-btn', 'Measure it');
+        measureBtn.title = 'Encodes three short stretches of this file with these settings and '
+            + 'measures the result. Takes about a minute.';
+        foot.appendChild(measureBtn);
+
         var startBtn = el('button', 'mopt-btn mopt-btn-primary', 'Start conversion');
         startBtn.disabled = true;
         foot.appendChild(startBtn);
+
+        measureBtn.addEventListener('click', function () {
+            if (!req) { return; }
+            measureBtn.disabled = true;
+            measureBtn.textContent = 'Measuring…';
+            estSub.textContent = 'Encoding three short samples of this file. This takes about a minute.';
+            request('POST', 'MediaOptimizer/Estimate/Sample', req).then(function (result) {
+                renderEstimate(result);
+            }).catch(function (e) {
+                estSub.textContent = 'Could not measure it: ' + e.message;
+            }).then(function () {
+                measureBtn.disabled = false;
+                measureBtn.textContent = 'Measure it';
+            });
+        });
 
         function loadStrategy(key) {
             formHost.innerHTML = '';
@@ -571,8 +594,12 @@
 
             var parts = [];
             if (pct > 0) { parts.push('frees ' + bytes(savedBytes)); }
-            if (result.Confidence === 'Medium') { parts.push('estimate ' + bytes(result.EstimatedSizeLowBytes) + ' – ' + bytes(result.EstimatedSizeHighBytes)); }
-            if (result.EstimatedSeconds && result.TimeBasis === 'measured on this server') {
+            if (result.Confidence === 'Medium' || result.Confidence === 'Measured') {
+                parts.push((result.Confidence === 'Measured' ? 'measured ' : 'estimate ') +
+                    bytes(result.EstimatedSizeLowBytes) + ' – ' + bytes(result.EstimatedSizeHighBytes));
+            }
+            if (result.EstimatedSeconds && (result.TimeBasis === 'measured on this server'
+                || result.TimeBasis === 'measured on this file')) {
                 parts.push('about ' + duration(result.EstimatedSeconds) + ' to encode');
             } else if (result.TimeBasis === 'unmeasured') {
                 parts.push('encode time shown once it starts');
@@ -582,6 +609,12 @@
 
             if (result.SavingNote) {
                 warnHost.insertBefore(warningBox('info', result.SavingNote), warnHost.firstChild);
+            }
+
+            // What the measurement covered, and what it cannot know. A single averaged number
+            // would quietly imply the whole film encodes like its middle eight seconds.
+            if (result.MeasurementNote) {
+                warnHost.insertBefore(warningBox('info', result.MeasurementNote), warnHost.firstChild);
             }
 
             startBtn.disabled = blockers > 0;

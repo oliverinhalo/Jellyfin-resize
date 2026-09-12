@@ -139,6 +139,18 @@ nothing":
 Rules live on the dashboard page, and run as the scheduled task *Media Optimizer: automatic rules*,
 so you can move them, run them by hand, or switch them off from Jellyfin's own scheduled task page.
 
+### Measuring instead of predicting
+
+Every number the dialog shows before a conversion is modelled — anchored on the file's own bitrate
+rather than a generic table, which is why it does not claim a lean HEVC file will shrink, but still
+a prediction. **Measure it** in the dialog encodes three eight-second stretches of the real file
+with the real settings and reports what they produced: a measured size, a measured range, and a
+time estimate taken from how fast those samples actually ran on this machine.
+
+It costs about a minute, which is why it is a button rather than something that happens as you
+type. The spread between the samples is shown rather than averaged away, because three samples
+cannot know about the twenty minutes of dark, grainy footage at the end of the film.
+
 ---
 
 ## MP4 or MKV

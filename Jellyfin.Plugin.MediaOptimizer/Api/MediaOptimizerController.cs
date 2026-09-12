@@ -36,6 +36,7 @@ public class MediaOptimizerController : ControllerBase
     private readonly ICapabilityService _capabilities;
     private readonly IEncodePlanner _planner;
     private readonly ISizeEstimator _estimator;
+    private readonly ISampleEncoder _sampler;
     private readonly IJobStore _store;
     private readonly IJobQueueService _queue;
     private readonly IOutputPolicyService _output;
@@ -50,6 +51,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="capabilities">Capability service.</param>
     /// <param name="planner">Encode planner.</param>
     /// <param name="estimator">Size estimator.</param>
+    /// <param name="sampler">Sample encoder, for a measured estimate.</param>
     /// <param name="store">Job store.</param>
     /// <param name="queue">Job queue.</param>
     /// <param name="output">Output policy service.</param>
@@ -63,6 +65,7 @@ public class MediaOptimizerController : ControllerBase
         ICapabilityService capabilities,
         IEncodePlanner planner,
         ISizeEstimator estimator,
+        ISampleEncoder sampler,
         IJobStore store,
         IJobQueueService queue,
         IOutputPolicyService output,
@@ -76,6 +79,7 @@ public class MediaOptimizerController : ControllerBase
         _capabilities = capabilities;
         _planner = planner;
         _estimator = estimator;
+        _sampler = sampler;
         _store = store;
         _queue = queue;
         _output = output;
@@ -610,6 +614,62 @@ public class MediaOptimizerController : ControllerBase
             .ConfigureAwait(false);
 
         return Ok(_estimator.Estimate(analysis, request, plan));
+    }
+
+    /// <summary>
+    /// Measures the outcome by actually encoding a few short stretches of the file with these
+    /// settings, rather than modelling it.
+    /// <para>
+    /// This costs a minute or so of real encoding, which is why it is a separate request the user
+    /// asks for. It is the only number this plugin can offer that is a measurement rather than a
+    /// prediction, so the answer it gives is labelled as such — including how far apart the
+    /// samples were, which is the part a single averaged number would hide.
+    /// </para>
+    /// </summary>
+    /// <param name="request">The proposed settings.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The measured estimate, or the modelled one when nothing could be sampled.</returns>
+    [HttpPost("Estimate/Sample")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<EstimateResult>> SampleEstimate(
+        [FromBody] EncodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var analysis = await _probe.AnalyzeAsync(request.ItemId, cancellationToken).ConfigureAwait(false);
+        if (analysis is null)
+        {
+            return NotFound();
+        }
+
+        var workDirectory = _output.GetWorkDirectoryFor(analysis.Path);
+
+        // The samples are written with the same naming rules as a real working file -- leading
+        // dot, .motmp suffix -- so the library scanner never sees one even if a delete is missed.
+        var plan = await _planner
+            .PlanAsync(analysis, request, System.IO.Path.Combine(workDirectory, "sample.motmp"), cancellationToken)
+            .ConfigureAwait(false);
+
+        var modelled = _estimator.Estimate(analysis, request, plan);
+        if (!plan.IsRunnable)
+        {
+            return Ok(modelled);
+        }
+
+        var measurement = await _sampler
+            .MeasureAsync(analysis, plan, workDirectory, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!measurement.Succeeded)
+        {
+            modelled.MeasurementNote = measurement.FailureReason;
+            return Ok(modelled);
+        }
+
+        return Ok(SizeEstimator.FromMeasurement(analysis, measurement, modelled));
     }
 
     /// <summary>Measures a stream's exact bitrate. Reads the whole file, so it is opt-in.</summary>

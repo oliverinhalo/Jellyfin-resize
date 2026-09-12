@@ -13,7 +13,10 @@ public enum EstimateConfidence
     Medium = 2,
 
     /// <summary>Nothing is being re-encoded, so the size is essentially known.</summary>
-    High = 3
+    High = 3,
+
+    /// <summary>Part of the conversion was actually run and the output measured.</summary>
+    Measured = 4
 }
 
 /// <summary>Predicted outcome of a conversion, shown live under the dialog.</summary>
@@ -51,6 +54,12 @@ public class EstimateResult
 
     /// <summary>Gets or sets an explanation shown when the predicted saving is small.</summary>
     public string? SavingNote { get; set; }
+
+    /// <summary>
+    /// Gets or sets how the measurement was obtained, when one was: how many samples, how much
+    /// of the file they covered, and how far apart they were. Null for a modelled estimate.
+    /// </summary>
+    public string? MeasurementNote { get; set; }
 
     /// <summary>Gets or sets the planner messages for this configuration.</summary>
     public System.Collections.Generic.IReadOnlyList<PlanWarning> Warnings { get; set; }
