@@ -70,4 +70,15 @@ public class Capabilities
     /// presenting an empty codec list.
     /// </summary>
     public string? ProbeError { get; set; }
+
+    /// <summary>
+    /// Copies this capability set.
+    /// <para>
+    /// The encoder lists are shared rather than duplicated: they are built once by the probe and
+    /// never edited afterwards. The scalar fields are not — one caller stamps whether the current
+    /// user may convert onto the answer it is about to send — which is exactly why this exists.
+    /// </para>
+    /// </summary>
+    /// <returns>The copy.</returns>
+    public Capabilities Clone() => (Capabilities)MemberwiseClone();
 }

@@ -17,6 +17,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
         serviceCollection.AddSingleton<IFfmpegRunner, FfmpegRunner>();
+        serviceCollection.AddSingleton<IServerEncodingContext, ServerEncodingContext>();
         serviceCollection.AddSingleton<ICapabilityService, CapabilityService>();
         serviceCollection.AddSingleton<IMediaProbeService, MediaProbeService>();
         serviceCollection.AddSingleton<IEncodePlanner, EncodePlanner>();

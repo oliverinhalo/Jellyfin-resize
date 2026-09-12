@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-six defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 443.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-eight defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 449.
 
 ---
 
@@ -54,7 +54,10 @@ tests for both. Against the previous release the test suite goes from 174 to 443
 | 15 | "DTS-HD MA" was recognised by looking for the letters "MA" anywhere in the stream profile — which also matches "DTS-ES Matrix", a lossy format. | The plugin would have called a conversion of that track bit-exact and predicted the output at 85% of the source, when re-encoding a lossy track to FLAC makes it several times larger. "MA" now has to be a word of its own, and the test covers the profiles that actually turn up: DTS-ES, DTS-ES Matrix, DTS Express, DTS-HD HRA, DTS-HD MA + DTS:X, and the lower-case spellings. |
 | 16 | The measured quality reported one verdict for two numbers: "VMAF 97.5 on average, 84.0 at its worst — indistinguishable from the source". The words described the average and sat next to the worst. | 84 is not indistinguishable from anything; it is "noticeably softer on detailed scenes", which is exactly the case somebody needs to see rather than have averaged away. Each number now carries its own verdict. |
 
-Rows 11 to 13 are the security pass's; rows 14 to 16 came from a fifth pass over the code that
+| 17 | The capability probe handed every caller the same cached object, and one caller writes to it: the API stamps "may this user convert?" onto the answer it is about to send. | Two people using the dialog at once could get each other's permissions — a non-administrator's request leaving the cached answer saying nobody may convert, or saying that they may and then being refused by the API. The same class of bug as the paused flag that used to be static. Every caller now gets its own copy, and a reflection test holds the copy to carrying every field. |
+| 18 | The server's own encoding settings were cached with the ffmpeg probe, which is cached for the life of the process. | Turning on "allow HEVC encoding" in Jellyfin's own dashboard did nothing until the server was restarted: the plugin went on warning that it was off. Those settings are Jellyfin's, not ffmpeg's, so they are read on every request now — and the ffmpeg probe itself is re-run when the binary it describes is no longer the one Jellyfin points at, which is what happens when an administrator fixes the path. |
+
+Rows 11 to 13 are the security pass's; rows 14 to 18 came from a fifth pass over the code that
 verification, the queue and the estimate actually run, reading for the gap between what something
 claims and what it does. The
 first ten came from reading the plugin end to end.
@@ -124,7 +127,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **443 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **449 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
