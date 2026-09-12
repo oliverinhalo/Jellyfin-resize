@@ -75,6 +75,14 @@ changelog: |
     that already had something else in it, that something else was being deleted.
   - A conversion that has to copy its output to another disk no longer risks leaving a full-size
     partial copy next to your media forever if the server loses power mid-copy.
+  - New: "Find the setting" in the conversion dialog. Instead of reporting what a quality setting
+    does, it finds the setting: say how close to the source the result has to look —
+    indistinguishable, very hard to tell apart, or slightly softer — and the server encodes short
+    stretches at several settings and picks the smallest file that still measures up on this file.
+    Every "use CRF 22" is a number that suited somebody else's files; a grainy film and a flat
+    animated series want settings four or five apart. It confirms its answer at three points across
+    the film, where the worst of the three has to meet the target, and says plainly when a source
+    cannot reach one at all.
   - Rules can be reordered. They are applied top to bottom and the first one to take a file keeps
     it, so with two rules that overlap, which one is above decides which converts the file — and
     there was no way to change it. Every job a rule queues now says which rule queued it.

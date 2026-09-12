@@ -164,4 +164,14 @@ public class EncodeRequest
 
     /// <summary>Gets or sets the subtitle languages kept, comma separated. Empty keeps every track.</summary>
     public string? KeepSubtitleLanguages { get; set; }
+
+    /// <summary>
+    /// Copies this request.
+    /// <para>
+    /// The track lists are shared rather than duplicated: they are <c>IReadOnlyList</c> and
+    /// nothing here ever rewrites one in place, so copying them would only be a copy nobody reads.
+    /// </para>
+    /// </summary>
+    /// <returns>The copy.</returns>
+    public EncodeRequest Clone() => (EncodeRequest)MemberwiseClone();
 }

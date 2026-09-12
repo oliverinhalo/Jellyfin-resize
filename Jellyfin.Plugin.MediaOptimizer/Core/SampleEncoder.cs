@@ -61,6 +61,11 @@ public interface ISampleEncoder
     /// The metric to compare each sample against the source with — "VMAF" or "SSIM" — or null to
     /// measure size alone.
     /// </param>
+    /// <param name="maxSamples">
+    /// How many stretches to encode, or 0 for all of them. A quality search asks for one — the
+    /// middle of the film — because it runs this many times over and only needs to compare one
+    /// setting with another; the answer it settles on is then confirmed with all of them.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The measurement, or a reason it could not be made.</returns>
     Task<SampleMeasurement> MeasureAsync(
@@ -68,6 +73,7 @@ public interface ISampleEncoder
         PlanResult plan,
         string workDirectory,
         string? qualityMetric,
+        int maxSamples,
         CancellationToken cancellationToken);
 }
 
@@ -175,8 +181,13 @@ public class SampleEncoder : ISampleEncoder
 
     /// <summary>Picks where to sample a file of a given length.</summary>
     /// <param name="durationSeconds">The source duration.</param>
+    /// <param name="maxSamples">
+    /// How many to return, or 0 for all of them. Fewer are taken from the middle outwards: one
+    /// stretch of a film is least unrepresentative when it comes from the middle, where the
+    /// opening titles and the closing credits cannot flatter it.
+    /// </param>
     /// <returns>Start offsets in seconds, ordered.</returns>
-    internal static IReadOnlyList<double> SampleOffsets(double durationSeconds)
+    internal static IReadOnlyList<double> SampleOffsets(double durationSeconds, int maxSamples = 0)
     {
         var offsets = new List<double>();
         foreach (var point in SamplePoints)
@@ -191,6 +202,16 @@ public class SampleEncoder : ISampleEncoder
             }
         }
 
+        if (maxSamples > 0 && maxSamples < offsets.Count)
+        {
+            var middle = durationSeconds / 2d;
+            offsets = offsets
+                .OrderBy(o => Math.Abs(o - middle))
+                .Take(maxSamples)
+                .OrderBy(o => o)
+                .ToList();
+        }
+
         return offsets;
     }
 
@@ -200,6 +221,7 @@ public class SampleEncoder : ISampleEncoder
         PlanResult plan,
         string workDirectory,
         string? qualityMetric,
+        int maxSamples,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(analysis);
@@ -220,7 +242,7 @@ public class SampleEncoder : ISampleEncoder
             return result;
         }
 
-        var offsets = SampleOffsets(analysis.DurationSeconds.Value);
+        var offsets = SampleOffsets(analysis.DurationSeconds.Value, maxSamples);
         if (offsets.Count == 0)
         {
             result.FailureReason = "No usable sample points in a file this short.";

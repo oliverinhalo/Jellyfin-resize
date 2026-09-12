@@ -23,6 +23,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<ISizeEstimator, SizeEstimator>();
         serviceCollection.AddSingleton<IQualityProbe, QualityProbe>();
         serviceCollection.AddSingleton<ISampleEncoder, SampleEncoder>();
+        serviceCollection.AddSingleton<IQualitySearch, QualitySearch>();
 
         serviceCollection.AddSingleton<LibraryReconciler>();
         serviceCollection.AddSingleton<ILibraryReconciler>(sp => sp.GetRequiredService<LibraryReconciler>());

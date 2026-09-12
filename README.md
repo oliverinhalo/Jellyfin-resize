@@ -165,6 +165,25 @@ cannot know about the twenty minutes of dark, grainy footage at the end of the f
 quality score is reported with the name of the metric that produced it, because SSIM 0.98 and
 VMAF 98 are not the same claim.
 
+### Letting it choose the setting
+
+Once the difference can be measured, the question can be turned round. **Find the setting…** asks
+how close to the source the result has to look — *indistinguishable*, *very hard to tell apart*, or
+*slightly softer* — and then finds the smallest file that still meets it, on this file, by
+encoding short stretches at different settings and comparing each with the source.
+
+This is the one thing no preset can do. Every "use CRF 22" is a number that suited somebody else's
+files; a grainy 1970s film and a flat animated series want settings four or five apart, and no
+table knows which one it is looking at. The search covers about twenty settings in five short
+encodes by halving the range, then confirms its answer at three points across the film — and it is
+the *worst* of those three that has to meet the target, because an average is exactly how one bad
+dark scene hides. The setting it finds is applied to the form, with the score, the verdict in
+words, and how many seconds of the film it was confirmed on.
+
+It takes a few minutes of real encoding, and it says so before it starts. If the source cannot
+reach the target at any setting — already heavily compressed, or damaged — it says that instead of
+quietly returning the best of a bad set.
+
 ---
 
 ## MP4 or MKV

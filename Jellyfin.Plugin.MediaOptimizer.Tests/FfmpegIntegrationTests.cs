@@ -469,7 +469,7 @@ public class FfmpegIntegrationTests : IDisposable
         Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
 
         var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
-        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, CancellationToken.None);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, 0, CancellationToken.None);
 
         Assert.True(measurement.Succeeded, measurement.FailureReason);
         Assert.Equal(3, measurement.Samples);
@@ -511,7 +511,7 @@ public class FfmpegIntegrationTests : IDisposable
             analysis, request, Path.Combine(_dir, "short.mkv"), CancellationToken.None);
 
         var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
-        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, CancellationToken.None);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, 0, CancellationToken.None);
 
         Assert.False(measurement.Succeeded);
         Assert.Contains("too short", measurement.FailureReason!, StringComparison.OrdinalIgnoreCase);
@@ -675,5 +675,74 @@ public class FfmpegIntegrationTests : IDisposable
 
         Assert.True(result.Success, result.StandardError);
         return result.StandardOutput.Trim();
+    }
+
+    /// <summary>
+    /// The quality search, end to end against a real encoder and a real comparison. What is worth
+    /// proving is not a particular CRF — that depends entirely on the footage — but that the
+    /// search comes back with a setting inside the range it says it searches, that the setting it
+    /// chose actually measures at or above the target it was given, and that it leaves nothing
+    /// behind. A search that reported a target it had not reached would be the one failure this
+    /// feature cannot have.
+    /// </summary>
+    [SkippableFact]
+    public async Task The_quality_search_finds_a_setting_that_really_measures_up()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateLongSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.DurationSeconds = 60d;
+        analysis.SizeBytes = new FileInfo(source).Length;
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var sampler = new SampleEncoder(
+            Runner,
+            new QualityProbe(Runner, NullLogger<QualityProbe>.Instance),
+            NullLogger<SampleEncoder>.Instance);
+
+        var search = new QualitySearch(
+            Planner("libx264", "aac"),
+            sampler,
+            new SizeEstimator(new StrategyAndEstimateTests.InMemoryJobStore()),
+            NullLogger<QualitySearch>.Instance);
+
+        // SSIM rather than VMAF: every build of ffmpeg has it, and it is the metric most
+        // jellyfin-ffmpeg builds would actually use.
+        var result = await search.SearchAsync(
+            analysis,
+            request,
+            QualityTarget.SlightlySofter,
+            QualityProbe.Ssim,
+            _dir,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.FailureReason);
+
+        var (low, high) = QualitySearch.RangeFor("libx264");
+        Assert.InRange(result.Quality!.Value, low, high);
+
+        // The claim it makes about itself has to be true of the number it measured.
+        var threshold = QualitySearch.ThresholdFor(QualityProbe.Ssim, QualityTarget.SlightlySofter);
+        Assert.True(
+            result.WorstScore >= threshold,
+            FormattableString.Invariant($"Reported {result.WorstScore} against a target of {threshold}."));
+
+        Assert.Equal(QualityProbe.Describe(QualityProbe.Ssim, result.WorstScore!.Value), result.Verdict);
+        Assert.True(result.Probes >= 4, "A search over twenty settings cannot be one encode.");
+        Assert.True(result.EstimatedSizeBytes > 0);
+
+        // Every sample it wrote is a throwaway, and none of them may be left in a media folder.
+        Assert.Empty(Directory.GetFiles(_dir, ".mo-sample-*"));
     }
 }

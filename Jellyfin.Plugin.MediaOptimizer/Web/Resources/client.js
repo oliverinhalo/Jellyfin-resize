@@ -512,6 +512,9 @@
         estimate.appendChild(estSub);
         foot.appendChild(estimate);
 
+        var targetHost = el('div', 'mopt-target-host');
+        foot.appendChild(targetHost);
+
         var cancelBtn = el('button', 'mopt-btn', 'Cancel');
         cancelBtn.addEventListener('click', shell.close);
         foot.appendChild(cancelBtn);
@@ -524,9 +527,78 @@
             + 'what they produced, and compares the picture against the source. Takes about a minute.';
         foot.appendChild(measureBtn);
 
+        // The other half of measuring: instead of reporting what a setting does, find the setting.
+        var findBtn = el('button', 'mopt-btn', 'Find the setting…');
+        findBtn.title = 'Encodes short stretches at several quality settings and picks the '
+            + 'smallest file that still looks as close to the source as you ask for. '
+            + 'Takes a few minutes.';
+        foot.appendChild(findBtn);
+
         var startBtn = el('button', 'mopt-btn mopt-btn-primary', 'Start conversion');
         startBtn.disabled = true;
         foot.appendChild(startBtn);
+
+        var TARGETS = [
+            { key: 'Indistinguishable', label: 'Indistinguishable' },
+            { key: 'VeryClose', label: 'Very hard to tell apart' },
+            { key: 'SlightlySofter', label: 'Slightly softer' }
+        ];
+
+        // What the search found, kept so that re-estimating the form it just changed does not
+        // wipe out the one measured answer on the screen.
+        var searchNote = null;
+
+        findBtn.addEventListener('click', function () {
+            if (!req) { return; }
+            targetHost.innerHTML = '';
+
+            var row = el('div', 'mopt-targets');
+            row.appendChild(el('span', 'mopt-targets-label', 'How close to the source?'));
+            TARGETS.forEach(function (t) {
+                var b = el('button', 'mopt-btn', t.label);
+                b.addEventListener('click', function () { runSearch(t); });
+                row.appendChild(b);
+            });
+
+            targetHost.appendChild(row);
+            targetHost.appendChild(el('div', 'mopt-estimate-sub',
+                'Each choice encodes several short stretches of this file and compares them with '
+                + 'the source, which takes a few minutes.'));
+        });
+
+        function runSearch(target) {
+            targetHost.innerHTML = '';
+            findBtn.disabled = true;
+            findBtn.textContent = 'Searching…';
+            estSub.textContent = 'Encoding short stretches at different settings and comparing each '
+                + 'with the source. This takes a few minutes.';
+
+            request('POST', 'MediaOptimizer/Estimate/FindQuality?target=' + encodeURIComponent(target.key), req)
+                .then(function (result) {
+                    if (!result.Quality) {
+                        searchNote = null;
+                        estSub.textContent = result.FailureReason || 'No setting met that target.';
+                        return;
+                    }
+
+                    // Apply it: finding the setting and not using it is not what was asked for.
+                    req.Quality = result.Quality;
+                    req.RateControl = 'ConstantQuality';
+
+                    searchNote = 'Quality ' + result.Quality + ' — ' + result.Metric + ' '
+                        + result.WorstScoreText + ' at its worst across '
+                        + Math.round(result.SecondsConfirmed) + ' seconds of this file, '
+                        + result.Verdict + '. Found by ' + result.Probes + ' sample encodes.'
+                        + (result.Note ? ' ' + result.Note : '');
+
+                    rebuild();
+                })
+                .catch(function (e) { estSub.textContent = 'Could not search: ' + e.message; })
+                .then(function () {
+                    findBtn.disabled = false;
+                    findBtn.textContent = 'Find the setting…';
+                });
+        }
 
         measureBtn.addEventListener('click', function () {
             if (!req) { return; }
@@ -545,6 +617,10 @@
         });
 
         function loadStrategy(key) {
+            // A different preset is a different question; the answer to the last one no longer
+            // describes what is on screen.
+            searchNote = null;
+            targetHost.innerHTML = '';
             formHost.innerHTML = '';
             formHost.appendChild(skeleton(5));
             request('GET', 'MediaOptimizer/ResolveStrategy/' + a.ItemId + '?strategy=' + encodeURIComponent(key))
@@ -625,6 +701,12 @@
             // would quietly imply the whole film encodes like its middle eight seconds.
             if (result.MeasurementNote) {
                 warnHost.insertBefore(warningBox('info', result.MeasurementNote), warnHost.firstChild);
+            }
+
+            // The searched setting is a measurement of this file, so it outlives the modelled
+            // estimate that follows it.
+            if (searchNote) {
+                warnHost.insertBefore(warningBox('info', searchNote), warnHost.firstChild);
             }
 
             startBtn.disabled = blockers > 0;

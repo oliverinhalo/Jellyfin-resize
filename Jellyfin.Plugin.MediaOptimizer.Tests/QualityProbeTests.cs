@@ -292,7 +292,7 @@ public class QualityProbeTests : IDisposable
         var probe = new CountingProbe();
         var encoder = new SampleEncoder(Runner, probe, NullLogger<SampleEncoder>.Instance);
 
-        var measurement = await encoder.MeasureAsync(analysis, plan, _dir, QualityProbe.Vmaf, CancellationToken.None);
+        var measurement = await encoder.MeasureAsync(analysis, plan, _dir, QualityProbe.Vmaf, 0, CancellationToken.None);
 
         Assert.True(measurement.Succeeded, measurement.FailureReason);
         Assert.Equal(0, probe.Comparisons);

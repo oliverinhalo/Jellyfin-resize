@@ -290,7 +290,7 @@ public class StrategyAndEstimateTests
     }
 
     /// <summary>A job store that keeps everything in memory, for tests.</summary>
-    private sealed class InMemoryJobStore : IJobStore
+    internal sealed class InMemoryJobStore : IJobStore
     {
         private readonly List<EncodeJob> _jobs = new List<EncodeJob>();
 

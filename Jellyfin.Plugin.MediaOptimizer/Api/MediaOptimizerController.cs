@@ -37,6 +37,7 @@ public class MediaOptimizerController : ControllerBase
     private readonly IEncodePlanner _planner;
     private readonly ISizeEstimator _estimator;
     private readonly ISampleEncoder _sampler;
+    private readonly IQualitySearch _qualitySearch;
     private readonly IJobStore _store;
     private readonly IJobQueueService _queue;
     private readonly IOutputPolicyService _output;
@@ -52,6 +53,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="planner">Encode planner.</param>
     /// <param name="estimator">Size estimator.</param>
     /// <param name="sampler">Sample encoder, for a measured estimate.</param>
+    /// <param name="qualitySearch">Quality search, for finding a setting by measuring.</param>
     /// <param name="store">Job store.</param>
     /// <param name="queue">Job queue.</param>
     /// <param name="output">Output policy service.</param>
@@ -66,6 +68,7 @@ public class MediaOptimizerController : ControllerBase
         IEncodePlanner planner,
         ISizeEstimator estimator,
         ISampleEncoder sampler,
+        IQualitySearch qualitySearch,
         IJobStore store,
         IJobQueueService queue,
         IOutputPolicyService output,
@@ -80,6 +83,7 @@ public class MediaOptimizerController : ControllerBase
         _planner = planner;
         _estimator = estimator;
         _sampler = sampler;
+        _qualitySearch = qualitySearch;
         _store = store;
         _queue = queue;
         _output = output;
@@ -740,7 +744,7 @@ public class MediaOptimizerController : ControllerBase
             : null;
 
         var measurement = await _sampler
-            .MeasureAsync(analysis, plan, workDirectory, metric, cancellationToken)
+            .MeasureAsync(analysis, plan, workDirectory, metric, 0, cancellationToken)
             .ConfigureAwait(false);
 
         if (!measurement.Succeeded)
@@ -750,6 +754,48 @@ public class MediaOptimizerController : ControllerBase
         }
 
         return Ok(SizeEstimator.FromMeasurement(analysis, measurement, modelled));
+    }
+
+    /// <summary>
+    /// Finds the smallest file that still looks as close to the source as asked for.
+    /// <para>
+    /// The one question this plugin could never answer was "what quality number should I use?", and
+    /// the honest answer was always "it depends on the file". It still does — but the file can now
+    /// be measured, so the question can be turned round: say how close to the source it has to
+    /// look, and the server encodes short stretches at several settings until it finds the smallest
+    /// one that holds. It costs real encoding time, which is why it is a button rather than
+    /// something that happens on its own.
+    /// </para>
+    /// </summary>
+    /// <param name="request">The settings to search within. Its quality is what moves.</param>
+    /// <param name="target">How close to the source the result has to look.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The setting it found, or why it found none.</returns>
+    [HttpPost("Estimate/FindQuality")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<QualitySearchResult>> FindQuality(
+        [FromBody] EncodeRequest request,
+        [FromQuery] QualityTarget target,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var analysis = await _probe.AnalyzeAsync(request.ItemId, cancellationToken).ConfigureAwait(false);
+        if (analysis is null)
+        {
+            return NotFound();
+        }
+
+        var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+        var workDirectory = _output.GetWorkDirectoryFor(analysis.Path);
+
+        var result = await _qualitySearch
+            .SearchAsync(analysis, request, target, caps.QualityMetric, workDirectory, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(result);
     }
 
     /// <summary>Measures a stream's exact bitrate. Reads the whole file, so it is opt-in.</summary>
