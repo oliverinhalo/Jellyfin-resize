@@ -1,5 +1,4 @@
 using System;
-
 using Jellyfin.Plugin.MediaOptimizer.Web;
 using Xunit;
 

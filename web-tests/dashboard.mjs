@@ -70,10 +70,12 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   // Re-stub after the content swap, then inject the page markup and fire pageshow.
   await page.evaluate(({ diag, items, jobs, stats, html }) => {
     window.Dashboard = { alert: () => {}, confirm: () => Promise.resolve(), showLoadingMsg: () => {}, hideLoadingMsg: () => {} };
+    window.__calls = [];
     window.ApiClient = {
       getUrl: p => '/' + p,
       ajax: o => {
         const u = o.url;
+        window.__calls.push((o.type || 'GET') + ' ' + u);
         if (u.includes('Diagnostics')) return Promise.resolve(JSON.stringify(diag));
         if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'] }));
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
@@ -125,6 +127,19 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   check(r.results === 6, `file list renders (${r.results})`);
   check(!r.bodyScrollsSideways, 'page does not scroll sideways');
   check(logs.length === 0, `no page errors${logs.length ? ': ' + logs[0] : ''}`);
+
+  // Jellyfin fires pageshow again every time the user navigates back to this page, reusing the
+  // same element. Handlers bound on each pageshow stacked up, so after two visits one click on
+  // "pause" sent two requests -- pausing and then immediately unpausing.
+  const repeated = await page.evaluate(async () => {
+    document.querySelector('#MediaOptimizerQueuePage').dispatchEvent(new Event('pageshow'));
+    await new Promise(r => setTimeout(r, 300));
+    window.__calls.length = 0;
+    document.querySelector('#moptPause').click();
+    await new Promise(r => setTimeout(r, 300));
+    return window.__calls.filter(c => c.includes('Queue/Pause') || c.includes('Queue/Resume')).length;
+  });
+  check(repeated === 1, `one click still sends one request after re-navigating (sent ${repeated})`);
 
   fs.mkdirSync(path.join(here, 'shots'), { recursive: true });
   await page.screenshot({ path: path.join(here, 'shots', `dashboard-${vp.name}.png`), fullPage: true });

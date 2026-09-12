@@ -508,11 +508,15 @@
         return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function () {});
       }
 
-      page.addEventListener('pageshow', function () {
-        renderDiagnostics();
-        loadFacets();
-        search();
-        refresh();
+      // Jellyfin raises pageshow every time the user navigates back to this page, and the page
+      // element itself is kept. Binding here unconditionally added a second click handler each
+      // time, so after visiting twice "cancel everything pending" asked twice and the pause
+      // button toggled itself straight back off.
+      var bound = false;
+
+      function bindOnce() {
+        if (bound) { return; }
+        bound = true;
 
         page.querySelector('#moptSearch').addEventListener('input', function () {
           clearTimeout(searchTimer);
@@ -554,6 +558,15 @@
               return refresh();
             }).catch(function () {});
         });
+      }
+
+      page.addEventListener('pageshow', function () {
+        bindOnce();
+
+        renderDiagnostics();
+        loadFacets();
+        search();
+        refresh();
 
         clearInterval(timer);
         timer = setInterval(refresh, 2000);

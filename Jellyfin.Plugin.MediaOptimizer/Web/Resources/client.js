@@ -233,20 +233,75 @@
         overlay.setAttribute('aria-label', title || 'Optimize media file');
 
         var dialog = el('div', 'mopt-dialog');
+        dialog.tabIndex = -1;
         overlay.appendChild(dialog);
         root.appendChild(overlay);
         document.body.appendChild(host);
 
+        // Whatever had focus before the dialog opened gets it back afterwards, so closing with
+        // Escape does not dump a keyboard user back at the top of the page.
+        var returnFocusTo = document.activeElement;
+        var closed = false;
+        var cleanups = [];
+
         function close() {
+            if (closed) { return; }
+            closed = true;
+            // Anything the dialog started -- most importantly the progress poll -- has to be
+            // stopped here. Closing with the X, Escape or a click on the backdrop all come
+            // through this one function precisely so nothing can be left running.
+            cleanups.forEach(function (fn) {
+                try { fn(); } catch (e) { warnOnce('cleanup', 'A dialog cleanup failed: ' + e.message); }
+            });
+            cleanups.length = 0;
             document.removeEventListener('keydown', onKey, true);
             if (host.parentNode) { host.parentNode.removeChild(host); }
+            if (returnFocusTo && returnFocusTo.focus) {
+                try { returnFocusTo.focus(); } catch (e) { /* the element may be gone */ }
+            }
         }
-        function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+
+        function focusables() {
+            return Array.prototype.filter.call(
+                root.querySelectorAll('button, select, input, textarea, a[href], [tabindex]'),
+                function (node) { return !node.disabled && node.tabIndex !== -1; });
+        }
+
+        // A modal that lets Tab wander out into the page behind it is not modal for anyone
+        // navigating by keyboard, and the page behind is inert to the mouse but not to Tab.
+        function trap(e) {
+            var items = focusables();
+            if (!items.length) { return; }
+            var first = items[0];
+            var last = items[items.length - 1];
+            var active = root.activeElement;
+            if (e.shiftKey && (active === first || !active)) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && active === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
+
+        function onKey(e) {
+            if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+            if (e.key === 'Tab' && host.parentNode) { trap(e); }
+        }
 
         overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
         document.addEventListener('keydown', onKey, true);
+        dialog.focus();
 
-        return { host: host, root: root, overlay: overlay, dialog: dialog, close: close };
+        return {
+            host: host,
+            root: root,
+            overlay: overlay,
+            dialog: dialog,
+            close: close,
+            /** Registers work to undo when the dialog closes, however it is closed. */
+            onClose: function (fn) { cleanups.push(fn); }
+        };
     }
 
     function buildHeader(shell, title, close) {
@@ -439,8 +494,10 @@
                 b.setAttribute('aria-pressed', 'true');
                 strategy = preset.key;
                 hint.textContent = preset.hint;
-                if (preset.key === 'Custom') { req.Strategy = 'Custom'; rebuild(); }
-                else { loadStrategy(preset.key); }
+                // "Custom" edits whatever is currently loaded, so before anything has loaded it
+                // has to fall back to fetching a starting point rather than reading from null.
+                if (preset.key === 'Custom' && req) { req.Strategy = 'Custom'; rebuild(); }
+                else { loadStrategy(preset.key === 'Custom' ? 'Standard' : preset.key); }
             });
             presetRow.appendChild(b);
         });
@@ -483,6 +540,7 @@
         function setContainer(value) { req.Container = value; rebuild(); }
 
         var estimateTimer = null;
+        shell.onClose(function () { clearTimeout(estimateTimer); });
         function refreshEstimate() {
             clearTimeout(estimateTimer);
             estimateTimer = setTimeout(function () {
@@ -1108,6 +1166,7 @@
 
         var timer = setInterval(poll, 1500);
         function stop() { clearInterval(timer); }
+        shell.onClose(stop);
         poll();
 
         function poll() {
