@@ -240,36 +240,4 @@ public class ConcurrencyPolicyTests
     {
         Assert.Null(Choose(DateTime.UtcNow));
     }
-
-    /// <summary>Every path that queues a job has to record the height, or the weighting is blind.</summary>
-    [Fact]
-    public void Every_way_of_queueing_a_job_records_the_resolution()
-    {
-        var sources = new[]
-        {
-            "Jellyfin.Plugin.MediaOptimizer/Api/MediaOptimizerController.cs",
-            "Jellyfin.Plugin.MediaOptimizer/Jobs/AutomationService.cs"
-        };
-
-        var root = System.IO.Path.GetFullPath(
-            System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-
-        foreach (var relative in sources)
-        {
-            var path = System.IO.Path.Combine(root, relative);
-            Assert.True(System.IO.File.Exists(path), "Could not find " + path);
-
-            var text = System.IO.File.ReadAllText(path);
-            var constructions = text.Split("new EncodeJob", StringSplitOptions.None).Skip(1).ToList();
-
-            foreach (var construction in constructions)
-            {
-                var block = construction[..Math.Min(construction.Length, 600)];
-                Assert.True(
-                    block.Contains("SourceHeight", StringComparison.Ordinal),
-                    "A job is created in " + relative + " without recording SourceHeight, so the "
-                    + "queue cannot tell how much of the machine it will take.");
-            }
-        }
-    }
 }

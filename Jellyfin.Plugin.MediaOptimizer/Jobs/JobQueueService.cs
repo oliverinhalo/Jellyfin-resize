@@ -401,12 +401,6 @@ public class JobQueueService : BackgroundService, IJobQueueService
     }
 
     /// <summary>
-    /// Checks everything that must be true before a single frame is encoded.
-    /// </summary>
-    /// <param name="job">The job.</param>
-    /// <param name="analysis">Fresh analysis of the source.</param>
-    /// <returns>An error message, or null when the job may proceed.</returns>
-    /// <summary>
     /// Runs the planned arguments against half a second of the source, into a throwaway file.
     /// <para>
     /// This is the last line of defence against a plan FFmpeg will not accept. It caught nothing
@@ -538,6 +532,10 @@ public class JobQueueService : BackgroundService, IJobQueueService
         return line.Length > 300 ? line[..300] + "…" : line;
     }
 
+    /// <summary>Checks everything that must be true before a single frame is encoded.</summary>
+    /// <param name="job">The job.</param>
+    /// <param name="analysis">Fresh analysis of the source.</param>
+    /// <returns>An error message, or null when the job may proceed.</returns>
     private string? Preflight(EncodeJob job, FileAnalysis analysis)
     {
         if (!analysis.IsEligible)

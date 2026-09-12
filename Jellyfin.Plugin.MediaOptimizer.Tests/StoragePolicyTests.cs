@@ -163,4 +163,32 @@ public class StoragePolicyTests : IDisposable
         File.WriteAllText(staging, "half a film");
         Assert.Contains(staging, Directory.GetFiles(_dir, SweepTask.WorkFilePattern));
     }
+
+    /// <summary>
+    /// A replacement keeps the file's name and only changes its extension, which is what keeps
+    /// everything Jellyfin finds by name — .nfo metadata, artwork, external subtitles — pointing
+    /// at the right film afterwards. All of those are matched on the name without its extension,
+    /// so the name is the thing that must not move.
+    /// </summary>
+    [Theory]
+    [InlineData("/media/Arrival (2016).mkv", ".mp4", "/media/Arrival (2016).mp4")]
+    [InlineData("/media/Movie.2016.1080p.BluRay.x264.mkv", ".mp4", "/media/Movie.2016.1080p.BluRay.x264.mp4")]
+    [InlineData("/media/Arrival (2016).mkv", ".MKV", "/media/Arrival (2016).mkv")]
+    public void A_replacement_keeps_the_name_and_changes_only_the_extension(
+        string source,
+        string extension,
+        string expected)
+    {
+        Assert.Equal(
+            expected,
+            OutputPolicyService.ReplacementPathFor(source, extension).Replace('\\', '/'));
+    }
+
+    /// <summary>An unchanged container replaces the file in place, byte-for-byte the same path.</summary>
+    [Fact]
+    public void An_unchanged_container_replaces_the_file_itself()
+    {
+        const string path = "/media/Film.mkv";
+        Assert.Same(path, OutputPolicyService.ReplacementPathFor(path, ".mkv"));
+    }
 }

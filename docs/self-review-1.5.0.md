@@ -6,7 +6,7 @@ checked and what was not, and because the useful half of a self-review is the ha
 is still wrong.
 
 **Scope:** ~70 files, ~8,200 lines added. Twenty-four defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 432.
+tests for both. Against the previous release the test suite goes from 174 to 437.
 
 ---
 
@@ -120,7 +120,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **432 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **437 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
@@ -170,6 +170,17 @@ Jellyfin-facing layer left honestly unverified:
   blocking the queue behind it, and one job always starts on an idle server.
 - **The quality measurement described above.**
 
+## Dead weight removed rather than fixed
+
+The same pass turned up one method whose whole purpose rested on a misconception:
+`MoveCompanionFiles` moved `.nfo` files, artwork and external subtitles alongside a replaced media
+file whose extension had changed. Jellyfin matches all of those on the file name *without* its
+extension, so nothing needed moving — and the code never moved anything either, because it began
+by comparing the two names and they were always the same one. Sixty lines, two lookup tables, no
+test, in the path that rewrites people's files. It is gone, and the rule it was guarding — a
+replacement keeps the name and changes only the extension — is now one function with a test,
+including the case that would have caught it: a file called `Movie.2016.1080p.BluRay.x264.mkv`.
+
 ## Risks I am leaving in, on purpose
 
 - **A rule can queue conversions unattended.** That is what it is for. The mitigations are stated
@@ -186,6 +197,12 @@ Jellyfin-facing layer left honestly unverified:
 - **VMAF is a model of human opinion, not a measurement of one.** It is the best available answer
   to "how much worse does this look", and it is reported with its name attached so it can be
   weighed as such.
+- **A viewer who starts watching during a conversion.** Playback is checked before a job starts
+  and the queue can be set to pause entirely while anyone is streaming, but a stream that begins
+  after the encode does is not stopped. The replacement is a rename, so on Linux a viewer already
+  reading the file keeps reading it to the end; on Windows the rename fails and the job fails with
+  it, leaving the original untouched. Neither loses data, so neither is worth the complication of
+  holding a finished encode hostage to somebody's evening.
 - **The injected UI depends on private jellyfin-web selectors** and will break on some future web
   release. It fails closed and says so on the dashboard; the DOM test is the early warning.
 

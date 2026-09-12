@@ -390,18 +390,36 @@ public class OutputPolicyService : IOutputPolicyService
         _logger.LogInformation("[MediaOptimizer] Alternate version written to {Path}", destination);
     }
 
+    /// <summary>
+    /// Where a replacement goes: the source's own path when the container has not changed, and
+    /// otherwise the same folder and the same name with the new extension.
+    /// <para>
+    /// Keeping the name is what keeps everything Jellyfin finds by name working — .nfo metadata,
+    /// artwork, external subtitles, all of which are matched on the file name without its
+    /// extension. An earlier version of this moved those files alongside the new one, which was
+    /// both unnecessary and never actually ran: the name it moved them to was the name they
+    /// already had.
+    /// </para>
+    /// </summary>
+    /// <param name="sourcePath">The file being replaced.</param>
+    /// <param name="outputExtension">The new file's extension, with its dot.</param>
+    /// <returns>The path the replacement takes.</returns>
+    internal static string ReplacementPathFor(string sourcePath, string outputExtension)
+    {
+        if (string.Equals(Path.GetExtension(sourcePath), outputExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            return sourcePath;
+        }
+
+        return Path.Combine(
+            Path.GetDirectoryName(sourcePath) ?? ".",
+            Path.GetFileNameWithoutExtension(sourcePath) + outputExtension);
+    }
+
     private async Task ApplyReplaceAsync(EncodeJob job, string tempOutputPath, CancellationToken cancellationToken)
     {
         var sourcePath = job.SourcePath;
-        var extension = Path.GetExtension(tempOutputPath);
-        var sourceExtension = Path.GetExtension(sourcePath);
-        var sameExtension = string.Equals(extension, sourceExtension, StringComparison.OrdinalIgnoreCase);
-
-        var finalPath = sameExtension
-            ? sourcePath
-            : Path.Combine(
-                Path.GetDirectoryName(sourcePath) ?? ".",
-                Path.GetFileNameWithoutExtension(sourcePath) + extension);
+        var finalPath = ReplacementPathFor(sourcePath, Path.GetExtension(tempOutputPath));
 
         var deleteNow = job.OutputPolicy == OutputPolicy.ReplaceAndDelete;
         var keptPath = deleteNow ? null : BuildKeptOriginalPath(sourcePath);
@@ -455,14 +473,6 @@ public class OutputPolicyService : IOutputPolicyService
             job.OutputPath = finalPath;
             job.OutputSizeBytes = new FileInfo(finalPath).Length;
 
-            if (!sameExtension)
-            {
-                var moved = _reconciler.MoveCompanionFiles(sourcePath, finalPath);
-                if (moved.Count > 0)
-                {
-                    _logger.LogInformation("[MediaOptimizer] Moved {Count} companion file(s) alongside the new media file", moved.Count);
-                }
-            }
         }
         finally
         {
