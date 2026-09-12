@@ -1,7 +1,8 @@
 # Media Optimizer for Jellyfin
 
 Inspect any file in your library from inside Jellyfin and convert it with FFmpeg — resolution,
-codec, bit depth, bitrate, audio tracks — one film at a time or hundreds at once.
+codec, bit depth, bitrate, audio tracks — one film at a time, hundreds at once, or by a rule that
+runs itself overnight.
 
 Nothing is deleted until the new file has been checked, and every claim the interface makes about
 size, speed or quality is measured rather than guessed.
@@ -67,8 +68,9 @@ Optimizer**, which has its own library search and opens the identical conversion
 
 | Where | What |
 |---|---|
-| **Dashboard → Media Optimizer** | Status, library search, bulk selection, the queue and its history |
+| **Dashboard → Media Optimizer** | Status, library search, bulk selection, automatic rules, the queue and its history |
 | **Dashboard → Plugins → Media Optimizer** | Settings: languages, speed, output policy, safety |
+| **Dashboard → Scheduled Tasks** | *Media Optimizer: automatic rules* nightly, and *housekeeping* |
 | **In the web client** | "Optimize file…" in any 3-dot menu, and a tune icon in the player |
 
 ---
@@ -103,6 +105,32 @@ Search or filter your library — by size, resolution, bitrate, watched state, c
 tick the files you want, and apply one preset to all of them. Each file is still analysed
 individually, so the preset adapts to what it actually is, and anything unconvertible is listed as
 skipped with the reason.
+
+### On a schedule
+
+A rule converts matching files by itself, once a night, so a library keeps itself in order without
+anyone picking files by hand. A rule says what it takes — films or episodes, a minimum resolution
+or size, a container, a codec, whether anyone has watched it, how long it has been in the library —
+and what to do with it, and the rest is the ordinary conversion path: jobs in the same queue, one
+at a time, paused while anyone is streaming, and no original touched until the result verifies.
+
+The defaults are deliberately timid, because the failure mode of an automatic rule is not "it did
+nothing":
+
+- **A ceiling per run.** Three files a night by default. A rule cannot queue the library.
+- **A minimum saving.** 15% by default; below that it leaves the file alone. Spending four hours
+  of CPU and a generation of quality to reclaim 3% is not optimising anything.
+- **A grace period.** 30 days by default, so nothing is replaced the evening it arrives — before
+  anyone has watched it once, or noticed that the download was bad.
+- **Never twice.** A file this plugin has already converted is never taken again.
+- **Nothing a person would have been asked about.** Anything the dialog would block is skipped with
+  the same reason. Dolby Vision is the clearest case: accepting the loss of it is a decision for a
+  person, not for a rule running at four in the morning.
+- **Off until you say otherwise.** A new rule is saved switched off, and **Preview** shows exactly
+  what it would take — and why it passed over the rest — without queueing anything.
+
+Rules live on the dashboard page, and run as the scheduled task *Media Optimizer: automatic rules*,
+so you can move them, run them by hand, or switch them off from Jellyfin's own scheduled task page.
 
 ---
 
@@ -239,7 +267,12 @@ The original is not touched until a verified replacement exists on disk.
   Companion files (`.nfo`, artwork, external subtitles) are renamed alongside, and stale scrub
   previews are rebuilt.
 
-Every endpoint that starts, cancels or reverses a conversion requires administrator rights.
+Every endpoint that starts, cancels or reverses a conversion requires administrator rights, and so
+does everything that would reveal where files live on the server, list the queue, or make the
+server read a whole media file. Exactly one endpoint answers without a signed-in user: the client
+script itself, because the `<script>` tag the browser adds carries no credentials. A test asserts
+that surface by reflection, so an endpoint cannot lose its authorisation in a refactor without the
+build failing.
 
 ---
 
@@ -262,6 +295,10 @@ These are properties of Jellyfin and of video compression, not bugs.
   is typically 3–20× larger. The plugin refuses this rather than letting you discover it.
 - **Encoding competes with playback.** Jellyfin gives plugins no resource governor. The queue runs
   one job at a time and pauses while anyone is streaming.
+- **A rule's predicted saving is a model, not a measurement.** It is anchored on the file's own
+  bitrate rather than a generic table, which is why it does not claim that re-encoding a lean HEVC
+  file will shrink it — but it is still a prediction, and that is why a rule's minimum-saving floor
+  exists and why Preview is worth running before switching one on.
 - **It has not been verified inside a live Jellyfin server.** Everything here is built and tested
   against the real 10.11 packages, but plugin loading and the File Transformation handshake are
   verified structurally, not observed running. The status panel is what tells you the truth on

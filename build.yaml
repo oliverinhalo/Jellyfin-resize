@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.4.4.0"
+version: "1.5.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -16,6 +16,41 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.5.0.0
+  - New: automatic rules. A rule says which files it takes — films or episodes, resolution, size,
+    container, codec, whether anyone has watched it, how long it has been in the library — and what
+    to do with them, and a nightly task applies it. Every rule has a ceiling on how many files it
+    may queue in one run and a minimum saving below which it leaves a file alone; a new rule is
+    saved switched off, and "Preview" says exactly what it would take, and why it passed over the
+    rest, without queueing anything.
+  - Fixed a bit-exact conversion being failed and thrown away. The hash comparison paired the Nth
+    lossless track with the Nth audio track of the output, which is only the same track when
+    nothing in front of it was merely copied — so a file with a copied commentary ahead of its
+    lossless track compared two different tracks and reported a mismatch.
+  - Fixed nightly housekeeping being able to delete the output of a job that was still running.
+    The job id in the working file's name is what marks it as in use, and it was being read with a
+    rule that never matched.
+  - Fixed a lossless HDR encode quietly not being lossless. FFmpeg keeps only the last occurrence
+    of an option, and the encoder parameters were being passed twice — once for lossless, once for
+    the HDR signalling. Hardware encodes had the same problem with the encoder preset, making the
+    chosen speed a coin toss.
+  - Fixed "disk reclaimed" reading zero for conversions that replaced and deleted the original —
+    the one setting that frees the space immediately.
+  - Pausing the queue now survives a restart. It was held in memory, so a restart — the thing that
+    follows every upgrade — resumed encoding without telling anyone.
+  - 10-bit files are now recognised as 10-bit even when the container does not say so, instead of
+    defaulting the conversion to 8-bit and losing a bit of picture nobody agreed to lose.
+  - Settings that cannot work are now refused with a sentence naming the setting, rather than
+    reaching FFmpeg and coming back as an error about a flag nobody typed.
+  - Every conversion now gives the muxer enough room to interleave streams whose timestamps drift
+    apart, which was otherwise a job that failed hours in.
+  - The conversion dialog no longer keeps polling the server after it is closed, can be driven from
+    the keyboard, and the dashboard no longer stacks up duplicate button handlers when you navigate
+    back to it.
+  - Security: removed an endpoint that accepted a document from anyone and returned it as HTML.
+    Endpoints that reveal where files live on the server, list the queue, or make the server read a
+    whole media file now require an administrator.
+
   ### 1.4.4.0
   - Fixed the dialog showing a file as having no video and no audio, with a blank duration and
     bitrate, and still offering to convert it. FFprobe's answer was only ever used to fill in
