@@ -306,7 +306,7 @@ public class StrategyAndEstimateTests
 
         public IReadOnlyList<EncodeJob> GetActive() => _jobs.Where(j => j.IsActive).ToList();
 
-        public EncodeJob? TakeNextQueued() => null;
+        public EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null) => null;
 
         public bool HasActiveJobForItem(Guid itemId) => false;
 

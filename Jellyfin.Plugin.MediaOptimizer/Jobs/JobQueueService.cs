@@ -109,19 +109,22 @@ public class JobQueueService : BackgroundService, IJobQueueService
         {
             try
             {
-                if (_running.Count >= Math.Max(1, Config.MaxConcurrentJobs))
-                {
-                    await Task.Delay(IdleDelay, stoppingToken).ConfigureAwait(false);
-                    continue;
-                }
-
                 if (Config.PauseWhilePlaybackActive && IsPlaybackActive())
                 {
                     await Task.Delay(IdleDelay, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
-                var job = _store.TakeNextQueued();
+                // Concurrency is measured in 1080p-equivalents rather than in jobs, so a limit of
+                // two means two ordinary encodes or one 4K one. The heights come from the jobs
+                // themselves, recorded when they were queued.
+                var limit = Config.MaxConcurrentJobs;
+                var runningHeights = _running.Keys
+                    .Select(id => _store.Get(id)?.SourceHeight)
+                    .ToList();
+
+                var job = _store.TakeNextQueued(
+                    candidate => ConcurrencyPolicy.CanStart(runningHeights, candidate.SourceHeight, limit));
                 if (job is null)
                 {
                     await Task.Delay(IdleDelay, stoppingToken).ConfigureAwait(false);

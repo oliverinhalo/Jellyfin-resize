@@ -36,9 +36,14 @@ public interface IJobStore
     /// <returns>Active jobs.</returns>
     IReadOnlyList<EncodeJob> GetActive();
 
-    /// <summary>Takes the next queued job, marking it as claimed.</summary>
-    /// <returns>The next job, or null when the queue is empty or paused.</returns>
-    EncodeJob? TakeNextQueued();
+    /// <summary>Takes the next queued job that the caller is willing to start, marking it as claimed.</summary>
+    /// <param name="canStart">
+    /// Whether a given job may start now, or null to take the first one regardless. A job the
+    /// predicate turns down is left queued and the next is offered, so a small job can run while
+    /// a large one waits for room.
+    /// </param>
+    /// <returns>The next job, or null when the queue is empty, paused, or nothing fits.</returns>
+    EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null);
 
     /// <summary>Returns true when an item already has a queued or running job.</summary>
     /// <param name="itemId">Item id.</param>
@@ -212,7 +217,7 @@ public class JobStore : IJobStore
     }
 
     /// <inheritdoc />
-    public EncodeJob? TakeNextQueued()
+    public EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null)
     {
         if (_paused)
         {
@@ -221,12 +226,14 @@ public class JobStore : IJobStore
 
         lock (_lock)
         {
-            // Lower Priority numbers run first; ties fall back to arrival order.
+            // Lower Priority numbers run first; ties fall back to arrival order. A job the caller
+            // cannot start yet is skipped rather than blocking the ones behind it, so a queue of
+            // 4K films does not stop a 720p episode running in the room that is left.
             var next = _jobs.Values
                 .Where(j => j.Status == JobStatus.Queued)
                 .OrderBy(j => j.Priority)
                 .ThenBy(j => j.QueuedAt)
-                .FirstOrDefault();
+                .FirstOrDefault(j => canStart is null || canStart(j));
 
             if (next is null)
             {

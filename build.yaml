@@ -17,6 +17,11 @@ artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
   ### 1.5.0.0
+  - New: a rule can be confined to one library, so "convert the TV recordings, never touch the
+    films" is something you can actually say.
+  - New: the concurrency limit is now counted in ordinary conversions rather than in jobs. A 4K
+    encode counts as two, because two of them at once is not twice the work, it is a server that
+    stops answering. A smaller job still runs in the room a large one leaves.
   - New: "Measure it" in the conversion dialog. Every other number shown before a conversion is
     modelled; this one encodes three short stretches of the real file with the real settings and
     reports what they actually produced, including how much the samples varied and how long the

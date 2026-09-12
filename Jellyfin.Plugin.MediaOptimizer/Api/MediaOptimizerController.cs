@@ -249,7 +249,30 @@ public class MediaOptimizerController : ControllerBase
             }
         }
 
-        return Ok(new { containers = containers.ToList(), codecs = codecs.ToList() });
+        // The libraries come from the server rather than from the items, so a rule can be confined
+        // to one that happens to be empty today.
+        var libraries = new List<string>();
+        try
+        {
+            libraries = _libraryManager.GetVirtualFolders()
+                .Select(f => f.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+#pragma warning disable CA1031 // A filter list is not worth failing the page over.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not list the server's libraries");
+        }
+
+        return Ok(new
+        {
+            containers = containers.ToList(),
+            codecs = codecs.ToList(),
+            libraries
+        });
     }
 
     /// <summary>
@@ -384,6 +407,7 @@ public class MediaOptimizerController : ControllerBase
                 ItemName = analysis.Name,
                 SourcePath = analysis.Path,
                 SourceSizeBytes = analysis.SizeBytes,
+                SourceHeight = analysis.Video?.Height,
                 Request = encodeRequest,
                 OutputPolicy = encodeRequest.OutputPolicy,
                 Warnings = plan.Warnings,
@@ -768,6 +792,7 @@ public class MediaOptimizerController : ControllerBase
             ItemName = analysis.Name,
             SourcePath = analysis.Path,
             SourceSizeBytes = analysis.SizeBytes,
+            SourceHeight = analysis.Video?.Height,
             Request = request,
             OutputPolicy = request.OutputPolicy,
             Warnings = plan.Warnings,
@@ -886,6 +911,8 @@ public class MediaOptimizerController : ControllerBase
             ItemId = original.ItemId,
             ItemName = original.ItemName,
             SourcePath = original.SourcePath,
+            SourceSizeBytes = original.SourceSizeBytes,
+            SourceHeight = original.SourceHeight,
             Request = original.Request,
             OutputPolicy = original.OutputPolicy
         };

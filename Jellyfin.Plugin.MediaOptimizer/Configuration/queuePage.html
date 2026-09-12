@@ -381,6 +381,7 @@
           }
           fill('#moptContainer', f.containers);
           fill('#moptCodec', f.codecs);
+          libraries = f.libraries || [];
         }).catch(function () { /* filters simply stay at "Any" */ });
       }
 
@@ -423,6 +424,7 @@
 
       // ---- automatic rules ---------------------------------------------------------------
       var rules = [];
+      var libraries = [];
 
       // Describes a rule in the words the user would use, so what it will do is legible without
       // reading seven fields back individually.
@@ -434,6 +436,7 @@
         if (r.MinHeight) { when.push(r.MinHeight + 'p and up'); }
         if (r.MinSizeMb) { when.push('over ' + (r.MinSizeMb >= 1024
           ? (r.MinSizeMb / 1024).toFixed(r.MinSizeMb % 1024 ? 1 : 0) + ' GB' : r.MinSizeMb + ' MB')); }
+        if (r.LibraryName) { when.push('in ' + r.LibraryName); }
         if (r.Container) { when.push(String(r.Container).toUpperCase()); }
         if (r.VideoCodec) { when.push(String(r.VideoCodec).toUpperCase()); }
         if (r.Watched === 'Watched') { when.push('watched by someone'); }
@@ -587,6 +590,7 @@
         ['Kinds', 'Applies to', 'select', [['Everything', 'Films and episodes'], ['MoviesOnly', 'Films only'], ['EpisodesOnly', 'Episodes only']]],
         ['MinHeight', 'Minimum resolution', 'select', [['', 'Any'], ['2160', '4K and up'], ['1440', '1440p and up'], ['1080', '1080p and up'], ['720', '720p and up']]],
         ['MinSizeMb', 'Minimum size', 'select', [['', 'Any'], ['20480', '20 GB and up'], ['10240', '10 GB and up'], ['5120', '5 GB and up'], ['2048', '2 GB and up'], ['1024', '1 GB and up']]],
+        ['LibraryName', 'Library', 'select', [['', 'Every library']]],
         ['Container', 'Container', 'text', null],
         ['VideoCodec', 'Video codec', 'text', null],
         ['Watched', 'Watched', 'select', [['Any', 'Either'], ['Watched', 'Watched by someone'], ['Unwatched', 'Not watched by anyone']]],
@@ -623,6 +627,16 @@
             input = document.createElement('select');
             input.setAttribute('is', 'emby-select');
             input.className = 'emby-select';
+
+            // The libraries are whatever this server has, so they are added when the form is
+            // built rather than written into the field list.
+            if (key === 'LibraryName') {
+              options = options.concat(libraries.map(function (name) { return [name, name]; }));
+              if (draft.LibraryName && libraries.indexOf(draft.LibraryName) < 0) {
+                options.push([draft.LibraryName, draft.LibraryName + ' — no longer on this server']);
+              }
+            }
+
             options.forEach(function (o) {
               var opt = document.createElement('option');
               opt.value = o[0];

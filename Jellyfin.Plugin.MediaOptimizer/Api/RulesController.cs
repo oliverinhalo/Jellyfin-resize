@@ -180,6 +180,11 @@ public class RulesController : ControllerBase
             return "The target height must be a real resolution, between 64 and 4320.";
         }
 
+        if (rule.LibraryName is { Length: > 200 })
+        {
+            return "That library name is too long to be one.";
+        }
+
         if (rule.MinSizeMb is < 0)
         {
             return "The minimum size cannot be negative.";

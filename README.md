@@ -116,8 +116,9 @@ skipped with the reason.
 ### On a schedule
 
 A rule converts matching files by itself, once a night, so a library keeps itself in order without
-anyone picking files by hand. A rule says what it takes — films or episodes, a minimum resolution
-or size, a container, a codec, whether anyone has watched it, how long it has been in the library —
+anyone picking files by hand. A rule says what it takes — films or episodes, one library or all of
+them, a minimum resolution or size, a container, a codec, whether anyone has watched it, how long
+it has been in the library —
 and what to do with it, and the rest is the ordinary conversion path: jobs in the same queue, one
 at a time, paused while anyone is streaming, and no original touched until the result verifies.
 
@@ -315,7 +316,9 @@ These are properties of Jellyfin and of video compression, not bugs.
   the *decoded pixels*, which carry far more entropy than the bitstream they came from — the result
   is typically 3–20× larger. The plugin refuses this rather than letting you discover it.
 - **Encoding competes with playback.** Jellyfin gives plugins no resource governor. The queue runs
-  one job at a time and pauses while anyone is streaming.
+  one job at a time by default and pauses while anyone is streaming. Raising the limit counts in
+  ordinary jobs rather than in job slots — a 4K encode counts as two, because two of them at once
+  is not twice the work, it is a server that stops answering.
 - **A rule's predicted saving is a model, not a measurement.** It is anchored on the file's own
   bitrate rather than a generic table, which is why it does not claim that re-encoding a lean HEVC
   file will shrink it — but it is still a prediction, and that is why a rule's minimum-saving floor

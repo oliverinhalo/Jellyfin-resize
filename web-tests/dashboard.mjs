@@ -44,7 +44,7 @@ const STATS = {
 
 const RULES = [
   { Id: 'r1', Name: 'Big 4K films', Enabled: true, Kinds: 'MoviesOnly', MinHeight: 2160,
-    MinSizeMb: 20480, Watched: 'Watched', AddedMoreThanDaysAgo: 30, Strategy: 'Medium',
+    MinSizeMb: 20480, LibraryName: 'Films', Watched: 'Watched', AddedMoreThanDaysAgo: 30, Strategy: 'Medium',
     MaxItemsPerRun: 3, MinSavingPercent: 15, UseHardware: false,
     LastRunAt: '2026-05-30T03:00:00Z', TotalQueued: 7 },
   { Id: 'r2', Name: 'Old DVD rips', Enabled: false, Kinds: 'Everything', VideoCodec: 'mpeg4',
@@ -77,7 +77,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
       ajax: o => {
         const u = o.url;
         if (u.includes('Diagnostics')) return Promise.resolve(JSON.stringify(diag));
-        if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'] }));
+        if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'], libraries: ['Films', 'TV'] }));
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
         if (u.includes('Statistics')) return Promise.resolve(JSON.stringify(stats));
         if (u.includes('Jobs')) return Promise.resolve(JSON.stringify(jobs));
@@ -97,7 +97,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
         const u = o.url;
         window.__calls.push((o.type || 'GET') + ' ' + u);
         if (u.includes('Diagnostics')) return Promise.resolve(JSON.stringify(diag));
-        if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'] }));
+        if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'], libraries: ['Films', 'TV'] }));
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
         if (u.includes('Statistics')) return Promise.resolve(JSON.stringify(stats));
         if (u.includes('Rules/') && u.includes('Preview')) return Promise.resolve(JSON.stringify(preview));
@@ -193,9 +193,19 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   });
   check(clearedRequiredField === '3', `clearing a required number restores its default (got "${clearedRequiredField}")`);
 
+  // The libraries are whatever this server has, so the editor has to take them from the server
+  // rather than from a hard-coded list.
+  const libraryOptions = await page.evaluate(() => {
+    const boxes = Array.from(document.querySelectorAll('#moptRuleEditor .moptFilter'));
+    const box = boxes.find(f => f.querySelector('label').textContent === 'Library');
+    return box ? Array.from(box.querySelectorAll('option')).map(o => o.textContent) : [];
+  });
+  check(libraryOptions.length === 3 && libraryOptions.includes('Films') && libraryOptions.includes('TV'),
+    `the rule editor offers this server's libraries (${libraryOptions.join(', ')})`);
+
   check(/2 saved, 1 on/.test(rulesView.hint || ''), `rules panel summarises (${rulesView.hint})`);
   check(rulesView.count === 2, `both rules render (${rulesView.count})`);
-  check(/films/.test(rulesView.firstDescription) && /20 GB/.test(rulesView.firstDescription)
+  check(/in Films/.test(rulesView.firstDescription) && /20 GB/.test(rulesView.firstDescription)
     && /at most 3 per run/i.test(rulesView.firstDescription),
     `a rule is described in words (${rulesView.firstDescription})`);
   check(rulesView.secondIsOff, 'a rule that is switched off looks switched off');

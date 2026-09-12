@@ -102,7 +102,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public bool EncodeBesideMedia { get; set; } = true;
 
-    /// <summary>Gets or sets how many encodes may run at once.</summary>
+    /// <summary>
+    /// Gets or sets how much encoding may run at once, counted in ordinary (1080p or smaller)
+    /// jobs. A 4K job counts as two, so a limit of 2 allows two ordinary encodes or one 4K one —
+    /// two 4K encodes at once is not twice the work, it is a server that stops responding. One
+    /// job always starts on an idle server whatever it weighs.
+    /// </summary>
     public int MaxConcurrentJobs { get; set; } = 1;
 
     /// <summary>Gets or sets a value indicating whether the queue pauses while anyone is streaming.</summary>

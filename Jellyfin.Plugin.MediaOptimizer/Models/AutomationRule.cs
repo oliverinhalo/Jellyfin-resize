@@ -52,6 +52,12 @@ public class AutomationRule
     /// <summary>Gets or sets a video codec the file must use, or null for any.</summary>
     public string? VideoCodec { get; set; }
 
+    /// <summary>
+    /// Gets or sets the library the rule is confined to, by its name in Jellyfin, or null for
+    /// every library. This is how "convert the TV recordings but never touch the films" is said.
+    /// </summary>
+    public string? LibraryName { get; set; }
+
     /// <summary>Gets or sets the watched-state requirement. "Watched" means watched by anyone.</summary>
     public WatchedFilter Watched { get; set; } = WatchedFilter.Any;
 
@@ -117,6 +123,9 @@ public class RuleCandidate
 
     /// <summary>Gets or sets the video codec.</summary>
     public string? VideoCodec { get; set; }
+
+    /// <summary>Gets or sets the library the file sits in, when it could be determined.</summary>
+    public string? LibraryName { get; set; }
 
     /// <summary>Gets or sets the video height in pixels.</summary>
     public int? Height { get; set; }

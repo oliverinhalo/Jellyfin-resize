@@ -179,7 +179,12 @@
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="MaxConcurrentJobs">Concurrent conversions</label>
             <input is="emby-input" type="number" id="MaxConcurrentJobs" name="MaxConcurrentJobs" min="1" max="8" />
-            <div class="fieldDescription">Keep this at 1 unless the server does nothing else. Encoding competes with live transcoding.</div>
+            <div class="fieldDescription">
+              Counted in ordinary conversions: a 4K job counts as two, so 2 allows either two
+              ordinary encodes or one 4K one. Keep this at 1 unless the server does nothing else —
+              encoding competes with live transcoding. One job always starts on an idle server,
+              whatever it weighs.
+            </div>
           </div>
 
           <label class="checkboxContainer">

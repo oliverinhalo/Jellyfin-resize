@@ -132,7 +132,7 @@ public class AutomationServiceTests
 
         public IReadOnlyList<EncodeJob> GetActive() => Jobs.Where(j => j.IsActive).ToList();
 
-        public EncodeJob? TakeNextQueued() => null;
+        public EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null) => null;
 
         public bool HasActiveJobForItem(Guid itemId) => Jobs.Any(j => j.ItemId == itemId && j.IsActive);
 

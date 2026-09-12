@@ -96,6 +96,21 @@ public static class RuleMatcher
                 $"The rule only takes {rule.VideoCodec!.Trim().ToUpperInvariant()}; this one is {(string.IsNullOrEmpty(candidate.VideoCodec) ? "of an unknown codec" : candidate.VideoCodec.ToUpperInvariant())}."));
         }
 
+        if (!string.IsNullOrWhiteSpace(rule.LibraryName))
+        {
+            if (string.IsNullOrEmpty(candidate.LibraryName))
+            {
+                return RuleDecision.No(FormattableString.Invariant(
+                    $"This file is not in any library the server knows about, and the rule only takes \"{rule.LibraryName.Trim()}\"."));
+            }
+
+            if (!string.Equals(candidate.LibraryName.Trim(), rule.LibraryName.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return RuleDecision.No(FormattableString.Invariant(
+                    $"In \"{candidate.LibraryName}\"; the rule only takes \"{rule.LibraryName.Trim()}\"."));
+            }
+        }
+
         if (rule.Watched == WatchedFilter.Watched && !candidate.IsWatched)
         {
             return RuleDecision.No("Nobody has watched this yet, and the rule only takes watched items.");

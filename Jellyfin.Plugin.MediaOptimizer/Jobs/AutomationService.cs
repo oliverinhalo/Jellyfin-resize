@@ -310,6 +310,7 @@ public class AutomationService : IAutomationService
             ItemName = analysis.Name,
             SourcePath = analysis.Path,
             SourceSizeBytes = analysis.SizeBytes,
+            SourceHeight = analysis.Video?.Height,
             Request = request,
             OutputPolicy = request.OutputPolicy,
             Warnings = plan.Warnings,

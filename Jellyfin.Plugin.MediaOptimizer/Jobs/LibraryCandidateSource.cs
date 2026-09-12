@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -71,6 +72,7 @@ public class LibraryCandidateSource : ILibraryCandidateSource
         var converted = jobs.Where(j => j.Status == JobStatus.Completed).Select(j => j.ItemId).ToHashSet();
 
         var users = SafeUsers();
+        var libraries = SafeLibraries();
         var candidates = new List<RuleCandidate>();
 
         foreach (var item in _libraryManager.GetItemList(query))
@@ -91,6 +93,7 @@ public class LibraryCandidateSource : ILibraryCandidateSource
                 ItemType = item.GetType().Name,
                 Container = Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant(),
                 VideoCodec = video?.Codec,
+                LibraryName = LibraryLocator.NameFor(item.Path, libraries),
                 Height = video?.Height,
                 SizeBytes = SafeSize(item.Path),
                 IsWatched = WatchedByAnyone(item, users),
@@ -101,6 +104,30 @@ public class LibraryCandidateSource : ILibraryCandidateSource
         }
 
         return candidates;
+    }
+
+    /// <summary>
+    /// Reads the server's libraries as name-and-folders pairs. A library the plugin cannot read
+    /// simply means no rule can be confined to it, which is a filter that matches nothing rather
+    /// than a rule that runs over everything.
+    /// </summary>
+    /// <returns>The libraries, or an empty list.</returns>
+    private IReadOnlyList<LibraryLocation> SafeLibraries()
+    {
+        try
+        {
+            return _libraryManager.GetVirtualFolders()
+                .Select(f => new LibraryLocation(f.Name ?? string.Empty, f.Locations ?? []))
+                .Where(l => !string.IsNullOrEmpty(l.Name))
+                .ToList();
+        }
+#pragma warning disable CA1031 // A library list we cannot read must not abandon the run.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not read the server's libraries; rules confined to one will match nothing");
+            return Array.Empty<LibraryLocation>();
+        }
     }
 
     private IReadOnlyList<Jellyfin.Database.Implementations.Entities.User> SafeUsers()

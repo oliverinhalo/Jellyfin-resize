@@ -74,6 +74,13 @@ public class EncodeJob
     /// <summary>Gets or sets when the job finished.</summary>
     public DateTime? FinishedAt { get; set; }
 
+    /// <summary>
+    /// Gets or sets the source video height, recorded when the job was created. The queue uses it
+    /// to decide what else may run alongside: two 4K encodes are not two jobs, they are a server
+    /// that has stopped responding.
+    /// </summary>
+    public int? SourceHeight { get; set; }
+
     /// <summary>Gets or sets the source size in bytes.</summary>
     public long? SourceSizeBytes { get; set; }
 
