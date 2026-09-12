@@ -187,6 +187,16 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool RegenerateTrickplayAfterReplace { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether a finished conversion is written to Jellyfin's
+    /// activity feed. On by default: the plugin's own history is not somewhere anyone keeps open,
+    /// and a conversion that replaced a file should leave a trace where a person will find it.
+    /// </summary>
+    public bool NotifyOnCompletion { get; set; } = true;
+
+    /// <summary>Gets or sets a value indicating whether failures are written to the activity feed.</summary>
+    public bool NotifyOnFailure { get; set; } = true;
+
+    /// <summary>
     /// Gets or sets the automatic rules. Empty by default, and every rule starts switched off:
     /// nothing in this plugin converts anything until somebody has said so explicitly.
     /// </summary>

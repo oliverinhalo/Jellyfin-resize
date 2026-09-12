@@ -37,6 +37,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
     private readonly IFfmpegRunner _runner;
     private readonly IVerificationService _verifier;
     private readonly IOutputPolicyService _output;
+    private readonly IJobNotifier _notifier;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<JobQueueService> _logger;
 
@@ -50,6 +51,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
     /// <param name="runner">FFmpeg runner.</param>
     /// <param name="verifier">Verification service.</param>
     /// <param name="output">Output policy service.</param>
+    /// <param name="notifier">Writes finished jobs to Jellyfin's activity feed.</param>
     /// <param name="sessionManager">Session manager, for playback-aware pausing.</param>
     /// <param name="logger">Logger.</param>
     public JobQueueService(
@@ -60,6 +62,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
         IFfmpegRunner runner,
         IVerificationService verifier,
         IOutputPolicyService output,
+        IJobNotifier notifier,
         ISessionManager sessionManager,
         ILogger<JobQueueService> logger)
     {
@@ -70,6 +73,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
         _runner = runner;
         _verifier = verifier;
         _output = output;
+        _notifier = notifier;
         _sessionManager = sessionManager;
         _logger = logger;
     }
@@ -162,7 +166,34 @@ public class JobQueueService : BackgroundService, IJobQueueService
         _logger.LogInformation("[MediaOptimizer] Job queue worker stopped");
     }
 
+    /// <summary>
+    /// Runs one job and then reports how it ended, exactly once and whichever way it ended. The
+    /// reporting lives out here rather than at each of the half-dozen places a job can stop,
+    /// because a path that forgets to report is a conversion that silently rewrote a file.
+    /// </summary>
+    /// <param name="job">The job.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task.</returns>
     private async Task RunJobAsync(EncodeJob job, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RunJobCoreAsync(job, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (job.Status == JobStatus.Completed)
+            {
+                await _notifier.NotifyCompletedAsync(job, CancellationToken.None).ConfigureAwait(false);
+            }
+            else if (job.Status == JobStatus.Failed)
+            {
+                await _notifier.NotifyFailedAsync(job, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task RunJobCoreAsync(EncodeJob job, CancellationToken cancellationToken)
     {
         var tempPath = string.Empty;
 
@@ -229,6 +260,18 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 plan = await _planner
                     .PlanAsync(analysis, job.Request, tempPath, cancellationToken)
                     .ConfigureAwait(false);
+
+                // The second plan is the one that will run, so it is the one the job has to
+                // describe. Keeping the first plan's warnings would have the dashboard explaining
+                // a conversion that is not the one happening.
+                job.Warnings = plan.Warnings;
+                job.IsLossless = plan.IsLossless;
+
+                if (!plan.IsRunnable)
+                {
+                    Fail(job, plan.Warnings.First(w => w.Level == WarningLevel.Blocker).Message);
+                    return;
+                }
             }
 
             var estimate = _estimator.Estimate(analysis, job.Request, plan);

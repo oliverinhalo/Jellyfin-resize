@@ -25,6 +25,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<LibraryReconciler>();
         serviceCollection.AddSingleton<ILibraryReconciler>(sp => sp.GetRequiredService<LibraryReconciler>());
         serviceCollection.AddSingleton<IVerificationService, VerificationService>();
+        serviceCollection.AddSingleton<IJobNotifier, ActivityNotifier>();
         serviceCollection.AddSingleton<IOutputPolicyService, OutputPolicyService>();
 
         serviceCollection.AddSingleton<IJobStore, JobStore>();

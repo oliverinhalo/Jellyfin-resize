@@ -249,7 +249,28 @@
             <input is="emby-checkbox" type="checkbox" id="AllowNonAdminAnalysis" name="AllowNonAdminAnalysis" />
             <span>Let non-admin users open the read-only file information view</span>
           </label>
-          <div class="fieldDescription">Starting, cancelling and reverting conversions always requires an administrator.</div>
+          <div class="fieldDescription">
+            Starting, cancelling and reverting conversions always requires an administrator, and so
+            does anything that reveals where files live on the server.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="NotifyOnCompletion" name="NotifyOnCompletion" />
+            <span>Record finished conversions in Jellyfin's activity feed</span>
+          </label>
+          <div class="fieldDescription">
+            Dashboard → Activity. The entry says what the file went from and to, how much was
+            freed, and until when the original can be put back.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="NotifyOnFailure" name="NotifyOnFailure" />
+            <span>Record failed conversions in the activity feed</span>
+          </label>
+          <div class="fieldDescription">
+            A failed conversion never modifies the original, but it is worth knowing about — the
+            usual causes are a full disk or an FFmpeg build missing a codec.
+          </div>
 
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="JobHistoryLimit">Jobs kept in history</label>
@@ -286,7 +307,7 @@
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
         'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
         'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace',
-        'KeepOriginalsBesideMedia', 'EncodeBesideMedia'];
+        'KeepOriginalsBesideMedia', 'EncodeBesideMedia', 'NotifyOnCompletion', 'NotifyOnFailure'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
         Dashboard.showLoadingMsg();

@@ -181,7 +181,9 @@ whole-file copy, and putting it back equally instant.
 | **Keep the original** | Writes a new file alongside, or adds it as another version. |
 
 Every replacement is appended to `replacements.log` in the plugin data folder, so there is a
-readable trail independent of the plugin's own history.
+readable trail independent of the plugin's own history, and each finished or failed conversion
+writes a line to **Dashboard → Activity** — what the file went from and to, how much was freed, and
+until when the original can be put back. Both can be switched off in the settings.
 
 ---
 
