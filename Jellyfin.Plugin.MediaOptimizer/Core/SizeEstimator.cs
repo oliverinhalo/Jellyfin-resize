@@ -112,14 +112,19 @@ public class SizeEstimator : ISizeEstimator
 
         if (result.QualityScore is not null && measurement.WorstQualityScore is not null)
         {
+            // A verdict each, next to the number it belongs to. One verdict sitting after both
+            // numbers reads as a description of whichever the eye lands on -- and the two can be
+            // genuinely different answers: "indistinguishable" on average and "noticeably softer"
+            // on the worst sample is exactly the case somebody needs to see.
             result.MeasurementNote += string.Format(
                 CultureInfo.InvariantCulture,
-                " Picture quality was compared frame by frame against the source: {0} {1} on average, "
-                + "{2} at its worst — {3}.",
+                " Picture quality was compared frame by frame against the source: {0} {1} on average "
+                + "({2}), {3} at its worst ({4}).",
                 result.QualityMetric,
                 result.QualityScoreText,
+                result.QualityVerdict,
                 QualityProbe.FormatScore(result.QualityMetric!, measurement.WorstQualityScore.Value),
-                result.QualityVerdict);
+                QualityProbe.Describe(result.QualityMetric!, measurement.WorstQualityScore.Value));
         }
 
         return result;

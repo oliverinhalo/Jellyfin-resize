@@ -32,6 +32,10 @@ public static class LosslessAnalyzer
         "pcm_f32le", "pcm_f64le", "pcm_bluray", "pcm_dvd", "pcm_s24daud"
     };
 
+    // Profiles are punctuated inconsistently between ffprobe, Jellyfin and the tools that wrote
+    // the file, so anything that is not a letter or a digit is treated as a word break.
+    private static readonly char[] Separators = [' ', '-', '_', '+', '/', ',', ':', '(', ')', '.', '\t'];
+
     /// <summary>Returns true when the video codec reconstructs its input exactly.</summary>
     /// <param name="codec">Codec name.</param>
     /// <returns>True for mathematically lossless video codecs.</returns>
@@ -59,9 +63,36 @@ public static class LosslessAnalyzer
 
         if (codec.Equals("dts", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(profile))
         {
-            // "DTS-HD MA" and "DTS-HD Master Audio" both appear in the wild.
-            return profile.Contains("MA", StringComparison.OrdinalIgnoreCase)
+            // "DTS-HD MA" and "DTS-HD Master Audio" both appear in the wild, so both count -- but
+            // "MA" has to be a word of its own. Searching for the two letters anywhere in the
+            // profile also matches "DTS-ES Matrix", which is lossy: the plugin would then call a
+            // conversion of it bit-exact and predict the result at 85% of the source, when
+            // re-encoding a lossy track to FLAC makes it several times larger.
+            return HasWord(profile, "MA")
                 || profile.Contains("Master Audio", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether a word appears in a profile string on its own, rather than as the start of a
+    /// longer word. Profiles are punctuated inconsistently — "DTS-HD MA", "dts_hd_ma",
+    /// "DTS-HD MA + DTS:X" — so anything that is not a letter or a digit separates words.
+    /// </summary>
+    /// <param name="text">The profile.</param>
+    /// <param name="word">The word to look for.</param>
+    /// <returns>Whether it is there as a whole word.</returns>
+    internal static bool HasWord(string text, string word)
+    {
+        foreach (var token in text.Split(
+            Separators,
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Equals(word, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
         }
 
         return false;

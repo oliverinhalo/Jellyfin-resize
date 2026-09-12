@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-four defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 437.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-six defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 443.
 
 ---
 
@@ -51,8 +51,12 @@ tests for both. Against the previous release the test suite goes from 174 to 437
 
 | 14 | Verification never checked that the output actually contained the streams the plan mapped — while the setting that governs the deep scan said in so many words that "the streams are all present" was one of the cheap checks that "already run every time". It was not a check at all. | This is the one failure the other checks cannot see. An encoder or muxer that drops a track it could not write and still exits zero produces a file that parses and runs for exactly the right length, missing one audio track — and the next thing the queue does is replace the user's only copy with it. The plan now records what it maps, verification counts what came out, and a shortfall fails the job with the missing track named. The regression test asserts both halves: that the old checks passed that file, and that the new one does not. |
 
-Rows 11 to 13 are the security pass's; row 14 came from a fifth pass over the code that
-verification and the queue actually run, reading for what a check claims versus what it does. The
+| 15 | "DTS-HD MA" was recognised by looking for the letters "MA" anywhere in the stream profile — which also matches "DTS-ES Matrix", a lossy format. | The plugin would have called a conversion of that track bit-exact and predicted the output at 85% of the source, when re-encoding a lossy track to FLAC makes it several times larger. "MA" now has to be a word of its own, and the test covers the profiles that actually turn up: DTS-ES, DTS-ES Matrix, DTS Express, DTS-HD HRA, DTS-HD MA + DTS:X, and the lower-case spellings. |
+| 16 | The measured quality reported one verdict for two numbers: "VMAF 97.5 on average, 84.0 at its worst — indistinguishable from the source". The words described the average and sat next to the worst. | 84 is not indistinguishable from anything; it is "noticeably softer on detailed scenes", which is exactly the case somebody needs to see rather than have averaged away. Each number now carries its own verdict. |
+
+Rows 11 to 13 are the security pass's; rows 14 to 16 came from a fifth pass over the code that
+verification, the queue and the estimate actually run, reading for the gap between what something
+claims and what it does. The
 first ten came from reading the plugin end to end.
 
 Also in that first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
@@ -120,7 +124,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **437 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **443 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared

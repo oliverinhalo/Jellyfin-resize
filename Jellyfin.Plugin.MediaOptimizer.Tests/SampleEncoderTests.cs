@@ -196,6 +196,48 @@ public class SampleEncoderTests : IDisposable
 
         Assert.Empty(Directory.GetFiles(_dir));
     }
+
+    /// <summary>
+    /// Three samples of a film can disagree, and when they do the honest report says so twice:
+    /// each number with its own verdict. One verdict sitting after both numbers reads as a
+    /// description of whichever the eye lands on, and "indistinguishable on average, noticeably
+    /// softer at its worst" is precisely the case somebody needs to see rather than have averaged
+    /// away.
+    /// </summary>
+    [Fact]
+    public void A_measured_quality_reports_the_worst_sample_with_its_own_verdict()
+    {
+        var analysis = new FileAnalysis
+        {
+            ItemId = Guid.NewGuid(),
+            Name = "A Film",
+            Path = "/media/A Film.mkv",
+            SizeBytes = 10L * 1024 * 1024 * 1024,
+            DurationSeconds = 7200d
+        };
+
+        var measurement = new SampleMeasurement
+        {
+            Samples = 3,
+            SampledSeconds = 24d,
+            BytesPerSecond = 500_000d,
+            LowBytesPerSecond = 450_000d,
+            HighBytesPerSecond = 560_000d,
+            QualityMetric = QualityProbe.Vmaf,
+            QualityScore = 97.5d,
+            WorstQualityScore = 84d
+        };
+
+        var modelled = new EstimateResult { CurrentSizeBytes = analysis.SizeBytes!.Value };
+        var result = SizeEstimator.FromMeasurement(analysis, measurement, modelled);
+
+        Assert.Equal(EstimateConfidence.Measured, result.Confidence);
+        Assert.NotNull(result.MeasurementNote);
+
+        // Both numbers, and the verdict that belongs to each of them.
+        Assert.Contains("97.5 on average (indistinguishable from the source)", result.MeasurementNote!, StringComparison.Ordinal);
+        Assert.Contains("84.0 at its worst (noticeably softer on detailed scenes)", result.MeasurementNote!, StringComparison.Ordinal);
+    }
 }
 
 /// <summary>Extension used only by the tests above, to find an argument by name.</summary>
