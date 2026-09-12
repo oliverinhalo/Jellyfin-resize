@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** 59 files, ~6,200 lines added. Fifteen defect fixes, four features, and the tests for
-both. Against the previous release the test suite goes from 174 to 319.
+**Scope:** ~70 files, ~7,500 lines added. Seventeen defect fixes, seven features, and the tests for
+both. Against the previous release the test suite goes from 174 to 372.
 
 ---
 
@@ -44,6 +44,11 @@ any signed-in user; 10-bit files whose container omits the depth were being conv
 nonsensical settings reached FFmpeg instead of being refused with a sentence; and no plan gave the
 muxer enough queue to interleave streams whose timestamps drift apart.
 
+| 10 | FFmpeg's last line of output was sometimes lost: the runner waited for the process and collected output through the completion events, which return before what is still in flight has been delivered. | With ffmpeg the last line *is* the answer — the hash a lossless check compares, the reason a job failed, a measured score. A harness that ran one command 25 times lost it once or twice a run, which is exactly the frequency that gets written off as "flaky" for years. Both pipes are now read to the end and those reads awaited; 100 consecutive runs, no losses. |
+
+Found while building the quality measurement, which is the only reason it was found at all: a
+missing number is visible in a way a slightly truncated error message is not.
+
 ---
 
 ## Defects found in my own work on this branch
@@ -70,18 +75,28 @@ the part of a self-review that is actually worth reading.
 6. **The measured encode speed divided successful seconds by all-attempts time**, so one failed
    sample reported the job as three times slower than it is — under a label reading "measured",
    which is the exact failure mode the sampled estimate exists to avoid.
+7. **The first quality-comparison filter graph deadlocked ffmpeg.** It used `scale2ref`, and on
+   ffmpeg 7 that hangs — not fails, hangs — often enough to appear within fifteen runs. Inside the
+   plugin that would have been a stuck queue rather than a missing number. It is now an ordinary
+   scale with the dimensions passed in, both inputs cut to the same length, and `shortest` set;
+   there is a hard timeout underneath it regardless.
+8. **"Try again" built a job without its own resolution or size**, which the new
+   concurrency weighting then read as "unknown, assume expensive". Found by writing the test that
+   every path queueing a job records what it will cost.
 
-Each has a regression test.
+Each has a regression test. Two of them — the lost output line and the deadlock — are only visible
+under repetition, so their tests repeat.
 
 ---
 
 ## What is verified, and how
 
-- **319 tests**, none skipped when ffmpeg is present. The suite includes 13 that drive a real
+- **372 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, and the sampled estimate being
-  compared against a full encode of the same file.
+  compared against a full encode of the same file, and a worse encode actually scoring worse on
+  VMAF than a better one.
 - **Six browser tests** in real Chromium: the injected UI grafting onto real jellyfin-web markup,
   the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px and
   1280px, the dialog's teardown, and the dashboard's rules panel.
@@ -111,6 +126,18 @@ This is the honest part, and it has not changed in kind since 1.4:
 - **The dashboard status panel is the real signal.** If it disagrees with anything above, it is
   right.
 
+## Added after this review was first written
+
+Three things, each with the same treatment — tests over plain data for the decisions, and the
+Jellyfin-facing layer left honestly unverified:
+
+- **A rule can be confined to one library.** The library is worked out from the file's path against
+  the folders Jellyfin says each library is made of, so what a rule means is checkable by hand.
+- **Concurrency is counted in ordinary jobs rather than in job slots.** A 4K encode counts as two,
+  because two at once is not twice the work; a job that does not fit is skipped rather than
+  blocking the queue behind it, and one job always starts on an idle server.
+- **The quality measurement described above.**
+
 ## Risks I am leaving in, on purpose
 
 - **A rule can queue conversions unattended.** That is what it is for. The mitigations are stated
@@ -122,14 +149,19 @@ This is the honest part, and it has not changed in kind since 1.4:
   no probing, so a whole library can be ranked in one page load. It is shown with a "≈" and its
   basis, and the per-file estimate is the better number — "Measure it" is the true one.
 - **Three eight-second samples cannot represent a whole film.** The spread between them is reported
-  rather than averaged away for exactly that reason.
+  rather than averaged away for exactly that reason, and the quality score reports its worst sample
+  alongside its average.
+- **VMAF is a model of human opinion, not a measurement of one.** It is the best available answer
+  to "how much worse does this look", and it is reported with its name attached so it can be
+  weighed as such.
 - **The injected UI depends on private jellyfin-web selectors** and will break on some future web
   release. It fails closed and says so on the dashboard; the DOM test is the early warning.
 
 ## What I would do next
 
-1. Scope a rule to one library — the last real gap between rules and "per-library defaults".
-2. Concurrency by resource: two 1080p jobs or one 4K, rather than a flat count.
-3. Reordering rules in the dashboard; they apply in list order and there is no way to change it.
-4. A quality number to go with the size number — VMAF or SSIM on the sampled segments — so "how
-   much worse does it look?" stops being answered with a preset name.
+1. Reordering rules in the dashboard; they apply in list order and there is no way to change it.
+2. Per-title encoder tuning: the settings that suit animation are not the ones that suit film
+   grain, and the plugin currently offers one answer for both.
+3. Use the measured quality to *choose* settings rather than only to report them — "find me the
+   smallest file that still scores 95" is a search the sampler could run.
+4. Dolby Vision via `dovi_tool`, which is the last thing the plugin refuses outright.
