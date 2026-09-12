@@ -7,7 +7,7 @@ is still wrong.
 
 **Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, ten features,
 and the tests for both. Against the previous release the test suite goes from 174 to 457, and the
-browser suites from three to seven.
+browser suites from three to eight.
 
 ---
 
@@ -150,7 +150,7 @@ under repetition, so their tests repeat.
   better one, the quality search's answer measuring at or above the target it was given, every
   content-tuning name being one the real encoder accepts, and an output that lost a track being
   refused while a complete one is not.
-- **Seven browser suites**, most in real Chromium: the injected UI grafting onto real jellyfin-web
+- **Eight browser suites**, most in real Chromium: the injected UI grafting onto real jellyfin-web
   markup, the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px
   and 1280px, the dialog's teardown, the dashboard's rules panel and its reordering, the searched
   quality setting reaching the form rather than only the screen, weak estimates being labelled as

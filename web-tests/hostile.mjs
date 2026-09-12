@@ -13,6 +13,7 @@ const HOSTILE = [
   ['display overridden', '.mopt-body { display: block !important; } .mopt-pane { position: absolute; top: 0; }']
 ];
 
+let failures = 0;
 const browser = await launchChromium();
 for (const [label, css] of HOSTILE) {
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 } });
@@ -48,7 +49,16 @@ for (const [label, css] of HOSTILE) {
     const a = p[0].getBoundingClientRect(), b = p[1].getBoundingClientRect();
     return { overlap: !(a.right<=b.left+1||b.right<=a.left+1||a.bottom<=b.top+1||b.bottom<=a.top+1) };
   });
-  console.log(`${r.overlap ? 'BROKEN ' : 'ok     '} ${label}`);
+  // Counted, not just printed. This suite used to report "BROKEN" and exit zero, so the one test
+  // that proves the dialog survives jellyfin-web's stylesheet could not fail the build. A dialog
+  // that did not render its two panes at all is just as broken as two that overlap.
+  const broken = r.overlap === true || (r.panes !== undefined && r.panes < 2);
+  if (broken) { failures++; }
+  console.log(`${broken ? 'BROKEN ' : 'ok     '} ${label}`);
   await ctx.close();
 }
 await browser.close();
+console.log(failures === 0
+  ? '\nAll hostile-CSS checks passed.'
+  : `\n${failures} hostile-CSS check(s) failed.`);
+process.exit(failures === 0 ? 0 : 1);
