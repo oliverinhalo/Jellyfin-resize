@@ -1362,10 +1362,25 @@
             'This runs on the server. You can close this — progress stays visible under ' +
             'Dashboard → Media Optimizer, and the original is not touched until the result passes verification.'));
 
+        // Its own line, because the poll below rewrites the status line every 1.5 seconds and
+        // would wipe anything written there.
+        var note = warningBox('blocker', '');
+        note.style.display = 'none';
+        pane.appendChild(note);
+
         var cancelBtn = el('button', 'mopt-btn mopt-btn-danger', 'Cancel conversion');
         cancelBtn.addEventListener('click', function () {
             cancelBtn.disabled = true;
-            request('DELETE', 'MediaOptimizer/Jobs/' + job.Id).catch(function () {});
+            note.style.display = 'none';
+            request('DELETE', 'MediaOptimizer/Jobs/' + job.Id).catch(function (e) {
+                // The button going grey was the only feedback this had, so a cancel the server
+                // refused looked exactly like one it accepted — while the encode carried on.
+                cancelBtn.disabled = false;
+                note.firstChild.textContent = 'Could not cancel this conversion: '
+                    + ((e && e.message) || 'the server did not answer')
+                    + '. It is still running.';
+                note.style.display = '';
+            });
         });
         foot.appendChild(cancelBtn);
 
@@ -1378,8 +1393,12 @@
         shell.onClose(stop);
         poll();
 
+        var missedPolls = 0;
+
         function poll() {
             request('GET', 'MediaOptimizer/Jobs/' + job.Id).then(function (j) {
+                missedPolls = 0;
+                note.style.display = 'none';
                 var pct = Math.round(j.ProgressPercent || 0);
                 fill.style.width = pct + '%';
                 status.textContent = ({
@@ -1403,7 +1422,20 @@
                     stop();
                     cancelBtn.style.display = 'none';
                 }
-            }).catch(function () { /* transient; the next tick retries */ });
+            }).catch(function (e) {
+                // One failed poll is a hiccup and the next tick retries. Several in a row means
+                // this window no longer knows anything — and a progress bar that has stopped
+                // moving reads as an encode that is still going, which is the wrong answer to be
+                // left with while deciding whether to wait up for it.
+                missedPolls++;
+                if (missedPolls < 3) { return; }
+
+                note.firstChild.textContent = 'This window cannot reach the server to ask how the '
+                    + 'conversion is going' + ((e && e.message) ? ' (' + e.message + ')' : '')
+                    + ', so the progress below has stopped updating. The conversion itself is '
+                    + 'unaffected — Dashboard → Media Optimizer shows the same progress.';
+                note.style.display = '';
+            });
         }
     }
 

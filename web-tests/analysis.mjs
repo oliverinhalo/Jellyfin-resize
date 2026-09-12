@@ -218,6 +218,117 @@ console.log('\n=== a weak estimate says so ===');
     `a file nothing can be predicted from says that too (got: ${none.estimateSub})`);
 }
 
+// --- the progress view when the server stops answering ----------------------------------------
+// A bar that has stopped moving reads as an encode that is still going, and a Cancel button that
+// goes grey reads as a cancel that worked. Both were silent.
+console.log('\n=== the progress view when the server stops answering ===');
+{
+  const converting = JSON.parse(JSON.stringify(RECOVERED));
+  converting.HasActiveJob = true;
+  converting.ActiveJobId = 'job-1';
+
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.setContent('<!doctype html><html><head></head><body></body></html>');
+
+  await page.evaluate(({ analysis, caps }) => {
+    window.__failPoll = false;
+    window.__failCancel = false;
+    window.ApiClient = {
+      getUrl: p => '/' + p, deviceId: () => 'dev', serverInfo: () => ({ Id: 's' }),
+      ajax: opts => {
+        const u = opts.url;
+        if (u.includes('Analyze')) { return Promise.resolve(JSON.stringify(analysis)); }
+        if (u.includes('Capabilities')) { return Promise.resolve(JSON.stringify(caps)); }
+        if (u.includes('Jobs/job-1')) {
+          if (opts.type === 'DELETE') {
+            return window.__failCancel
+              ? Promise.reject({ status: 409, statusText: 'Conflict' })
+              : Promise.resolve('{}');
+          }
+
+          return window.__failPoll
+            ? Promise.reject({ status: 502, statusText: 'Bad Gateway' })
+            : Promise.resolve(JSON.stringify({
+              Id: 'job-1', ItemName: 'Kung Fu Panda 4', Status: 'Encoding',
+              ProgressPercent: 43, Speed: 1.8, EtaSeconds: 1800
+            }));
+        }
+
+        return Promise.resolve('{}');
+      }
+    };
+  }, { analysis: converting, caps: CAPS });
+
+  await page.addScriptTag({ content: bundle });
+  await page.waitForFunction(() => window.MediaOptimizer && window.MediaOptimizer.ready, { timeout: 5000 });
+  await page.evaluate(id => window.MediaOptimizer.open(id), ITEM);
+  await page.waitForTimeout(900);
+
+  const running = await page.evaluate(() => {
+    const root = window.MediaOptimizer.shadowRoot();
+    const bar = root.querySelector('.mopt-bar i') || root.querySelector('.mopt-bar > *');
+    const shown = Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+      .filter(n => n.style.display !== 'none');
+    return {
+      progress: bar ? bar.style.width : null,
+      blockers: shown.map(n => n.textContent)
+    };
+  });
+
+  check(/43/.test(running.progress || ''), `the bar shows the progress it was given (${running.progress})`);
+  check(running.blockers.length === 0, 'and says nothing is wrong while the polls are answered');
+
+  // Four ticks at 1.5s, so three consecutive failures have certainly happened.
+  const lost = await page.evaluate(async () => {
+    window.__failPoll = true;
+    await new Promise(r => setTimeout(r, 5200));
+    const root = window.MediaOptimizer.shadowRoot();
+    return Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+      .filter(n => n.style.display !== 'none').map(n => n.textContent).join(' ');
+  });
+
+  check(/cannot reach the server/.test(lost),
+    `a progress view that has lost contact says so (${lost.slice(0, 70)})`);
+  check(/unaffected/.test(lost), 'and says the conversion itself is unaffected');
+  check(/Bad Gateway/.test(lost), 'and quotes what went wrong');
+
+  // And it goes away again when the server comes back, rather than becoming furniture.
+  const recovered = await page.evaluate(async () => {
+    window.__failPoll = false;
+    await new Promise(r => setTimeout(r, 2000));
+    const root = window.MediaOptimizer.shadowRoot();
+    return Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+      .filter(n => n.style.display !== 'none').length;
+  });
+
+  check(recovered === 0, `and takes it back when the server answers again (${recovered} left)`);
+
+  const refused = await page.evaluate(async () => {
+    window.__failCancel = true;
+    const root = window.MediaOptimizer.shadowRoot();
+    const button = Array.from(root.querySelectorAll('.mopt-foot button'))
+      .find(b => /Cancel conversion/.test(b.textContent));
+    button.click();
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      disabled: button.disabled,
+      text: Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+        .filter(n => n.style.display !== 'none').map(n => n.textContent).join(' ')
+    };
+  });
+
+  check(/Could not cancel/.test(refused.text),
+    `a cancel the server refuses says so (${refused.text.slice(0, 70)})`);
+  check(/still running/.test(refused.text), 'and that the conversion is still running');
+  check(refused.disabled === false, 'and the button can be pressed again');
+  check(errors.length === 0, `no page errors${errors.length ? ': ' + errors[0] : ''}`);
+
+  await context.close();
+}
+
 await browser.close();
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} analysis check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

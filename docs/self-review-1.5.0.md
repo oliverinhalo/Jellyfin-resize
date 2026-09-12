@@ -5,7 +5,7 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-five defect fixes, twelve features,
+**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-seven defect fixes, twelve features,
 and the tests for both. Against the previous release the test suite goes from 174 to 463, and the
 browser suites from three to eight.
 
@@ -37,8 +37,12 @@ Six passes, each with a different question, plus one rule that applies to all of
    ten minutes. The capability probe had none either, for want of a seam.
 6. **A failure pass** over every request the two dashboard pages make, asking only: what does the
    person looking at the screen see when this one fails? Not what is logged — what is *shown*.
-   Rows 23 and 24. Three of the four answers were "nothing", which is the specific failure this
-   project's own standard calls out: fail closed and say why.
+   Rows 23 to 26. Most of the answers were "nothing", which is the specific failure this
+   project's own standard calls out: fail closed and say why. The pattern is worth naming, because
+   it is not carelessness: every one of these is a `.catch` that exists — somebody thought about
+   the failure, decided the page should not break, and stopped one step short of the part where
+   the person looking at it is told. Silence is the failure mode of a page that handles its errors
+   tidily.
 
 And throughout: **every regression test was run against the unfixed code first.** A test that
 passes before the fix is not a regression test, and several of the ones written here initially
@@ -74,6 +78,8 @@ did.
 | 22 | An interrupted job was resumed on every restart, for ever, with no limit. | Resuming is right up to the point where the job is what stopped the server. A file or a setting that takes the machine down mid-encode — a hardware encoder wedging a driver, an ffmpeg that exhausts memory — would be requeued on the next boot, take the server down again, and be requeued again: the plugin turning one bad file into a reboot loop with no visible cause. Three interruptions is generous for bad luck; past that the job is held with a message saying so and naming what to try instead, and a person can still retry it by hand. |
 | 23 | The settings page had no rejection handler on either of its two calls to the server. | A save that failed did nothing at all: Jellyfin's loading overlay stayed up until the user navigated away, no message appeared, and the settings were the old ones — so the page after a failed save is indistinguishable from the page after a successful one. Somebody who ticked "verify before replacing" and pressed Save would believe it was on. A failed *load* was worse in a quieter way: the form showed its defaults, which reads as "the settings are back to how they shipped", and saving that page would have written those defaults over everything. Both now say what failed and what it means, and the load warns not to save the page. |
 | 24 | The two panels on the Conversions page — the totals and the queue — swallowed a failed read and left whatever was on screen. | A request that failed and a queue with nothing in it look exactly the same, and this is the page somebody opens to check whether last night's run happened: it would show an empty queue, or worse the stale contents of the last successful read, and say nothing. Both panels now name the failure, and the queue one says that the queue itself is unaffected — this page could not ask about it — because the obvious reading of a queue that has gone blank is that the conversions have gone with it. |
+| 25 | The conversion progress view polled the server every 1.5 seconds and ignored a failed poll entirely. | The bar stopped where it was and the line above it went on reading "Encoding — 43%", which is not a stale number, it is a false statement: it says the encode is running and is 43% through, when the truth is that this window has no idea. Somebody deciding whether to wait up for a conversion would read it exactly the wrong way round. Three consecutive failures now say the window cannot reach the server, that the conversion itself is unaffected, and where the same progress can be seen — and the message goes away again when the polls start being answered, rather than becoming furniture. |
+| 26 | "Cancel conversion" in the dialog, and the three confirmed buttons on the Conversions page — run the rules now, cancel everything pending, delete every original held for undo — all discarded whatever the server said. | Cancel greyed its own button out and stopped there, so a refused cancel looked precisely like an accepted one while the encode carried on. The dashboard's three were worse than silent: they share one `catch` with the confirmation dialog, which rejects when the user says *no*, so "I changed my mind" and "the server refused" had to produce the same outcome — and the outcome chosen was silence for both. "Free up space" deletes every original still held for undo; a failure there looked identical to success, on the only action on the page that cannot be undone. They are now told apart: declining stays silent, and a failure says what did not happen (nothing was cancelled, no space was freed) and what the server said. |
 
 Also in the first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
 navigating away and back one click on "pause queue" sent two requests; endpoints that reveal

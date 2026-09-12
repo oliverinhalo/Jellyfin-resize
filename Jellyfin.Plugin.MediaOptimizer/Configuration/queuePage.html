@@ -236,6 +236,22 @@
         });
       }
 
+      // These buttons all sit behind a confirmation, and Dashboard.confirm rejects when the user
+      // says no — into the same catch as a request that failed. So a declined confirmation and a
+      // server that refused the request looked identical: both silent. Saying no must stay
+      // silent; a failure must not, because "run every rule now" and "delete every original held
+      // for undo" both look exactly like they worked when nothing is said.
+      function failed(sentence) {
+        return function (e) {
+          if (!e || !(e.status || e.statusText || e.message)) { return; }
+
+          Dashboard.alert({
+            title: 'That did not work',
+            message: sentence + ' ' + (e.statusText || e.message || 'The server did not answer.')
+          });
+        };
+      }
+
       function el(tag, cls, text) {
         var n = document.createElement(tag);
         if (cls) { n.className = cls; }
@@ -958,7 +974,7 @@
             .then(function () { return api('POST', 'MediaOptimizer/Rules/Run'); })
             .then(function (result) { showRuleResult(result, false); return loadRules(); })
             .then(refresh)
-            .catch(function () {});
+            .catch(failed('The rules were not run:'));
         });
 
         page.querySelector('#moptPause').addEventListener('click', function (e) {
@@ -971,7 +987,7 @@
           Dashboard.confirm('Cancel every job that has not started yet? Anything already running is left alone.',
             'Cancel pending jobs')
             .then(function () { return api('POST', 'MediaOptimizer/Queue/ClearPending'); })
-            .then(refresh).catch(function () {});
+            .then(refresh).catch(failed('Nothing was cancelled — the pending jobs are still queued:'));
         });
 
         page.querySelector('#moptRelease').addEventListener('click', function () {
@@ -982,7 +998,7 @@
             .then(function (r) {
               Dashboard.alert({ message: 'Released ' + r.released + ' original(s), freeing ' + bytes(r.freedBytes) + '.' });
               return refresh();
-            }).catch(function () {});
+            }).catch(failed('No space was freed — the originals are all still there:'));
         });
       }
 

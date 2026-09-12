@@ -132,6 +132,16 @@ changelog: |
   - The totals and the conversion queue on the Conversions page now say when they could not be
     read. A failed request and an empty queue looked identical, on the one page somebody opens to
     check whether last night's conversions actually ran.
+  - The conversion progress view now says when it has lost contact with the server instead of
+    leaving the bar where it stopped. "Encoding — 43%" that has quietly stopped updating is not a
+    stale number, it is a sentence that is no longer true, and it is what somebody reads when
+    deciding whether to wait up for a conversion. The conversion itself is unaffected, and the
+    message goes away when the server answers again.
+  - A cancel the server refuses now says so, in the dialog and on the dashboard. "Cancel
+    conversion" greyed out its own button and said nothing, so a refused cancel looked exactly
+    like an accepted one while the encode carried on — and on the dashboard, "run the rules now",
+    "cancel everything pending" and "free up space" all discarded whatever the server said.
+    Saying no to the confirmation is still silent; a failure names what did not happen.
 
   ### 1.4.4.0
   - Fixed the dialog showing a file as having no video and no audio, with a blank duration and

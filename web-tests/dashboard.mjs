@@ -94,7 +94,15 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   await page.setContent(await page.evaluate(() => document.documentElement.outerHTML));
   // Re-stub after the content swap, then inject the page markup and fire pageshow.
   await page.evaluate(({ diag, items, jobs, stats, rules, preview, html }) => {
-    window.Dashboard = { alert: () => {}, confirm: () => Promise.resolve(), showLoadingMsg: () => {}, hideLoadingMsg: () => {} };
+    window.__alerts = [];
+    window.Dashboard = {
+      alert: options => { window.__alerts.push(options); },
+      // A declined confirmation rejects, exactly as it does in Jellyfin, which is what makes
+      // "the user said no" and "the request failed" land in the same place.
+      confirm: () => (window.__declineConfirm ? Promise.reject() : Promise.resolve()),
+      showLoadingMsg: () => {},
+      hideLoadingMsg: () => {}
+    };
     window.__calls = [];
     window.ApiClient = {
       getUrl: p => '/' + p,
@@ -108,6 +116,11 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
           return window.__failStats
             ? Promise.reject({ status: 503, statusText: 'Service Unavailable' })
             : Promise.resolve(JSON.stringify(stats));
+        }
+        if (u.includes('Queue/ReleaseQuarantine')) {
+          return window.__failRelease
+            ? Promise.reject({ status: 500, statusText: 'Internal Server Error' })
+            : Promise.resolve(JSON.stringify({ released: 3, freedBytes: 15 * 1024 ** 3 }));
         }
         if (u.endsWith('Rules/Preview')) {
           return Promise.resolve(JSON.stringify({
@@ -391,6 +404,31 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
     document.querySelector('#MediaOptimizerQueuePage').dispatchEvent(new Event('pageshow'));
     await new Promise(r => setTimeout(r, 400));
   });
+
+  // "Free up space" deletes every original held for undo. A failure used to say nothing, so the
+  // page looked exactly as it does when it worked — on the one action here that cannot be undone.
+  const release = await page.evaluate(async () => {
+    window.__failRelease = true;
+    window.__alerts.length = 0;
+    document.querySelector('#moptRelease').click();
+    await new Promise(r => setTimeout(r, 400));
+    const failed = window.__alerts.map(a => (a.title || '') + ' ' + (a.message || '')).join(' ');
+
+    // And the other half of the same catch: saying no to the confirmation is not a failure.
+    window.__declineConfirm = true;
+    window.__alerts.length = 0;
+    document.querySelector('#moptRelease').click();
+    await new Promise(r => setTimeout(r, 400));
+    const declined = window.__alerts.length;
+    window.__declineConfirm = false;
+    window.__failRelease = false;
+    return { failed: failed, declined: declined };
+  });
+
+  check(/No space was freed/.test(release.failed),
+    `a destructive action that fails says so (${release.failed.slice(0, 70)})`);
+  check(/Internal Server Error/.test(release.failed), 'and quotes what the server said');
+  check(release.declined === 0, `and declining the confirmation stays silent (${release.declined} message(s))`);
 
   fs.mkdirSync(path.join(here, 'shots'), { recursive: true });
   await page.screenshot({ path: path.join(here, 'shots', `dashboard-${vp.name}.png`), fullPage: true });
