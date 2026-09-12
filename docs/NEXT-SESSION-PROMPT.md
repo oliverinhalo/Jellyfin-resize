@@ -14,7 +14,7 @@ converts it with FFmpeg — by hand, in bulk, or by saved rules that run on a sc
 measures what it is about to do: the size and the picture quality of a conversion, by encoding
 short stretches of the real file, and it can search the quality scale for the smallest file that
 still meets a stated target. Roughly 14,600 lines of C# (tests included), ~1,450 lines of injected client
-JavaScript, two dashboard pages, **457 tests** and **eight browser suites**.
+JavaScript, two dashboard pages, **462 tests** and **eight browser suites**.
 
 Read `README.md` first, then `docs/self-review-1.5.0.md` — the review is the honest account of what
 is checked, what is not, and the thirty-three defects the last pass through this code found,
@@ -42,14 +42,15 @@ cd web-tests && npm install
 
 ```bash
 dotnet build -c Release          # must be clean: no errors, no warnings
-dotnet test                      # 457 tests, all pass, none skipped when ffmpeg is present
+dotnet test                      # 462 tests, all pass, none skipped when ffmpeg is present
 cd web-tests && npm test         # eight suites: DOM, lifecycle, hostile CSS, dialog, dashboard,
                                  # encoder selection, analysis, settings page
 ./tools/package.sh 1.5.x.0 claude/jellyfin-media-optimizer-92xiw8
 ```
 
-`tools/package.sh` reads the version and changelog out of `build.yaml`. **Never hand-edit
-`manifest.json`** — Jellyfin verifies the MD5 on download, so the zip and manifest must be
+`tools/package.sh` reads the version and changelog out of `build.yaml`, and
+`ReleasePackagingTests` fails the build if the zip, the manifest and the version ever disagree.
+**Never hand-edit `manifest.json`** — Jellyfin verifies the MD5 on download, so the zip and manifest must be
 generated in one step or installs fail with a checksum error. Pass the **default branch** as the
 second argument: that is the URL existing installs watch, not whatever branch you are working on.
 

@@ -6,7 +6,7 @@ checked and what was not, and because the useful half of a self-review is the ha
 is still wrong.
 
 **Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, ten features,
-and the tests for both. Against the previous release the test suite goes from 174 to 457, and the
+and the tests for both. Against the previous release the test suite goes from 174 to 462, and the
 browser suites from three to eight.
 
 ---
@@ -142,7 +142,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **457 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **462 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
@@ -163,6 +163,13 @@ under repetition, so their tests repeat.
   existed. A settings file that will not load is a user losing every rule they wrote.
 - **The authorization surface is asserted by reflection**: every state-changing endpoint requires an
   administrator, exactly one endpoint is anonymous, and no anonymous endpoint answers with HTML.
+- **The release itself is checked**, because a mismatch there is the one failure that reaches every
+  user at once: Jellyfin verifies the MD5 in `manifest.json` against the download and refuses the
+  install if it differs. The manifest's checksum must be the checksum of the zip committed here,
+  its version must be the version `build.yaml` declares, the assembly inside the zip must carry
+  that same version, every entry must point at its own file on one branch, and the changelog must
+  mention the version being shipped. Editing the version without repackaging now fails three
+  tests instead of every install.
 
 ## What is not verified
 
