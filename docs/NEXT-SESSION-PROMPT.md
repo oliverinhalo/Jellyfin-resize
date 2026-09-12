@@ -14,7 +14,7 @@ converts it with FFmpeg — by hand, in bulk, or by saved rules that run on a sc
 measures what it is about to do: the size and the picture quality of a conversion, by encoding
 short stretches of the real file, and it can search the quality scale for the smallest file that
 still meets a stated target. Roughly 14,600 lines of C# (tests included), ~1,450 lines of injected client
-JavaScript, two dashboard pages, **462 tests** and **eight browser suites**.
+JavaScript, two dashboard pages, **463 tests** and **eight browser suites**.
 
 Read `README.md` first, then `docs/self-review-1.5.0.md` — the review is the honest account of what
 is checked, what is not, and the thirty-three defects the last pass through this code found,
@@ -42,7 +42,7 @@ cd web-tests && npm install
 
 ```bash
 dotnet build -c Release          # must be clean: no errors, no warnings
-dotnet test                      # 462 tests, all pass, none skipped when ffmpeg is present
+dotnet test                      # 463 tests, all pass, none skipped when ffmpeg is present
 cd web-tests && npm test         # eight suites: DOM, lifecycle, hostile CSS, dialog, dashboard,
                                  # encoder selection, analysis, settings page
 ./tools/package.sh 1.5.x.0 claude/jellyfin-media-optimizer-92xiw8
@@ -132,10 +132,9 @@ tuning, activity-feed notifications, and the worklist ranked by what there is to
 3. **The rest of per-title tuning**: psy-rd, aq-mode, AV1 grain synthesis. These are numbers, and
    numbers want the search rather than a table: extend the search to them rather than adding
    dropdowns nobody can reason about.
-4. **A dry-run report for a whole library** — what a set of rules would do to everything, as one
-   page, rather than rule by rule.
-5. **Live progress in the injected dialog for a job it did not start**, so opening a file that is
-   already converting shows the encode rather than the form.
+4. **Live progress in the injected dialog for a job it did not start**, so opening a file that is
+   already converting shows the encode rather than the form. The analysis already says whether a
+   job is active; it does not say which job, which is the missing piece.
 
 Pick what is most valuable, say what you chose and why, build it properly with tests, bump the
 version in `build.yaml` and the csproj, repackage, push, and tell me what you could not verify.

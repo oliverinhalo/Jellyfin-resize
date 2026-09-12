@@ -111,6 +111,7 @@
           <div id="moptRules"></div>
           <div class="moptQueueBar">
             <button is="emby-button" type="button" id="moptAddRule" class="raised emby-button">Add a rule</button>
+            <button is="emby-button" type="button" id="moptPreviewRules" class="raised emby-button">Preview tonight's run</button>
             <button is="emby-button" type="button" id="moptRunRules" class="raised emby-button">Run all enabled rules now</button>
           </div>
           <div id="moptRuleEditor"></div>
@@ -593,22 +594,33 @@
         var taken = (result.Items || []).filter(function (i) { return i.Queued; });
         var skipped = (result.Items || []).filter(function (i) { return !i.Queued; });
 
+        // The server's own count, not a count of the rows: the item list carries the near-misses
+        // too and is capped for display, so counting rows would drift from the answer.
+        var count = typeof result.Queued === 'number' ? result.Queued : taken.length;
         host.appendChild(el('div', 'moptStatValue',
           isPreview
-            ? taken.length + ' file(s) would be converted'
-            : taken.length + ' file(s) queued'));
+            ? count + ' file(s) would be converted'
+            : count + ' file(s) queued'));
         host.appendChild(el('div', 'moptStatNote',
           'Looked at ' + result.Considered + ' item(s). ' +
           (result.EstimatedSavingBytes > 0
             ? 'Predicted saving ' + bytes(result.EstimatedSavingBytes) + '.'
             : 'No overall saving predicted.')));
 
+        // With more than one rule in the answer, which rule took a file is the whole point:
+        // they are applied in order and the first one to take a file keeps it.
+        var ruleNames = {};
+        (result.Items || []).forEach(function (i) { if (i.RuleName) { ruleNames[i.RuleName] = true; } });
+        var manyRules = Object.keys(ruleNames).length > 1;
+
         taken.concat(skipped).slice(0, 40).forEach(function (i) {
           var row = el('div', 'moptPreviewRow');
           row.appendChild(el('span', null, i.Name || i.ItemId));
-          row.appendChild(el('span', null, i.Queued
-            ? 'saves about ' + bytes(i.EstimatedSavingBytes)
-            : (i.SkippedReason || 'skipped')));
+          row.appendChild(el('span', null,
+            (manyRules && i.RuleName ? i.RuleName + ' · ' : '') +
+            (i.Queued
+              ? 'saves about ' + bytes(i.EstimatedSavingBytes)
+              : (i.SkippedReason || 'skipped'))));
           host.appendChild(row);
         });
       }
@@ -911,6 +923,21 @@
         page.querySelector('#moptBatch').addEventListener('click', openBatch);
 
         page.querySelector('#moptAddRule').addEventListener('click', function () { openRuleEditor(null); });
+
+        // Previewing one rule answers "what does this rule do". This answers the question that
+        // matters the evening before they first run: what do all of them do to my library.
+        page.querySelector('#moptPreviewRules').addEventListener('click', function () {
+          var host = page.querySelector('#moptRulePreview');
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptStatNote',
+            'Working out what every switched-on rule would take tonight…'));
+          api('POST', 'MediaOptimizer/Rules/Preview')
+            .then(function (result) { showRuleResult(result, true); })
+            .catch(function (e) {
+              host.innerHTML = '';
+              host.appendChild(el('div', 'moptErr', 'Preview failed: ' + ((e && e.statusText) || e)));
+            });
+        });
 
         page.querySelector('#moptRunRules').addEventListener('click', function () {
           Dashboard.confirm('Run every rule that is switched on, now?', 'Run rules')

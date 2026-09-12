@@ -151,6 +151,30 @@ public class ApiSurfaceTests
     }
 
     /// <summary>
+    /// Previewing every rule at once has to queue nothing, exactly like previewing one. It is the
+    /// same engine in dry-run mode, and this holds the route to the controller that only ever
+    /// calls it that way.
+    /// </summary>
+    [Fact]
+    public void Previewing_every_rule_is_a_preview()
+    {
+        var action = typeof(RulesController).GetMethod(nameof(RulesController.PreviewAll));
+        Assert.NotNull(action);
+        Assert.True(RequiresElevation(action!), "Previewing the whole library needs an administrator.");
+
+        var path = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..",
+            "Jellyfin.Plugin.MediaOptimizer", "Api", "RulesController.cs"));
+
+        var text = System.IO.File.ReadAllText(path);
+        var start = text.IndexOf("PreviewAll(CancellationToken", StringComparison.Ordinal);
+        Assert.True(start > 0, "PreviewAll has been renamed; this test needs updating.");
+
+        var body = text[start..Math.Min(text.Length, start + 300)];
+        Assert.Contains("dryRun: true", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A rule rewrites files on a schedule, so reading, writing and previewing them is all
     /// administrator-only — including the read, because a rule describes the library.
     /// </summary>

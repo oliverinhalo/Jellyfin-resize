@@ -202,6 +202,23 @@ public class RulesController : ControllerBase
         return Ok(await _automation.RunAsync(dryRun: true, ruleId: id, cancellationToken).ConfigureAwait(false));
     }
 
+    /// <summary>
+    /// Reports what every switched-on rule would queue, without queueing anything.
+    /// <para>
+    /// Previewing rules one at a time answers "what does this rule do"; the question nobody could
+    /// ask before is "what do all of them do to my library tonight", which is the one that matters
+    /// the evening before they first run. Rules are applied in order and the first to take a file
+    /// keeps it, so running them together is also the only way to see which rule actually gets
+    /// which file.
+    /// </para>
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What tonight's run would take, rule by rule.</returns>
+    [HttpPost("Preview")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<RuleRunResult>> PreviewAll(CancellationToken cancellationToken) =>
+        Ok(await _automation.RunAsync(dryRun: true, ruleId: null, cancellationToken).ConfigureAwait(false));
+
     /// <summary>Runs one rule now, or every enabled rule when no id is given.</summary>
     /// <param name="id">The rule to run, or null for all enabled rules.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

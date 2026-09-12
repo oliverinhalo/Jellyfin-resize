@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, ten features,
-and the tests for both. Against the previous release the test suite goes from 174 to 462, and the
+**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, eleven features,
+and the tests for both. Against the previous release the test suite goes from 174 to 463, and the
 browser suites from three to eight.
 
 ---
@@ -142,7 +142,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **462 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **463 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
@@ -218,6 +218,9 @@ answer depends on one, and the Jellyfin-facing layer left honestly unverified.
   cancellable, with a deadline of their own for the browser tab that simply disappears.
 - **Verification checks that the output kept the streams the plan mapped**, which is the one
   conversion failure every other check is blind to.
+- **"Preview tonight's run"**: what every switched-on rule would take, in one answer, with each
+  file naming the rule that would take it — which is the only way to see the effect of the order
+  they are applied in.
 
 ## Dead weight removed rather than fixed
 

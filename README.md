@@ -137,6 +137,10 @@ nothing":
 - **Off until you say otherwise.** A new rule is saved switched off, and **Preview** shows exactly
   what it would take — and why it passed over the rest — without queueing anything.
 
+**Preview tonight's run** answers the question that matters the evening before rules first run:
+what would *all* of them take, and which rule gets which file. Previewing one rule answers only
+what that rule does.
+
 Rules are applied top to bottom and the first one to take a file keeps it, so with two rules that
 overlap, the one above wins — "keep the 4K films as they are, shrink everything else" is only that
 sentence if the keeping rule is first. **Move up** and **Move down** on the dashboard decide it, and

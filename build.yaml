@@ -116,6 +116,9 @@ changelog: |
   - Measuring and searching no longer hold the connection open while they work. A minute is
     longer than most reverse proxies will wait, so both now run on the server and the dialog asks
     how they are going — and closing the dialog stops the encoding instead of leaving it running.
+  - New: "Preview tonight's run" — what every switched-on rule would take, in one answer, with
+    each file saying which rule would take it. Previewing one rule at a time only ever answered
+    what that rule does.
   - Rules can be reordered. They are applied top to bottom and the first one to take a file keeps
     it, so with two rules that overlap, which one is above decides which converts the file — and
     there was no way to change it. Every job a rule queues now says which rule queued it.

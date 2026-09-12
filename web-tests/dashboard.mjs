@@ -103,6 +103,19 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
         if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'], libraries: ['Films', 'TV'] }));
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
         if (u.includes('Statistics')) return Promise.resolve(JSON.stringify(stats));
+        if (u.endsWith('Rules/Preview')) {
+          return Promise.resolve(JSON.stringify({
+            DryRun: true, Considered: 912, Queued: 2, EstimatedSavingBytes: 26 * 1024 ** 3,
+            Items: [
+              { RuleId: 'r1', RuleName: 'Big 4K films', ItemId: 'i1', Name: 'A Long Film (2016)',
+                Queued: true, EstimatedSavingBytes: 22 * 1024 ** 3 },
+              { RuleId: 'r2', RuleName: 'Old DVD rips', ItemId: 'i9', Name: 'An Old Rip (1998)',
+                Queued: true, EstimatedSavingBytes: 4 * 1024 ** 3 },
+              { RuleId: 'r2', RuleName: 'Old DVD rips', ItemId: 'i8', Name: 'Already Done (2011)',
+                Queued: false, SkippedReason: 'Already converted by this plugin.' }
+            ]
+          }));
+        }
         if (u.includes('Rules/') && u.includes('Preview')) return Promise.resolve(JSON.stringify(preview));
         if (u.includes('Rules/') && u.includes('/Move')) {
           // The server swaps the rule with its neighbour and answers with the new order; the
@@ -291,6 +304,25 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
 
   check(reordered.before[0] === reordered.after[1] && reordered.before[1] === reordered.after[0],
     `moving a rule down reorders the list (${reordered.before.join(', ')} -> ${reordered.after.join(', ')})`);
+
+  // What every rule would do tonight, in one answer — and which rule gets which file, since they
+  // are applied in order and the first to take a file keeps it.
+  const tonight = await page.evaluate(async () => {
+    document.querySelector('#moptPreviewRules').click();
+    await new Promise(r => setTimeout(r, 500));
+    const host = document.querySelector('#moptRulePreview');
+    return {
+      text: host.textContent,
+      rows: Array.from(host.querySelectorAll('.moptPreviewRow')).map(r => r.textContent)
+    };
+  });
+
+  check(/2 file\(s\) would be converted/.test(tonight.text || ''),
+    `tonight's run can be previewed in one go (${(tonight.text || '').slice(0, 60)})`);
+  check(tonight.rows.some(r => /Big 4K films/.test(r)) && tonight.rows.some(r => /Old DVD rips/.test(r)),
+    'and each file says which rule would take it');
+  check(tonight.rows.some(r => /Already converted/.test(r)),
+    'with the near-misses explained as well');
 
   check(rulesView.editorEmptyBeforeAdding, 'the rule editor is closed until asked for');
   check(rulesView.fieldsAfterAdding >= 12, `the editor offers the rule's fields (${rulesView.fieldsAfterAdding})`);
