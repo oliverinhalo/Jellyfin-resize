@@ -83,6 +83,9 @@ changelog: |
     animated series want settings four or five apart. It confirms its answer at three points across
     the film, where the worst of the three has to meet the target, and says plainly when a source
     cannot reach one at all.
+  - Every number in the conversion dialog now says what kind of number it is. A prediction made
+    without the file's own bitrate is labelled a rough guess, and a file nothing can be predicted
+    from says so, instead of both being shown exactly as confidently as a measurement.
   - The setting for measuring picture quality alongside size now has a control on the settings
     page. It was added with the measurement itself and left off, so only somebody willing to edit
     the plugin's XML by hand could turn it off.

@@ -722,9 +722,16 @@
 
             var parts = [];
             if (pct > 0) { parts.push('frees ' + bytes(savedBytes)); }
+            // Every number on this line says what kind of number it is. A figure with no label
+            // reads as a fact, and the weakest of these is a guess from a file that does not
+            // report its own bitrate.
             if (result.Confidence === 'Medium' || result.Confidence === 'Measured') {
                 parts.push((result.Confidence === 'Measured' ? 'measured ' : 'estimate ') +
                     bytes(result.EstimatedSizeLowBytes) + ' – ' + bytes(result.EstimatedSizeHighBytes));
+            } else if (result.Confidence === 'Low') {
+                parts.push('rough guess — this file does not report its video bitrate');
+            } else if (result.Confidence === 'Unknown') {
+                parts.push('no estimate — this file reports neither its size nor its duration');
             }
             if (result.EstimatedSeconds && (result.TimeBasis === 'measured on this server'
                 || result.TimeBasis === 'measured on this file')) {

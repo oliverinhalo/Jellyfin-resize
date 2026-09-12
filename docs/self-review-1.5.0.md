@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-nine defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 453.
+**Scope:** ~70 files, ~8,200 lines added. Thirty defect fixes, ten features, and the tests
+for both. Against the previous release the test suite goes from 174 to 453.
 
 ---
 
@@ -59,7 +59,9 @@ tests for both. Against the previous release the test suite goes from 174 to 453
 
 | 19 | The setting that governs whether picture quality is measured alongside size had no control anywhere: it was added with the quality measurement and left off the settings page. | Only somebody willing to edit the plugin's XML by hand could turn it off. It is on the page now, and three tests hold the whole surface: every setting is read by something, every setting can be changed from a page (with one written-down exception, the rules, which have a panel of their own), and every control the page renders is one the page actually saves — because a control the save list forgets shows a value, accepts a change and silently discards it. |
 
-Rows 11 to 13 are the security pass's; rows 14 to 19 came from a fifth pass over the code that
+| 20 | The weakest estimate the plugin can make — a guess for a file that does not report its own video bitrate — was shown in exactly the same words as a good one, with no label at all. And the README's opening sentence claimed every number the interface shows "is measured rather than guessed", which the body of the same document then contradicts. | The one thing this plugin sells is that its numbers can be trusted, which depends entirely on each one saying what kind of number it is. The dialog now labels a guess as a guess and a file it can predict nothing about as exactly that, and the README's first paragraph says what is true. |
+
+Rows 11 to 13 are the security pass's; rows 14 to 20 came from a fifth pass over the code that
 verification, the queue and the estimate actually run, reading for the gap between what something
 claims and what it does. The
 first ten came from reading the plugin end to end.

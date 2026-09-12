@@ -70,7 +70,7 @@ const check = (cond, msg) => {
 
 const browser = await launchChromium();
 
-async function open(analysis, width) {
+async function open(analysis, width, estimateOverride) {
   const context = await browser.newContext({ viewport: { width, height: 900 } });
   const page = await context.newPage();
   const errors = [];
@@ -97,7 +97,7 @@ async function open(analysis, width) {
         return Promise.resolve('{}');
       }
     };
-  }, { analysis, caps: CAPS, estimate: ESTIMATE });
+  }, { analysis, caps: CAPS, estimate: estimateOverride || ESTIMATE });
 
   await page.addScriptTag({ content: bundle });
   await page.waitForFunction(() => window.MediaOptimizer && window.MediaOptimizer.ready, { timeout: 5000 });
@@ -132,7 +132,8 @@ async function open(analysis, width) {
       startDisabled: start ? start.disabled : null,
       clipped,
       overflows: dialog ? dialog.scrollWidth > dialog.clientWidth + 1 : false,
-      kv: Array.from(root.querySelectorAll('.mopt-kv dd')).map(d => d.textContent)
+      kv: Array.from(root.querySelectorAll('.mopt-kv dd')).map(d => d.textContent),
+      estimateSub: (root.querySelector('.mopt-estimate-sub') || {}).textContent
     };
   });
   result.pageErrors = errors;
@@ -166,6 +167,35 @@ for (const width of [412, 360]) {
   check(r.clipped.length === 0,
     `${width}px: no dropdown truncates its own label${r.clipped.length ? ' (got: ' + r.clipped.join(', ') + ')' : ''}`);
   check(r.overflows === false, `${width}px: the dialog does not scroll sideways`);
+}
+
+// --- every number says what kind of number it is ----------------------------------------------
+// A figure with no label reads as a fact. The weakest estimate here is a guess made without the
+// file's own bitrate, and the dialog used to show it exactly as confidently as a measurement.
+console.log('\n=== a weak estimate says so ===');
+{
+  const rough = await open(RECOVERED, 1280, {
+    CurrentSizeBytes: 24374173696, EstimatedSizeBytes: 12000000000,
+    EstimatedSizeLowBytes: 9000000000, EstimatedSizeHighBytes: 15000000000,
+    SavingFraction: 0.5, Method: 'heuristic', Confidence: 'Low',
+    EstimatedSeconds: null, TimeBasis: 'unmeasured', IsLossless: false, SavingNote: null, Warnings: []
+  });
+
+  check(rough.pageErrors.length === 0,
+    `no page errors${rough.pageErrors.length ? ': ' + rough.pageErrors[0] : ''}`);
+  check(/rough guess/.test(rough.estimateSub || ''),
+    `a guess is labelled a guess (got: ${rough.estimateSub})`);
+  check(!/estimate \d/.test(rough.estimateSub || ''),
+    'and it does not also claim a range it cannot support');
+
+  const none = await open(RECOVERED, 1280, {
+    CurrentSizeBytes: 0, EstimatedSizeBytes: 0, EstimatedSizeLowBytes: 0, EstimatedSizeHighBytes: 0,
+    SavingFraction: 0, Method: 'heuristic', Confidence: 'Unknown',
+    EstimatedSeconds: null, TimeBasis: 'unmeasured', IsLossless: false, SavingNote: null, Warnings: []
+  });
+
+  check(/no estimate/.test(none.estimateSub || ''),
+    `a file nothing can be predicted from says that too (got: ${none.estimateSub})`);
 }
 
 await browser.close();

@@ -4,8 +4,8 @@ Inspect any file in your library from inside Jellyfin and convert it with FFmpeg
 codec, bit depth, bitrate, audio tracks — one film at a time, hundreds at once, or by a rule that
 runs itself overnight.
 
-Nothing is deleted until the new file has been checked, and every claim the interface makes about
-size, speed or quality is measured rather than guessed.
+Nothing is deleted until the new file has been checked, and every number the interface shows says
+what kind of number it is: measured, estimated, or a guess it cannot do better than.
 
 **Jellyfin 10.11.x** · .NET 9 · GPL-3.0 · uses the FFmpeg already bundled with your server
 
