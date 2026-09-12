@@ -389,8 +389,9 @@ directory), then restart.
 ## How it is reviewed
 
 Each release carries a written self-review: what was checked, what was found, and what was not
-verified. [`docs/self-review-1.5.0.md`](docs/self-review-1.5.0.md) is the current one, including the
-six defects that review found in the same release's own new code.
+verified. [`docs/self-review-1.5.0.md`](docs/self-review-1.5.0.md) is the current one — four passes
+over the code, including the eight defects the review found in this same release's own new code and
+the three a security pass found in code older than it.
 
 ---
 

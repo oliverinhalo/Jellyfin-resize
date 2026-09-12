@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~7,500 lines added. Seventeen defect fixes, seven features, and the tests for
-both. Against the previous release the test suite goes from 174 to 372.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-one defect fixes, seven features, and the tests
+for both. Against the previous release the test suite goes from 174 to 383.
 
 ---
 
@@ -20,6 +20,14 @@ both. Against the previous release the test suite goes from 174 to 372.
 3. **A second review pass over my own diff.** That found eight defects in code written earlier in
    this same branch, listed separately below, including one that repeated a mistake this branch
    had already fixed elsewhere.
+4. **A security pass, reading the diff as somebody looking for a way in.** What can an
+   unauthenticated caller reach; what can a signed-in non-administrator learn; where does user
+   input become a filesystem path, an argument vector or markup; what does this code delete. Three
+   of the defects below came from it, and the two it did *not* find are worth saying: nothing here
+   builds a shell command (every FFmpeg call is passed as an argument vector, so a filename with a
+   semicolon in it is a filename), and nothing renders server data as HTML — the dialog and the
+   dashboard both write text through `textContent`, and the only `innerHTML` in either is the empty
+   string.
 
 ---
 
@@ -37,8 +45,13 @@ both. Against the previous release the test suite goes from 174 to 372.
 | 8 | `POST /MediaOptimizer/Transform` accepted a document from anyone, unauthenticated, and returned it as `text/html` on the Jellyfin origin. | A cross-site scripting sink. Nothing called it — registration goes through File Transformation's in-process service — so it is gone, and a test now fails the build if an anonymous HTML endpoint reappears. |
 | 9 | The conversion dialog's progress poll kept running after the dialog was closed with the X, Escape or the backdrop. | A request every 1.5 seconds for a job that finished hours ago, for as long as the tab stayed open. |
 | 10 | FFmpeg's last line of output was sometimes lost: the runner waited for the process and collected its output through the completion events, which return before what is still in flight has been delivered. | With ffmpeg the last line *is* the answer — the hash a lossless check compares, the reason a job failed, a measured score. A harness that ran one command 25 times lost it once or twice a run: exactly the frequency that gets written off as "flaky" for years. Both pipes are now read to the end and those reads awaited; 100 consecutive runs, no losses. It was found only because a missing score is obvious in a way a slightly truncated error message is not. |
+| 11 | Housekeeping deleted **every** file in the working directory older than six hours, not only the ones this plugin wrote. | The working directory is a path an administrator types into a settings box, and the obvious thing to type is a directory that already exists — a scratch disk, the server's own transcoding folder. This plugin would then quietly destroy other people's files, once a night, for as long as it was installed. Everything it writes is named `.mo-…`; that is now the only thing it deletes. |
+| 12 | The analysis dialog handed a non-administrator the absolute path of the file on the server, and any FFmpeg error quoting it. | Every other read on that controller is administrator-only for exactly this reason, and the diagnostics page added on this same branch deliberately hides server paths from non-administrators. The one endpoint a non-administrator can actually open was the one giving it away. They now see the file name. |
+| 13 | A cross-volume move copied the whole file to `<destination>.mopt-partial` first — a name the library scanner does not hide and housekeeping does not recognise. | A power cut in the middle of that copy left a full-size duplicate of a film next to it, forever. It is now named like every other working file: hidden from the scanner, swept by housekeeping, and unique per move so two conversions to one destination cannot overwrite each other's staging file. |
 
-Also in that pass: the dashboard re-bound its event handlers on every `pageshow`, so after
+The last three are the security pass's. The first ten came from reading the plugin end to end.
+
+Also in that first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
 navigating away and back one click on "pause queue" sent two requests; endpoints that reveal
 filesystem paths, list the queue, or make the server read an entire media file were available to
 any signed-in user; 10-bit files whose container omits the depth were being converted to 8-bit;
@@ -87,7 +100,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **372 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
+- **383 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, and the sampled estimate being

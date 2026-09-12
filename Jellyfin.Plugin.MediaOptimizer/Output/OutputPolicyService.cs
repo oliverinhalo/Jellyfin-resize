@@ -254,7 +254,7 @@ public class OutputPolicyService : IOutputPolicyService
             // Different filesystem: fall through to copy.
         }
 
-        var staging = destination + ".mopt-partial";
+        var staging = StagingPathFor(destination);
         try
         {
             File.Copy(source, staging, overwrite: true);
@@ -277,12 +277,34 @@ public class OutputPolicyService : IOutputPolicyService
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    // Nothing useful to do; the partial file is named so it is obvious.
+                    // Nothing useful to do here, which is exactly why the name matters: the file
+                    // is hidden from the library scanner and housekeeping will remove it.
                 }
             }
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Names the temporary file a cross-volume copy lands on before it is renamed into place.
+    /// <para>
+    /// It has to be a sibling of the destination, because the point of it is that the final step
+    /// is an atomic rename within one directory. That directory is usually the library folder, so
+    /// the name follows the same rules as every other working file this plugin writes: a leading
+    /// dot and a .motmp suffix, so the library scanner never indexes a half-copied film, and the
+    /// ".mo-" prefix housekeeping looks for, so a copy interrupted by a power cut is cleaned up
+    /// instead of sitting next to the media at full size forever. The identifier also keeps two
+    /// moves to the same destination from writing over each other's staging file.
+    /// </para>
+    /// </summary>
+    /// <param name="destination">Where the file is going.</param>
+    /// <returns>The staging path.</returns>
+    internal static string StagingPathFor(string destination)
+    {
+        var name = FormattableString.Invariant($".mo-partial-{Guid.NewGuid():N}.motmp");
+        var directory = Path.GetDirectoryName(destination);
+        return string.IsNullOrEmpty(directory) ? name : Path.Combine(directory, name);
     }
 
     /// <summary>

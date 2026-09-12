@@ -226,4 +226,70 @@ public class ApiSurfaceTests
         Assert.False(ClientAssetController.MatchesEtag(new Microsoft.Extensions.Primitives.StringValues("\"old\""), "\"abc\""));
         Assert.False(ClientAssetController.MatchesEtag(default(Microsoft.Extensions.Primitives.StringValues), "\"abc\""));
     }
+
+    // --- what a non-administrator is allowed to learn -----------------------------------------
+
+    /// <summary>
+    /// The analysis dialog is the one thing a non-administrator may open, and it was handing back
+    /// the absolute path of the file on the server — the very thing every other read on this
+    /// controller is administrator-only to prevent, and which the diagnostics page on this same
+    /// branch deliberately hides. The file name is what the dialog needs; the directory it sits in
+    /// is a description of somebody else's server.
+    /// </summary>
+    [Fact]
+    public void A_non_administrator_is_not_told_where_the_file_lives()
+    {
+        var analysis = new Jellyfin.Plugin.MediaOptimizer.Models.FileAnalysis
+        {
+            Path = "/srv/media/films/Arrival (2016)/Arrival.mkv",
+            IneligibleReason = "Could not read /srv/media/films/Arrival (2016)/Arrival.mkv.",
+            StreamInfoError = "ffprobe: /srv/media/films/Arrival (2016)/Arrival.mkv: Invalid data found"
+        };
+
+        MediaOptimizerController.RedactServerPaths(analysis);
+
+        Assert.Equal("Arrival.mkv", analysis.Path);
+        Assert.DoesNotContain("/srv/media", analysis.IneligibleReason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("/srv/media", analysis.StreamInfoError!, StringComparison.Ordinal);
+
+        // And what is left still names the file, so the message is still worth reading.
+        Assert.Contains("Arrival.mkv", analysis.IneligibleReason!, StringComparison.Ordinal);
+    }
+
+    /// <summary>Redacting a file with no path must not turn its messages into nonsense.</summary>
+    [Fact]
+    public void Redaction_copes_with_an_item_that_has_no_path()
+    {
+        var analysis = new Jellyfin.Plugin.MediaOptimizer.Models.FileAnalysis
+        {
+            Path = string.Empty,
+            IneligibleReason = "This item has no file path on disk."
+        };
+
+        MediaOptimizerController.RedactServerPaths(analysis);
+
+        Assert.Equal(string.Empty, analysis.Path);
+        Assert.Equal("This item has no file path on disk.", analysis.IneligibleReason);
+    }
+
+    /// <summary>
+    /// The redaction only helps if the one endpoint a non-administrator can reach actually
+    /// applies it, which no test of the helper on its own would notice.
+    /// </summary>
+    [Fact]
+    public void The_analysis_endpoint_applies_that_redaction()
+    {
+        var path = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..",
+            "Jellyfin.Plugin.MediaOptimizer", "Api", "MediaOptimizerController.cs"));
+
+        Assert.True(System.IO.File.Exists(path), "Could not find " + path);
+
+        var text = System.IO.File.ReadAllText(path);
+        var start = text.IndexOf("public async Task<ActionResult<FileAnalysis>> Analyze", StringComparison.Ordinal);
+        Assert.True(start > 0, "The analysis endpoint has been renamed; this test needs updating.");
+
+        var body = text[start..Math.Min(text.Length, start + 2500)];
+        Assert.Contains("RedactServerPaths", body, StringComparison.Ordinal);
+    }
 }

@@ -131,4 +131,34 @@ public class SweepTaskTests : IDisposable
 
         Assert.True(File.Exists(recent), "A file written minutes ago is not abandoned.");
     }
+
+    /// <summary>
+    /// The working directory is a path an administrator types into a settings box, and the
+    /// obvious thing to type is a directory that already exists — a scratch disk, the server's
+    /// own transcoding folder. Housekeeping deleted everything in it older than six hours, which
+    /// in that case is this plugin quietly destroying files it never created. Everything it does
+    /// create is named ".mo-…", and nothing else in there is its business.
+    /// </summary>
+    [Fact]
+    public async Task Housekeeping_only_deletes_files_this_plugin_wrote()
+    {
+        var store = new JobStore(_store, NullLogger<JobStore>.Instance);
+
+        var stranger = Path.Combine(_work, "someone-elses-transcode.mkv");
+        File.WriteAllText(stranger, "not ours");
+        File.SetLastWriteTimeUtc(stranger, DateTime.UtcNow.AddDays(-30));
+
+        var hidden = Path.Combine(_work, ".config");
+        File.WriteAllText(hidden, "not ours either");
+        File.SetLastWriteTimeUtc(hidden, DateTime.UtcNow.AddDays(-30));
+
+        var ours = WriteStaleWorkFile(Guid.NewGuid());
+
+        var task = new SweepTask(store, new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
+        await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
+
+        Assert.True(File.Exists(stranger), "Housekeeping deleted a file the plugin did not write.");
+        Assert.True(File.Exists(hidden), "Housekeeping deleted a file the plugin did not write.");
+        Assert.False(File.Exists(ours), "An abandoned working file should still be cleaned up.");
+    }
 }

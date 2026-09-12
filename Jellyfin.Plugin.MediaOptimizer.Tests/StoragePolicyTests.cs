@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using Xunit;
 
@@ -98,7 +99,7 @@ public class StoragePolicyTests : IDisposable
 
         Assert.Equal("payload", File.ReadAllText(source));
         Assert.Equal("already here", File.ReadAllText(destination));
-        Assert.Empty(Directory.GetFiles(_dir, "*.mopt-partial"));
+        Assert.Empty(Directory.GetFiles(_dir, SweepTask.WorkFilePattern));
     }
 
     [Fact]
@@ -111,7 +112,7 @@ public class StoragePolicyTests : IDisposable
         OutputPolicyService.MoveAcrossVolumes(source, destination, overwrite: false);
 
         Assert.True(File.Exists(destination));
-        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(destination)!, "*.mopt-partial"));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(destination)!, SweepTask.WorkFilePattern));
     }
 
     [Fact]
@@ -136,5 +137,30 @@ public class StoragePolicyTests : IDisposable
         Assert.StartsWith(".", name, StringComparison.Ordinal);
         Assert.EndsWith(".motmp", name, StringComparison.Ordinal);
         Assert.NotEqual(".mkv", Path.GetExtension(name));
+    }
+
+    /// <summary>
+    /// A cross-volume move copies the whole file to a staging name first, and a power cut in the
+    /// middle of that leaves the copy behind. It lands in the library folder, so it has to obey
+    /// the same two rules as every other working file: invisible to Jellyfin's scanner, and
+    /// removable by housekeeping. The old name — the destination with ".mopt-partial" glued on —
+    /// was neither, so a 60 GB half-copy would have sat next to the film forever.
+    /// </summary>
+    [Fact]
+    public void An_interrupted_copy_leaves_something_housekeeping_can_clean_up()
+    {
+        var staging = OutputPolicyService.StagingPathFor(Path.Combine(_dir, "Arrival (2016).mkv"));
+        var name = Path.GetFileName(staging);
+
+        Assert.Equal(_dir, Path.GetDirectoryName(staging));
+        Assert.StartsWith(".mo-", name, StringComparison.Ordinal);
+        Assert.EndsWith(".motmp", name, StringComparison.Ordinal);
+
+        // Two moves to the same destination must not share a staging file.
+        Assert.NotEqual(staging, OutputPolicyService.StagingPathFor(Path.Combine(_dir, "Arrival (2016).mkv")));
+
+        // And the name is one the sweep actually matches, which is the part that makes it true.
+        File.WriteAllText(staging, "half a film");
+        Assert.Contains(staging, Directory.GetFiles(_dir, SweepTask.WorkFilePattern));
     }
 }

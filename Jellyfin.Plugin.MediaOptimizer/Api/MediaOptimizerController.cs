@@ -595,7 +595,56 @@ public class MediaOptimizerController : ControllerBase
                 $"This item was already optimised by this plugin on {previous.FinishedAt:yyyy-MM-dd}. Re-encoding an encode compounds quality loss.");
         }
 
+        if (!IsAdmin)
+        {
+            RedactServerPaths(analysis);
+        }
+
         return Ok(analysis);
+    }
+
+    /// <summary>
+    /// Strips the server's filesystem out of an analysis, leaving the file name.
+    /// <para>
+    /// This is the one thing a non-administrator can open, and every other read on this controller
+    /// is administrator-only precisely so that being able to browse a library does not become
+    /// being able to enumerate where every file lives. The dialog only ever displays the path, and
+    /// the name is the part of it that means anything to someone who cannot reach the disk. The
+    /// two error fields are scrubbed as well, because ffprobe quotes the path it was given.
+    /// </para>
+    /// </summary>
+    /// <param name="analysis">The analysis, edited in place.</param>
+    internal static void RedactServerPaths(FileAnalysis analysis)
+    {
+        ArgumentNullException.ThrowIfNull(analysis);
+
+        var full = analysis.Path;
+        if (string.IsNullOrEmpty(full))
+        {
+            return;
+        }
+
+        var name = System.IO.Path.GetFileName(full);
+        var directory = System.IO.Path.GetDirectoryName(full);
+
+        analysis.Path = name;
+        analysis.IneligibleReason = Scrub(analysis.IneligibleReason);
+        analysis.StreamInfoError = Scrub(analysis.StreamInfoError);
+
+        string? Scrub(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            // The full path first: replacing the directory alone would leave a bare file name
+            // glued to whatever followed it.
+            var cleaned = text.Replace(full, name, StringComparison.Ordinal);
+            return string.IsNullOrEmpty(directory)
+                ? cleaned
+                : cleaned.Replace(directory, "\u2026", StringComparison.Ordinal);
+        }
     }
 
     /// <summary>Reports what this server's ffmpeg can actually do.</summary>

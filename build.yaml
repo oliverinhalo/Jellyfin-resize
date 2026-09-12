@@ -68,7 +68,13 @@ changelog: |
     back to it.
   - Security: removed an endpoint that accepted a document from anyone and returned it as HTML.
     Endpoints that reveal where files live on the server, list the queue, or make the server read a
-    whole media file now require an administrator.
+    whole media file now require an administrator, and the file information dialog no longer tells
+    a non-administrator the absolute path of the file on the server.
+  - Fixed nightly housekeeping deleting every file in the working directory older than six hours,
+    rather than only the ones this plugin wrote. If you pointed the working directory at a folder
+    that already had something else in it, that something else was being deleted.
+  - A conversion that has to copy its output to another disk no longer risks leaving a full-size
+    partial copy next to your media forever if the server loses power mid-copy.
 
   ### 1.4.4.0
   - Fixed the dialog showing a file as having no video and no audio, with a blank duration and
