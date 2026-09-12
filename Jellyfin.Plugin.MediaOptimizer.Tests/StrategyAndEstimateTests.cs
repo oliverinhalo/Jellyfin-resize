@@ -264,6 +264,8 @@ public class StrategyAndEstimateTests
 
         public bool HasActiveJobForItem(Guid itemId) => false;
 
+        public bool RequestCancel(Guid id) => false;
+
         public bool Remove(Guid id) => false;
 
         public IReadOnlyList<EncodeJob> ReconcileInterrupted() => Array.Empty<EncodeJob>();

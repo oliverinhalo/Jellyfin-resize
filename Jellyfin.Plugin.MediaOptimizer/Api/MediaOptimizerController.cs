@@ -196,6 +196,7 @@ public class MediaOptimizerController : ControllerBase
             LibrarySort.ResolutionDescending => results.OrderByDescending(r => r.Height ?? 0).ThenByDescending(r => r.SizeBytes ?? 0),
             LibrarySort.DateAdded => results,
             LibrarySort.BitrateDescending => results.OrderByDescending(r => r.BitrateBps ?? 0),
+            LibrarySort.SavingDescending => results.OrderByDescending(r => r.PotentialSavingBytes ?? 0),
             _ => results.OrderByDescending(r => r.SizeBytes ?? 0)
         };
 
@@ -465,6 +466,9 @@ public class MediaOptimizerController : ControllerBase
             }
         }
 
+        var size = TryGetSize(item.Path);
+        var forecast = SavingForecast.For(size, video?.Height, video?.Codec);
+
         return new LibraryItemSummary
         {
             Id = item.Id,
@@ -472,14 +476,16 @@ public class MediaOptimizerController : ControllerBase
             Type = item.GetType().Name,
             Path = item.Path,
             Container = System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant(),
-            SizeBytes = TryGetSize(item.Path),
+            SizeBytes = size,
             RunTimeTicks = item.RunTimeTicks,
             Width = video?.Width,
             Height = video?.Height,
             VideoCodec = video?.Codec,
             BitrateBps = video?.BitRate,
             IsWatched = watched,
-            HasActiveJob = _store.HasActiveJobForItem(item.Id)
+            HasActiveJob = _store.HasActiveJobForItem(item.Id),
+            PotentialSavingBytes = forecast.SavingBytes,
+            SavingBasis = forecast.SavingBytes is null ? null : forecast.Basis
         };
     }
 

@@ -236,12 +236,20 @@ public class OutputPolicyService : IOutputPolicyService
             Directory.CreateDirectory(destDir);
         }
 
+        // A destination that already exists is a different problem from a destination on another
+        // filesystem, and both arrive as IOException. Copying several gigabytes and then failing
+        // the rename anyway is a pointless way to find that out.
+        if (!overwrite && File.Exists(destination))
+        {
+            throw new IOException(FormattableString.Invariant($"'{destination}' already exists."));
+        }
+
         try
         {
             File.Move(source, destination, overwrite);
             return;
         }
-        catch (IOException)
+        catch (IOException ex) when (IsCrossVolume(ex))
         {
             // Different filesystem: fall through to copy.
         }
@@ -275,6 +283,36 @@ public class OutputPolicyService : IOutputPolicyService
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Whether a failed rename means "the destination is on another filesystem", which is the one
+    /// case worth answering with a whole-file copy.
+    /// <para>
+    /// .NET does not surface EXDEV as anything but IOException, so this reads the error code
+    /// underneath. When it cannot tell, it says yes: attempting the copy is recoverable, whereas
+    /// refusing it would fail a conversion that could have completed.
+    /// </para>
+    /// </summary>
+    /// <param name="exception">The exception File.Move threw.</param>
+    /// <returns>Whether to fall back to copying.</returns>
+    private static bool IsCrossVolume(IOException exception)
+    {
+        const int Exdev = 18;          // Linux, macOS: EXDEV
+        const int NotSameDevice = 17;  // Windows: ERROR_NOT_SAME_DEVICE
+
+        var code = exception.HResult & 0xFFFF;
+        if (code is Exdev or NotSameDevice)
+        {
+            return true;
+        }
+
+        // Anything that clearly is not a device boundary -- a permission problem, a file in use --
+        // should surface as itself rather than being retried as a copy that will fail the same way.
+        return code is not 13     // EACCES
+            and not 16            // EBUSY / ERROR_BUSY
+            and not 28            // ENOSPC
+            and not 2;            // ENOENT
     }
 
     private void ApplySidecar(EncodeJob job, string tempOutputPath)

@@ -101,6 +101,13 @@ resolution change and says why rather than offering a preset that would save not
 
 ### In bulk
 
+The dashboard opens on **most to gain first**, which is not the same as largest first: the biggest
+file in most libraries is a remux that is already efficiently encoded and has nothing to give up.
+Each row says roughly what a conversion would reclaim and where it would come from — "≈ 12 GiB to
+gain · HEVC instead of H.264" — worked out from size, resolution and codec without reading the
+files, so a whole library can be ranked in one page load. It is marked as an approximation because
+it is one; the dialog's estimate reads the file's real stream bitrates.
+
 Search or filter your library — by size, resolution, bitrate, watched state, container or codec —
 tick the files you want, and apply one preset to all of them. Each file is still analysed
 individually, so the preset adapts to what it actually is, and anything unconvertible is listed as

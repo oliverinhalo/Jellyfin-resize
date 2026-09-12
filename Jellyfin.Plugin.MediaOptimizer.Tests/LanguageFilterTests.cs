@@ -182,6 +182,8 @@ public class LanguageFilterTests
 
         public bool HasActiveJobForItem(Guid itemId) => false;
 
+        public bool RequestCancel(Guid id) => false;
+
         public bool Remove(Guid id) => false;
 
         public System.Collections.Generic.IReadOnlyList<EncodeJob> ReconcileInterrupted() => Array.Empty<EncodeJob>();

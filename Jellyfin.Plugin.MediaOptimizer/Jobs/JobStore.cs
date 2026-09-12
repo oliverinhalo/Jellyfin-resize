@@ -45,6 +45,14 @@ public interface IJobStore
     /// <returns>True when a job is already active for the item.</returns>
     bool HasActiveJobForItem(Guid itemId);
 
+    /// <summary>
+    /// Records that a job should stop. A job that has not been claimed yet is cancelled outright;
+    /// one already being worked on is flagged, for the worker to act on.
+    /// </summary>
+    /// <param name="id">Job id.</param>
+    /// <returns>True when a job was found that could still be stopped.</returns>
+    bool RequestCancel(Guid id);
+
     /// <summary>Removes a job from the store entirely.</summary>
     /// <param name="id">Job id.</param>
     /// <returns>True when a job was removed.</returns>
@@ -242,6 +250,34 @@ public class JobStore : IJobStore
     }
 
     /// <inheritdoc />
+    public bool RequestCancel(Guid id)
+    {
+        lock (_lock)
+        {
+            var job = _jobs.GetValueOrDefault(id);
+            if (job is null || !job.IsActive)
+            {
+                return false;
+            }
+
+            job.CancellationRequested = true;
+
+            // Nothing has picked it up, so it can simply be finished here. Anything further along
+            // is the worker's to stop: it may have an ffmpeg process running and a temporary file
+            // to remove, and only it knows that.
+            if (job.Status == JobStatus.Queued)
+            {
+                job.Status = JobStatus.Cancelled;
+                job.FinishedAt = DateTime.UtcNow;
+                job.Error = "Cancelled before it started. The original file was not modified.";
+            }
+
+            AppendJournal("put", job);
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(Guid id)
     {
         lock (_lock)
@@ -287,6 +323,7 @@ public class JobStore : IJobStore
                     job.StartedAt = null;
                     job.ResumeCount++;
                     job.Error = null;
+                    job.CancellationRequested = false;
                 }
                 else
                 {

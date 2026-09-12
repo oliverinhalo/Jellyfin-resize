@@ -84,22 +84,18 @@ public class JobQueueService : BackgroundService, IJobQueueService
     /// <inheritdoc />
     public bool Cancel(Guid id)
     {
+        // The flag is recorded first, so that a job the worker is in the middle of claiming --
+        // taken from the queue, but with no cancellation token registered yet -- still stops. The
+        // worker checks the flag the moment its token exists, so one of the two always catches it.
+        var known = _store.RequestCancel(id);
+
         if (_running.TryGetValue(id, out var cts))
         {
             cts.Cancel();
             return true;
         }
 
-        var job = _store.Get(id);
-        if (job is null || !job.IsActive)
-        {
-            return false;
-        }
-
-        job.Status = JobStatus.Cancelled;
-        job.FinishedAt = DateTime.UtcNow;
-        _store.Update(job);
-        return true;
+        return known;
     }
 
     /// <inheritdoc />
@@ -134,6 +130,13 @@ public class JobQueueService : BackgroundService, IJobQueueService
 
                 var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 _running[job.Id] = cts;
+
+                // Closes the window described on Cancel: anything that arrived while this job was
+                // being claimed is applied now that there is a token to apply it to.
+                if (job.CancellationRequested)
+                {
+                    cts.Cancel();
+                }
 
                 _ = Task.Run(
                     async () =>

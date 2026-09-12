@@ -23,7 +23,9 @@ const ITEMS = Array.from({ length: 6 }, (_, i) => ({
   Id: 'id' + i, Name: 'Film ' + (i + 1) + ' (2021)', Type: 'Movie',
   Path: '/media/film' + i + '.mkv', Container: 'mkv', SizeBytes: (5 - i * 0.4) * 1024 ** 3,
   Height: [2160, 2160, 1080, 1080, 720, 1080][i], VideoCodec: 'hevc',
-  IsWatched: i % 2 === 0, HasActiveJob: i === 5
+  IsWatched: i % 2 === 0, HasActiveJob: i === 5,
+  PotentialSavingBytes: i < 2 ? 1.8 * 1024 ** 3 : null,
+  SavingBasis: i < 2 ? '1440p instead of 2160p' : null
 }));
 const JOBS = [
   { Id: 'j1', ItemName: 'Film 6', Status: 'Encoding', ProgressPercent: 43, Speed: 1.8,
@@ -129,6 +131,9 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
       historyJobs: document.querySelectorAll('#moptJobs .moptJob').length,
       stats: document.querySelectorAll('.moptStat').length,
       results: document.querySelectorAll('.moptItem').length,
+      savingLines: Array.from(document.querySelectorAll('.moptItemMeta'))
+        .filter(n => n.textContent.includes('to gain')).map(n => n.textContent),
+      sortOptions: Array.from(document.querySelectorAll('#moptSort option')).map(o => o.value),
       bodyScrollsSideways: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
     };
   });
@@ -145,6 +150,10 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   check(r.historyJobs === 2, `finished jobs move into history (${r.historyJobs})`);
   check(r.stats >= 4, `statistics render (${r.stats} tiles)`);
   check(r.results === 6, `file list renders (${r.results})`);
+  check(r.savingLines.length === 2, `files with something to gain say so (${r.savingLines.length})`);
+  check(/≈ 1\.80 GiB to gain · 1440p instead of 2160p/.test(r.savingLines[0] || ''),
+    `the gain is shown as an approximation with its reason (${r.savingLines[0]})`);
+  check(r.sortOptions[0] === 'SavingDescending', 'the list can be ordered by what there is to gain');
   check(!r.bodyScrollsSideways, 'page does not scroll sideways');
   check(logs.length === 0, `no page errors${logs.length ? ': ' + logs[0] : ''}`);
 

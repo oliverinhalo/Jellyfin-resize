@@ -30,6 +30,7 @@
           <div class="moptFilter">
             <label for="moptSort">Sort by</label>
             <select is="emby-select" id="moptSort" class="emby-select">
+              <option value="SavingDescending">Most to gain first</option>
               <option value="SizeDescending">Largest first</option>
               <option value="SizeAscending">Smallest first</option>
               <option value="ResolutionDescending">Highest resolution</option>
@@ -321,6 +322,13 @@
             item.VideoCodec ? item.VideoCodec.toUpperCase() : null,
             item.Container ? item.Container.toUpperCase() : null
           ].filter(Boolean).join(' · ')));
+
+          // Marked as approximate on purpose: this is worked out from size, resolution and codec
+          // to order the list, not from the file's real bitrates the way the dialog's estimate is.
+          if (item.PotentialSavingBytes) {
+            body.appendChild(el('div', 'moptItemMeta',
+              '≈ ' + bytes(item.PotentialSavingBytes) + ' to gain · ' + (item.SavingBasis || '')));
+          }
           row.appendChild(body);
 
           var button = document.createElement('button');

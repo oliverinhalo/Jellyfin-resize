@@ -115,6 +115,17 @@ public class EncodeJob
     /// <summary>Gets or sets how many times this job has been resumed after a server restart.</summary>
     public int ResumeCount { get; set; }
 
+    /// <summary>
+    /// Gets or sets a value indicating whether somebody has asked for this job to stop.
+    /// <para>
+    /// A running job is stopped through its cancellation token, but there is a moment between the
+    /// worker claiming a job and registering that token in which there is no token to cancel. A
+    /// cancellation arriving in that window used to be swallowed and the job ran anyway; this flag
+    /// is what the worker checks the instant it has registered.
+    /// </para>
+    /// </summary>
+    public bool CancellationRequested { get; set; }
+
     /// <summary>Gets or sets the policy that was applied.</summary>
     public OutputPolicy OutputPolicy { get; set; }
 

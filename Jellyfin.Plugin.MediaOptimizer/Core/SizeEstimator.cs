@@ -22,9 +22,13 @@ public class SizeEstimator : ISizeEstimator
     // Each CRF step changes bitrate by roughly this factor, in both directions.
     private const double CrfStepFactor = 1.12d;
 
-    // Bitrate does not scale linearly with pixel count: half the pixels needs rather more than
-    // half the bitrate. This exponent is the usual rule of thumb.
-    private const double ResolutionExponent = 0.75d;
+    /// <summary>
+    /// Bitrate does not scale linearly with pixel count: half the pixels needs rather more than
+    /// half the bitrate. This exponent is the usual rule of thumb, and is shared with
+    /// <see cref="SavingForecast"/> so the library worklist and the per-file estimate cannot
+    /// disagree about what a resolution change buys.
+    /// </summary>
+    internal const double ResolutionExponent = 0.75d;
 
     private readonly IJobStore _store;
 

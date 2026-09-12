@@ -79,6 +79,28 @@ public class StoragePolicyTests : IDisposable
         Assert.Equal("existing", File.ReadAllText(destination));
     }
 
+    /// <summary>
+    /// A rename that fails because the destination is taken is a different problem from one that
+    /// fails because the destination is on another disk, and both arrive as IOException. Copying
+    /// several gigabytes and then failing the rename anyway is a slow way to learn which it was —
+    /// and on a replace, the source is the user's only copy while that happens.
+    /// </summary>
+    [Fact]
+    public void A_rename_blocked_by_an_existing_file_is_refused_without_copying_anything()
+    {
+        var source = Path.Combine(_dir, "source.mkv");
+        var destination = Path.Combine(_dir, "taken.mkv");
+        File.WriteAllText(source, "payload");
+        File.WriteAllText(destination, "already here");
+
+        Assert.Throws<IOException>(() =>
+            OutputPolicyService.MoveAcrossVolumes(source, destination, overwrite: false));
+
+        Assert.Equal("payload", File.ReadAllText(source));
+        Assert.Equal("already here", File.ReadAllText(destination));
+        Assert.Empty(Directory.GetFiles(_dir, "*.mopt-partial"));
+    }
+
     [Fact]
     public void A_partial_copy_is_never_left_behind_under_the_destination_name()
     {

@@ -131,6 +131,8 @@ public class AutomationServiceTests
 
         public bool HasActiveJobForItem(Guid itemId) => Jobs.Any(j => j.ItemId == itemId && j.IsActive);
 
+        public bool RequestCancel(Guid id) => false;
+
         public bool Remove(Guid id) => false;
 
         public IReadOnlyList<EncodeJob> ReconcileInterrupted() => Array.Empty<EncodeJob>();

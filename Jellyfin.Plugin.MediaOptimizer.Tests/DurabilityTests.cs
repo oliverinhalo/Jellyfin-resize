@@ -244,6 +244,79 @@ public class DurabilityTests : IDisposable
         Assert.False(NewStore().IsPaused);
     }
 
+    /// <summary>
+    /// Cancelling something that has not started needs no worker at all, and must not leave a job
+    /// sitting in the queue to be picked up a second later.
+    /// </summary>
+    [Fact]
+    public void Cancelling_a_job_that_has_not_started_finishes_it_immediately()
+    {
+        var store = NewStore();
+        var job = Job("Waiting");
+        store.Add(job);
+
+        Assert.True(store.RequestCancel(job.Id));
+
+        Assert.Equal(JobStatus.Cancelled, store.Get(job.Id)!.Status);
+        Assert.Null(store.TakeNextQueued());
+        Assert.Contains("not modified", store.Get(job.Id)!.Error!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// There is a moment between the worker claiming a job and registering its cancellation token
+    /// in which there is no token to cancel. A cancellation arriving then used to be swallowed and
+    /// the job ran anyway; the flag is what the worker checks the instant its token exists.
+    /// </summary>
+    [Fact]
+    public void Cancelling_a_job_the_worker_has_just_claimed_is_recorded_rather_than_lost()
+    {
+        var store = NewStore();
+        var job = Job("Claimed");
+        store.Add(job);
+
+        var claimed = store.TakeNextQueued();
+        Assert.NotNull(claimed);
+        Assert.Equal(JobStatus.Preflight, claimed!.Status);
+
+        Assert.True(store.RequestCancel(job.Id));
+
+        // Still the worker's to stop -- it may have an ffmpeg process and a temporary file -- but
+        // the request is now on the job where the worker will see it.
+        Assert.True(store.Get(job.Id)!.CancellationRequested);
+        Assert.Equal(JobStatus.Preflight, store.Get(job.Id)!.Status);
+    }
+
+    [Fact]
+    public void Cancelling_a_job_that_has_already_finished_changes_nothing()
+    {
+        var store = NewStore();
+        var job = Job("Done");
+        job.Status = JobStatus.Completed;
+        job.FinishedAt = DateTime.UtcNow;
+        store.Add(job);
+
+        Assert.False(store.RequestCancel(job.Id));
+        Assert.False(store.RequestCancel(Guid.NewGuid()));
+        Assert.Equal(JobStatus.Completed, store.Get(job.Id)!.Status);
+    }
+
+    /// <summary>A job requeued after a restart must not carry a cancellation from its last life.</summary>
+    [Fact]
+    public void A_resumed_job_does_not_carry_a_stale_cancellation()
+    {
+        var store = NewStore();
+        var job = Job("Interrupted");
+        job.Status = JobStatus.Encoding;
+        job.CancellationRequested = true;
+        store.Add(job);
+
+        NewStore().ReconcileInterrupted();
+
+        var reopened = NewStore().Get(job.Id)!;
+        Assert.Equal(JobStatus.Queued, reopened.Status);
+        Assert.False(reopened.CancellationRequested);
+    }
+
     [Fact]
     public void A_queue_from_the_previous_storage_format_is_carried_over()
     {
