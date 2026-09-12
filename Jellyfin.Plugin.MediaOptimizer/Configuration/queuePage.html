@@ -339,11 +339,10 @@
           button.type = 'button';
           button.className = 'raised emby-button';
           button.style.flex = '0 0 auto';
-          button.textContent = item.HasActiveJob ? 'Queued' : 'Optimize…';
-          button.disabled = !!item.HasActiveJob;
-          if (!item.HasActiveJob) {
-            button.addEventListener('click', function () { openFor(item.Id); });
-          }
+          // A file that is already converting opens on its progress rather than on the form, so
+          // the button is worth pressing instead of being greyed out with "Queued" on it.
+          button.textContent = item.HasActiveJob ? 'Show progress' : 'Optimize…';
+          button.addEventListener('click', function () { openFor(item.Id); });
           row.appendChild(button);
           host.appendChild(row);
         });

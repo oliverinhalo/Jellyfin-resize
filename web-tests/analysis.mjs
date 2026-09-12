@@ -133,7 +133,9 @@ async function open(analysis, width, estimateOverride) {
       clipped,
       overflows: dialog ? dialog.scrollWidth > dialog.clientWidth + 1 : false,
       kv: Array.from(root.querySelectorAll('.mopt-kv dd')).map(d => d.textContent),
-      estimateSub: (root.querySelector('.mopt-estimate-sub') || {}).textContent
+      estimateSub: (root.querySelector('.mopt-estimate-sub') || {}).textContent,
+      paneText: (root.querySelectorAll('.mopt-pane')[1] || {}).textContent,
+      buttons: Array.from(root.querySelectorAll('.mopt-foot button')).map(b => b.textContent).join(' | ')
     };
   });
   result.pageErrors = errors;
@@ -167,6 +169,24 @@ for (const width of [412, 360]) {
   check(r.clipped.length === 0,
     `${width}px: no dropdown truncates its own label${r.clipped.length ? ' (got: ' + r.clipped.join(', ') + ')' : ''}`);
   check(r.overflows === false, `${width}px: the dialog does not scroll sideways`);
+}
+
+// --- a file that is already converting --------------------------------------------------------
+// Opening the dialog on one used to show the form, offer "Start conversion", and have the server
+// refuse it. The job that is running right now is a better answer than that.
+console.log('\n=== a file that is already converting ===');
+{
+  const converting = JSON.parse(JSON.stringify(RECOVERED));
+  converting.HasActiveJob = true;
+  converting.ActiveJobId = 'job-1';
+
+  const r = await open(converting, 1280);
+
+  check(r.pageErrors.length === 0, `no page errors${r.pageErrors.length ? ': ' + r.pageErrors[0] : ''}`);
+  check(/Conversion queued|Encoding/.test(r.paneText || ''),
+    `the dialog shows the conversion rather than the form (${(r.paneText || '').slice(0, 60)})`);
+  check(!r.hasStart, 'and does not offer to start a second one');
+  check(/Cancel conversion/.test(r.buttons || ''), 'it offers to cancel the one that is running');
 }
 
 // --- every number says what kind of number it is ----------------------------------------------

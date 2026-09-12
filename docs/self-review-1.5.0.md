@@ -5,7 +5,7 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, eleven features,
+**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, twelve features,
 and the tests for both. Against the previous release the test suite goes from 174 to 463, and the
 browser suites from three to eight.
 
@@ -221,6 +221,8 @@ answer depends on one, and the Jellyfin-facing layer left honestly unverified.
 - **"Preview tonight's run"**: what every switched-on rule would take, in one answer, with each
   file naming the rule that would take it — which is the only way to see the effect of the order
   they are applied in.
+- **Opening a file that is already converting shows the conversion**, with its progress and a way
+  to stop it, rather than a form whose "Start conversion" the server would refuse.
 
 ## Dead weight removed rather than fixed
 

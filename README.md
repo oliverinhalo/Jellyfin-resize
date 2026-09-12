@@ -149,6 +149,9 @@ every job a rule queues says which rule queued it.
 Rules live on the dashboard page, and run as the scheduled task *Media Optimizer: automatic rules*,
 so you can move them, run them by hand, or switch them off from Jellyfin's own scheduled task page.
 
+Opening the dialog on a file that is already converting shows that conversion — its progress, and a
+button to stop it — rather than a form whose "Start conversion" the server would refuse.
+
 ### Measuring instead of predicting
 
 Every number the dialog shows before a conversion is modelled — anchored on the file's own bitrate

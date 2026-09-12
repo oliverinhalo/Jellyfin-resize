@@ -23,7 +23,9 @@ const ITEMS = Array.from({ length: 6 }, (_, i) => ({
   Id: 'id' + i, Name: 'Film ' + (i + 1) + ' (2021)', Type: 'Movie',
   Path: '/media/film' + i + '.mkv', Container: 'mkv', SizeBytes: (5 - i * 0.4) * 1024 ** 3,
   Height: [2160, 2160, 1080, 1080, 720, 1080][i], VideoCodec: 'hevc',
-  IsWatched: i % 2 === 0, HasActiveJob: i === 5,
+  IsWatched: i % 2 === 0,
+  // One of them is already converting: its row offers to show that rather than to start another.
+  HasActiveJob: i === 5,
   PotentialSavingBytes: i < 2 ? 1.8 * 1024 ** 3 : null,
   SavingBasis: i < 2 ? '1440p instead of 2160p' : null
 }));
@@ -161,6 +163,8 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
       historyJobs: document.querySelectorAll('#moptJobs .moptJob').length,
       stats: document.querySelectorAll('.moptStat').length,
       results: document.querySelectorAll('.moptItem').length,
+      itemButtons: Array.from(document.querySelectorAll('.moptItem button'))
+        .map(b => b.textContent + (b.disabled ? ' (disabled)' : '')),
       savingLines: Array.from(document.querySelectorAll('.moptItemMeta'))
         .filter(n => n.textContent.includes('to gain')).map(n => n.textContent),
       sortOptions: Array.from(document.querySelectorAll('#moptSort option')).map(o => o.value),
@@ -323,6 +327,11 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
     'and each file says which rule would take it');
   check(tonight.rows.some(r => /Already converted/.test(r)),
     'with the near-misses explained as well');
+
+  check((r.itemButtons || []).includes('Show progress'),
+    `a file already converting offers to show that (${(r.itemButtons || []).join(', ')})`);
+  check(!(r.itemButtons || []).some(b => b.includes('(disabled)')),
+    'and no row is left with a button that cannot be pressed');
 
   check(rulesView.editorEmptyBeforeAdding, 'the rule editor is closed until asked for');
   check(rulesView.fieldsAfterAdding >= 12, `the editor offers the rule's fields (${rulesView.fieldsAfterAdding})`);

@@ -591,6 +591,7 @@ public class MediaOptimizerController : ControllerBase
         }
 
         analysis.HasActiveJob = _store.HasActiveJobForItem(itemId);
+        analysis.ActiveJobId = _store.GetActive().FirstOrDefault(j => j.ItemId == itemId)?.Id;
 
         var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
         analysis.RecommendedStrategy = StrategyResolver.Recommend(analysis, caps).ToString();

@@ -132,9 +132,8 @@ tuning, activity-feed notifications, and the worklist ranked by what there is to
 3. **The rest of per-title tuning**: psy-rd, aq-mode, AV1 grain synthesis. These are numbers, and
    numbers want the search rather than a table: extend the search to them rather than adding
    dropdowns nobody can reason about.
-4. **Live progress in the injected dialog for a job it did not start**, so opening a file that is
-   already converting shows the encode rather than the form. The analysis already says whether a
-   job is active; it does not say which job, which is the missing piece.
+4. **Per-library defaults outside the rules engine** — a library that always wants MP4, or always
+   wants the originals kept, without writing a rule for it.
 
 Pick what is most valuable, say what you chose and why, build it properly with tests, bump the
 version in `build.yaml` and the csproj, repackage, push, and tell me what you could not verify.

@@ -386,6 +386,14 @@
             return;
         }
 
+        // A file that is already converting: show the conversion. The form would offer to start
+        // one, and the server would refuse it — which is a worse answer than the progress bar for
+        // the job that is running right now.
+        if (analysis.ActiveJobId) {
+            showProgress(shell, right, foot, { Id: analysis.ActiveJobId });
+            return;
+        }
+
         renderTargetForm(shell, right, foot, analysis, caps);
     }
 

@@ -116,6 +116,9 @@ changelog: |
   - Measuring and searching no longer hold the connection open while they work. A minute is
     longer than most reverse proxies will wait, so both now run on the server and the dialog asks
     how they are going — and closing the dialog stops the encoding instead of leaving it running.
+  - Opening the conversion dialog on a file that is already converting now shows that conversion,
+    with its progress and a way to cancel it, instead of a form the server would refuse. The
+    dashboard's file list offers "Show progress" for those rows rather than a greyed-out "Queued".
   - New: "Preview tonight's run" — what every switched-on rule would take, in one answer, with
     each file saying which rule would take it. Previewing one rule at a time only ever answered
     what that rule does.
