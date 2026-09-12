@@ -634,6 +634,7 @@ public class MediaProbeService : IMediaProbeService
             {
                 case "video" when analysis.Video is null:
                     var transfer = Text(s, "color_transfer");
+                    var pixelFormat = Text(s, "pix_fmt");
                     analysis.Video = new VideoTrackInfo
                     {
                         Index = index,
@@ -641,8 +642,8 @@ public class MediaProbeService : IMediaProbeService
                         Profile = profile,
                         Width = Int(s, "width"),
                         Height = Int(s, "height"),
-                        BitDepth = Int(s, "bits_per_raw_sample"),
-                        PixelFormat = Text(s, "pix_fmt"),
+                        BitDepth = Int(s, "bits_per_raw_sample") ?? BitDepthFromPixelFormat(pixelFormat),
+                        PixelFormat = pixelFormat,
                         FrameRate = ParseRational(s, "avg_frame_rate") is { } fps and > 0
                             ? (float)fps
                             : null,
@@ -696,6 +697,48 @@ public class MediaProbeService : IMediaProbeService
 
         analysis.Audio = audio;
         analysis.Subtitles = subs;
+    }
+
+    /// <summary>
+    /// Reads the bit depth out of a pixel format name.
+    /// <para>
+    /// ffprobe only reports bits_per_raw_sample for a minority of codecs — H.264 and HEVC usually
+    /// omit it — so a 10-bit file was being described as unknown depth, which then defaulted the
+    /// conversion to 8-bit and quietly threw away a bit of picture information the user never
+    /// agreed to lose. The pixel format always carries it.
+    /// </para>
+    /// </summary>
+    /// <param name="pixelFormat">A pixel format such as yuv420p10le or p010le.</param>
+    /// <returns>The bit depth, or null when the format says nothing useful.</returns>
+    internal static int? BitDepthFromPixelFormat(string? pixelFormat)
+    {
+        if (string.IsNullOrWhiteSpace(pixelFormat))
+        {
+            return null;
+        }
+
+        var format = pixelFormat.Trim().ToLowerInvariant();
+
+        // Covers both the planar names (yuv420p10le) and the packed hardware ones (p010le,
+        // p016le), since in every case the digits immediately before the endianness are the depth.
+        foreach (var depth in new[] { 16, 14, 12, 10, 9 })
+        {
+            if (format.Contains(depth.ToString(CultureInfo.InvariantCulture) + "le", StringComparison.Ordinal)
+                || format.Contains(depth.ToString(CultureInfo.InvariantCulture) + "be", StringComparison.Ordinal))
+            {
+                return depth;
+            }
+        }
+
+        // yuv420p, nv12, rgb24 and friends are all 8-bit.
+        return format.StartsWith("yuv", StringComparison.Ordinal)
+            || format.StartsWith("nv", StringComparison.Ordinal)
+            || format.StartsWith("gbr", StringComparison.Ordinal)
+            || format.StartsWith("rgb", StringComparison.Ordinal)
+            || format.StartsWith("bgr", StringComparison.Ordinal)
+            || format.StartsWith("gray", StringComparison.Ordinal)
+                ? 8
+                : null;
     }
 
     /// <summary>Maps ffprobe's colour transfer onto the dynamic-range label shown in the UI.</summary>
@@ -782,6 +825,12 @@ public class MediaProbeService : IMediaProbeService
             {
                 continue;
             }
+
+            // Jellyfin's own stream record often carries neither the pixel format nor the bit
+            // depth. Both are right here in the probe output, and the bit depth decides whether
+            // the conversion defaults to 8-bit or 10-bit.
+            analysis.Video.PixelFormat ??= Text(s, "pix_fmt");
+            analysis.Video.BitDepth ??= BitDepthFromPixelFormat(analysis.Video.PixelFormat);
 
             // r_frame_rate is the container's nominal rate, avg_frame_rate the measured one.
             // A meaningful gap between them is the practical signal for variable frame rate.

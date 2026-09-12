@@ -53,6 +53,16 @@ public class EncodePlanner : IEncodePlanner
             return new PlanResult { Warnings = warnings };
         }
 
+        // Sanity-check the numbers before they are turned into arguments. The request comes from
+        // an HTTP body, so it is whatever the caller sent; a quality of 500 or a height of -1
+        // would otherwise reach ffmpeg and come back as an error about an argument the user never
+        // typed, hours later if the dry run happened not to catch it.
+        ValidateRequest(request, warnings);
+        if (warnings.Any(w => w.Level == WarningLevel.Blocker))
+        {
+            return new PlanResult { Warnings = warnings };
+        }
+
         args.Add("-i");
         args.Add(analysis.Path);
 
@@ -234,6 +244,80 @@ public class EncodePlanner : IEncodePlanner
             IsLossless = isLossless,
             LosslessAudioChecks = losslessAudioChecks
         };
+    }
+
+    /// <summary>
+    /// Rejects values that cannot produce a working encode, with a message naming the setting.
+    /// </summary>
+    /// <param name="request">The request as submitted.</param>
+    /// <param name="warnings">Planner messages to add to.</param>
+    internal static void ValidateRequest(EncodeRequest request, List<PlanWarning> warnings)
+    {
+        // 0-63 covers every encoder this plugin offers: x264 and x265 stop at 51, AV1 and VP9
+        // go to 63. A value outside the union is a mistake whichever encoder is chosen.
+        if (request.Quality is not null && (request.Quality < 0 || request.Quality > 63))
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "QUALITY_RANGE",
+                FormattableString.Invariant($"Quality must be between 0 and 63; {request.Quality.Value} is outside what any encoder accepts.")));
+        }
+
+        if (request.TargetHeight is not null && (request.TargetHeight < 64 || request.TargetHeight > 4320))
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "HEIGHT_RANGE",
+                FormattableString.Invariant($"A target height of {request.TargetHeight.Value} is not a real resolution. Choose something between 64 and 4320.")));
+        }
+
+        if (request.TargetWidth is not null && (request.TargetWidth < 64 || request.TargetWidth > 8192))
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "WIDTH_RANGE",
+                FormattableString.Invariant($"A target width of {request.TargetWidth.Value} is not a real resolution. Leave it unset to keep the aspect ratio.")));
+        }
+
+        if (request.BitDepth is not null and not 8 and not 10 and not 12)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "BIT_DEPTH_RANGE",
+                FormattableString.Invariant($"{request.BitDepth.Value}-bit video is not a thing. Choose 8 or 10.")));
+        }
+
+        if (request.VideoBitrateBps is not null && request.VideoBitrateBps < 50_000)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "BITRATE_RANGE",
+                "A video bitrate below 50 kb/s would not produce a watchable picture."));
+        }
+
+        foreach (var track in request.AudioTracks)
+        {
+            if (track.Action != AudioAction.Encode)
+            {
+                continue;
+            }
+
+            if (track.BitrateBps is not null && (track.BitrateBps < 8_000 || track.BitrateBps > 5_000_000))
+            {
+                warnings.Add(new PlanWarning(
+                    WarningLevel.Blocker,
+                    "AUDIO_BITRATE_RANGE",
+                    FormattableString.Invariant($"An audio bitrate of {track.BitrateBps.Value / 1000} kb/s is outside anything an encoder will accept. Use between 8 and 5000 kb/s.")));
+            }
+
+            if (track.Channels is not null && (track.Channels < 1 || track.Channels > 8))
+            {
+                warnings.Add(new PlanWarning(
+                    WarningLevel.Blocker,
+                    "AUDIO_CHANNEL_RANGE",
+                    FormattableString.Invariant($"{track.Channels.Value} audio channels is not a layout any of these encoders can write. Use between 1 and 8.")));
+            }
+        }
     }
 
     /// <summary>
