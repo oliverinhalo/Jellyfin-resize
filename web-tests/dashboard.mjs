@@ -40,6 +40,24 @@ const STATS = {
   IsPaused: false
 };
 
+const RULES = [
+  { Id: 'r1', Name: 'Big 4K films', Enabled: true, Kinds: 'MoviesOnly', MinHeight: 2160,
+    MinSizeMb: 20480, Watched: 'Watched', AddedMoreThanDaysAgo: 30, Strategy: 'Medium',
+    MaxItemsPerRun: 3, MinSavingPercent: 15, UseHardware: false,
+    LastRunAt: '2026-05-30T03:00:00Z', TotalQueued: 7 },
+  { Id: 'r2', Name: 'Old DVD rips', Enabled: false, Kinds: 'Everything', VideoCodec: 'mpeg4',
+    Strategy: 'Standard', MaxItemsPerRun: 5, MinSavingPercent: 25, UseHardware: true,
+    TotalQueued: 0 }
+];
+const PREVIEW = {
+  DryRun: true, Considered: 912, Queued: 2, EstimatedSavingBytes: 31 * 1024 ** 3,
+  Items: [
+    { RuleId: 'r1', RuleName: 'Big 4K films', ItemId: 'i1', Name: 'A Long Film (2016)', Queued: true, EstimatedSavingBytes: 22 * 1024 ** 3 },
+    { RuleId: 'r1', RuleName: 'Big 4K films', ItemId: 'i2', Name: 'Another Film (2019)', Queued: true, EstimatedSavingBytes: 9 * 1024 ** 3 },
+    { RuleId: 'r1', RuleName: 'Big 4K films', ItemId: 'i3', Name: 'Already Done (2011)', Queued: false, SkippedReason: 'Already converted by this plugin.' }
+  ]
+};
+
 let failures = 0;
 const browser = await launchChromium();
 
@@ -68,7 +86,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
 
   await page.setContent(await page.evaluate(() => document.documentElement.outerHTML));
   // Re-stub after the content swap, then inject the page markup and fire pageshow.
-  await page.evaluate(({ diag, items, jobs, stats, html }) => {
+  await page.evaluate(({ diag, items, jobs, stats, rules, preview, html }) => {
     window.Dashboard = { alert: () => {}, confirm: () => Promise.resolve(), showLoadingMsg: () => {}, hideLoadingMsg: () => {} };
     window.__calls = [];
     window.ApiClient = {
@@ -80,6 +98,8 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
         if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'] }));
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
         if (u.includes('Statistics')) return Promise.resolve(JSON.stringify(stats));
+        if (u.includes('Rules/') && u.includes('Preview')) return Promise.resolve(JSON.stringify(preview));
+        if (u.includes('Rules')) return Promise.resolve(JSON.stringify(rules));
         if (u.includes('Jobs')) return Promise.resolve(JSON.stringify(jobs));
         return Promise.resolve('{}');
       }
@@ -92,7 +112,7 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
       old.replaceWith(s);
     });
     document.querySelector('#MediaOptimizerQueuePage').dispatchEvent(new Event('pageshow'));
-  }, { diag: DIAG, items: ITEMS, jobs: JOBS, stats: STATS, html: page_html });
+  }, { diag: DIAG, items: ITEMS, jobs: JOBS, stats: STATS, rules: RULES, preview: PREVIEW, html: page_html });
 
   await page.waitForTimeout(700);
 
@@ -127,6 +147,42 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
   check(r.results === 6, `file list renders (${r.results})`);
   check(!r.bodyScrollsSideways, 'page does not scroll sideways');
   check(logs.length === 0, `no page errors${logs.length ? ': ' + logs[0] : ''}`);
+
+  const rulesView = await page.evaluate(async () => {
+    const panel = document.querySelector('#moptRulesPanel');
+    panel.open = true;
+    const boxes = Array.from(document.querySelectorAll('.moptRule'));
+    const preview = await new Promise(resolve => {
+      const buttons = Array.from(boxes[0].querySelectorAll('button'));
+      const previewButton = buttons.find(b => b.textContent === 'Preview');
+      previewButton.click();
+      setTimeout(() => resolve(document.querySelector('#moptRulePreview').textContent), 400);
+    });
+    return {
+      hint: document.querySelector('#moptRulesHint').textContent,
+      count: boxes.length,
+      firstDescription: boxes[0].querySelector('.moptRuleWhen').textContent,
+      secondIsOff: boxes[1].classList.contains('off'),
+      firstStats: boxes[0].querySelector('.moptRuleStats').textContent,
+      preview: preview,
+      editorEmptyBeforeAdding: document.querySelector('#moptRuleEditor').textContent === '',
+      fieldsAfterAdding: (document.querySelector('#moptAddRule').click(),
+        document.querySelectorAll('#moptRuleEditor .moptFilter').length)
+    };
+  });
+
+  check(/2 saved, 1 on/.test(rulesView.hint || ''), `rules panel summarises (${rulesView.hint})`);
+  check(rulesView.count === 2, `both rules render (${rulesView.count})`);
+  check(/films/.test(rulesView.firstDescription) && /20 GB/.test(rulesView.firstDescription)
+    && /at most 3 per run/i.test(rulesView.firstDescription),
+    `a rule is described in words (${rulesView.firstDescription})`);
+  check(rulesView.secondIsOff, 'a rule that is switched off looks switched off');
+  check(/7 job\(s\) queued so far/.test(rulesView.firstStats), `a rule reports what it has done (${rulesView.firstStats})`);
+  check(/2 file\(s\) would be converted/.test(rulesView.preview), 'preview says how many files it would take');
+  check(/Already converted/.test(rulesView.preview), 'preview explains the near-misses too');
+  check(/912/.test(rulesView.preview), 'preview says how many items it looked at');
+  check(rulesView.editorEmptyBeforeAdding, 'the rule editor is closed until asked for');
+  check(rulesView.fieldsAfterAdding >= 12, `the editor offers the rule's fields (${rulesView.fieldsAfterAdding})`);
 
   // Jellyfin fires pageshow again every time the user navigates back to this page, reusing the
   // same element. Handlers bound on each pageshow stacked up, so after two visits one click on

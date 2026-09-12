@@ -1,4 +1,7 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using Jellyfin.Plugin.MediaOptimizer.Models;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Configuration;
@@ -184,6 +187,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool RegenerateTrickplayAfterReplace { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets the automatic rules. Empty by default, and every rule starts switched off:
+    /// nothing in this plugin converts anything until somebody has said so explicitly.
+    /// </summary>
+    public List<AutomationRule> Rules { get; set; } = new List<AutomationRule>();
+
+    /// <summary>
     /// Makes a copy of these settings, for callers that need to override one value for a single
     /// operation without touching what is saved.
     /// <para>
@@ -204,6 +213,28 @@ public class PluginConfiguration : BasePluginConfiguration
             if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
             {
                 property.SetValue(copy, property.GetValue(this));
+            }
+        }
+
+        // The rules are a mutable list. Copying the reference would mean an override made for one
+        // batch run could edit the saved rules, which is precisely what this method exists to
+        // prevent.
+        copy.Rules = Rules.Select(CloneRule).ToList();
+
+        return copy;
+    }
+
+    /// <summary>Copies one rule, property by property, by the same reflection rule.</summary>
+    /// <param name="rule">The rule to copy.</param>
+    /// <returns>An independent copy.</returns>
+    private static AutomationRule CloneRule(AutomationRule rule)
+    {
+        var copy = new AutomationRule();
+        foreach (var property in typeof(AutomationRule).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
+            {
+                property.SetValue(copy, property.GetValue(rule));
             }
         }
 

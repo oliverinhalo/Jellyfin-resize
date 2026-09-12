@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Jellyfin.Plugin.MediaOptimizer.Configuration;
+using Jellyfin.Plugin.MediaOptimizer.Models;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Tests;
@@ -40,6 +42,19 @@ public class ConfigurationCloneTests
         Assert.NotSame(source, copy);
         foreach (var property in properties)
         {
+            if (property.PropertyType == typeof(List<AutomationRule>))
+            {
+                // A list has to be copied by value, not by reference, or an override made for one
+                // run would edit the saved rules.
+                var original = (List<AutomationRule>)property.GetValue(source)!;
+                var copied = (List<AutomationRule>)property.GetValue(copy)!;
+                Assert.NotSame(original, copied);
+                Assert.Equal(original.Count, copied.Count);
+                Assert.Equal(original[0].Name, copied[0].Name);
+                Assert.NotSame(original[0], copied[0]);
+                continue;
+            }
+
             Assert.Equal(property.GetValue(source), property.GetValue(copy));
         }
     }
@@ -84,6 +99,11 @@ public class ConfigurationCloneTests
         if (type == typeof(long))
         {
             return (long)(current ?? 0L) + 7L;
+        }
+
+        if (type == typeof(List<AutomationRule>))
+        {
+            return new List<AutomationRule> { new AutomationRule { Name = "changed", Enabled = true } };
         }
 
         if (type.IsEnum)

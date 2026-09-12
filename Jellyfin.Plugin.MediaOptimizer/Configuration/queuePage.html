@@ -92,6 +92,29 @@
         </div>
       </details>
 
+      <details class="moptPanel" id="moptRulesPanel">
+        <summary class="moptSummary">
+          <strong>Automatic rules</strong>
+          <span class="moptSummaryHint" id="moptRulesHint">none</span>
+        </summary>
+        <div class="moptPanelBody">
+          <div class="moptStatNote">
+            Rules run once a night, as the "Media Optimizer: automatic rules" scheduled task, and
+            queue ordinary jobs — so everything else still applies: one conversion at a time, paused
+            while anyone is streaming, and the original untouched until the result passes
+            verification. Each rule takes the largest matching files first and stops at its own
+            per-run limit. Preview a rule before switching it on; a preview queues nothing.
+          </div>
+          <div id="moptRules"></div>
+          <div class="moptQueueBar">
+            <button is="emby-button" type="button" id="moptAddRule" class="raised emby-button">Add a rule</button>
+            <button is="emby-button" type="button" id="moptRunRules" class="raised emby-button">Run all enabled rules now</button>
+          </div>
+          <div id="moptRuleEditor"></div>
+          <div id="moptRulePreview"></div>
+        </div>
+      </details>
+
       <div class="verticalSection">
         <h2 class="sectionTitle">Queue</h2>
         <div id="moptStats" class="moptStats"></div>
@@ -172,6 +195,18 @@
     .moptSummaryHint{opacity:.6;font-size:12.5px}
     .moptPanelBody{padding:2px 13px 13px}
     .moptErr{color:#e05a50;margin-top:5px;font-size:13px}
+    .moptRule{border:1px solid rgba(128,128,128,.32);border-radius:5px;padding:11px 13px;margin-bottom:9px}
+    .moptRule.off{opacity:.62}
+    .moptRuleHead{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+    .moptRuleName{font-weight:600}
+    .moptRuleWhen{font-size:13px;opacity:.75;margin-top:4px}
+    .moptRuleStats{font-size:12.5px;opacity:.6;margin-top:3px}
+    .moptForm{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+    .moptForm .moptFilter{flex:1 1 170px}
+    .moptPreviewRow{display:flex;gap:10px;justify-content:space-between;font-size:13px;
+      padding:5px 0;border-bottom:1px solid rgba(128,128,128,.18)}
+    .moptPreviewRow:last-child{border-bottom:0}
+    .moptPreviewRow span:last-child{opacity:.65;text-align:right;min-width:0}
   </style>
 
   <script type="text/javascript">
@@ -378,6 +413,270 @@
         });
       }
 
+      // ---- automatic rules ---------------------------------------------------------------
+      var rules = [];
+
+      // Describes a rule in the words the user would use, so what it will do is legible without
+      // reading seven fields back individually.
+      function describeRule(r) {
+        var when = [];
+        if (r.Kinds === 'MoviesOnly') { when.push('films'); }
+        else if (r.Kinds === 'EpisodesOnly') { when.push('episodes'); }
+        else { when.push('anything'); }
+        if (r.MinHeight) { when.push(r.MinHeight + 'p and up'); }
+        if (r.MinSizeMb) { when.push('over ' + (r.MinSizeMb >= 1024
+          ? (r.MinSizeMb / 1024).toFixed(r.MinSizeMb % 1024 ? 1 : 0) + ' GB' : r.MinSizeMb + ' MB')); }
+        if (r.Container) { when.push(String(r.Container).toUpperCase()); }
+        if (r.VideoCodec) { when.push(String(r.VideoCodec).toUpperCase()); }
+        if (r.Watched === 'Watched') { when.push('watched by someone'); }
+        if (r.Watched === 'Unwatched') { when.push('not watched by anyone'); }
+        if (r.AddedMoreThanDaysAgo) { when.push('added over ' + r.AddedMoreThanDaysAgo + ' days ago'); }
+
+        var then = [{ Standard: 'a more efficient codec, same resolution',
+                      Medium: 'one step down in resolution',
+                      HighReduction: 'one step down and a lower bitrate',
+                      LosslessOnly: 'bit-exact changes only' }[r.Strategy] || r.Strategy];
+        if (r.TargetHeight) { then.push('forced to ' + r.TargetHeight + 'p'); }
+        if (r.OutputContainer) { then.push(String(r.OutputContainer).toUpperCase()); }
+        if (r.KeepAudioLanguages) { then.push('keeping ' + r.KeepAudioLanguages + ' audio'); }
+        if (r.UseHardware) { then.push('on the graphics card'); }
+
+        return 'Takes ' + when.join(', ') + ' → ' + then.join(', ') +
+          '. At most ' + r.MaxItemsPerRun + ' per run, and only when it saves at least ' +
+          r.MinSavingPercent + '%.';
+      }
+
+      function renderRules() {
+        var host = page.querySelector('#moptRules');
+        host.innerHTML = '';
+        var on = rules.filter(function (r) { return r.Enabled; }).length;
+        page.querySelector('#moptRulesHint').textContent = rules.length
+          ? rules.length + ' saved, ' + on + ' on' : 'none';
+
+        if (!rules.length) {
+          host.appendChild(el('div', 'moptEmpty',
+            'No rules yet. A rule converts matching files on a schedule, so the library keeps ' +
+            'itself in order without anyone picking files by hand.'));
+          return;
+        }
+
+        rules.forEach(function (r) {
+          var box = el('div', 'moptRule' + (r.Enabled ? '' : ' off'));
+          var head = el('div', 'moptRuleHead');
+          head.appendChild(el('span', 'moptRuleName', r.Name));
+          head.appendChild(el('span', 'moptTag', r.Enabled ? 'on' : 'off'));
+          box.appendChild(head);
+          box.appendChild(el('div', 'moptRuleWhen', describeRule(r)));
+
+          var stats = [];
+          if (r.LastRunAt) { stats.push('last ran ' + new Date(r.LastRunAt).toLocaleString()); }
+          else { stats.push('has never run'); }
+          stats.push(r.TotalQueued + ' job(s) queued so far');
+          box.appendChild(el('div', 'moptRuleStats', stats.join(' · ')));
+
+          var actions = el('div', 'moptActions');
+          function button(label, handler) {
+            var b = document.createElement('button');
+            b.setAttribute('is', 'emby-button');
+            b.type = 'button';
+            b.className = 'raised emby-button';
+            b.textContent = label;
+            b.addEventListener('click', function () {
+              b.disabled = true;
+              Promise.resolve(handler()).catch(function (e) {
+                Dashboard.alert({ message: (e && e.statusText) || 'That did not work.' });
+              }).then(function () { b.disabled = false; });
+            });
+            actions.appendChild(b);
+          }
+
+          button('Preview', function () { return previewRule(r); });
+          button(r.Enabled ? 'Switch off' : 'Switch on', function () {
+            var copy = JSON.parse(JSON.stringify(r));
+            copy.Enabled = !r.Enabled;
+            return saveRule(copy);
+          });
+          button('Edit', function () { openRuleEditor(r); });
+          button('Run now', function () {
+            return Dashboard.confirm('Run "' + r.Name + '" now? It will queue up to ' +
+              r.MaxItemsPerRun + ' conversion(s).', 'Run rule')
+              .then(function () { return api('POST', 'MediaOptimizer/Rules/Run?id=' + r.Id); })
+              .then(function (result) { showRuleResult(result, false); return loadRules(); });
+          });
+          button('Delete', function () {
+            return Dashboard.confirm('Delete "' + r.Name + '"? Jobs it already queued are unaffected.', 'Delete rule')
+              .then(function () { return api('DELETE', 'MediaOptimizer/Rules/' + r.Id); })
+              .then(loadRules);
+          });
+
+          box.appendChild(actions);
+          host.appendChild(box);
+        });
+      }
+
+      function loadRules() {
+        return api('GET', 'MediaOptimizer/Rules').then(function (r) {
+          rules = r || [];
+          renderRules();
+        }).catch(function () {
+          page.querySelector('#moptRules').textContent = 'Could not load the rules.';
+        });
+      }
+
+      function saveRule(rule) {
+        return api('POST', 'MediaOptimizer/Rules', rule)
+          .then(loadRules)
+          .catch(function (e) {
+            Dashboard.alert({
+              title: 'The rule was not saved',
+              message: (e && e.responseText) || (e && e.statusText) || 'Check the values and try again.'
+            });
+          });
+      }
+
+      function previewRule(rule) {
+        var host = page.querySelector('#moptRulePreview');
+        host.innerHTML = '';
+        host.appendChild(el('div', 'moptStatNote', 'Working out what "' + rule.Name + '" would take…'));
+        return api('POST', 'MediaOptimizer/Rules/' + rule.Id + '/Preview')
+          .then(function (result) { showRuleResult(result, true); })
+          .catch(function (e) {
+            host.innerHTML = '';
+            host.appendChild(el('div', 'moptErr', 'Preview failed: ' + ((e && e.statusText) || e)));
+          });
+      }
+
+      function showRuleResult(result, isPreview) {
+        var host = page.querySelector('#moptRulePreview');
+        host.innerHTML = '';
+        host.appendChild(el('div', 'moptSec'));
+
+        var taken = (result.Items || []).filter(function (i) { return i.Queued; });
+        var skipped = (result.Items || []).filter(function (i) { return !i.Queued; });
+
+        host.appendChild(el('div', 'moptStatValue',
+          isPreview
+            ? taken.length + ' file(s) would be converted'
+            : taken.length + ' file(s) queued'));
+        host.appendChild(el('div', 'moptStatNote',
+          'Looked at ' + result.Considered + ' item(s). ' +
+          (result.EstimatedSavingBytes > 0
+            ? 'Predicted saving ' + bytes(result.EstimatedSavingBytes) + '.'
+            : 'No overall saving predicted.')));
+
+        taken.concat(skipped).slice(0, 40).forEach(function (i) {
+          var row = el('div', 'moptPreviewRow');
+          row.appendChild(el('span', null, i.Name || i.ItemId));
+          row.appendChild(el('span', null, i.Queued
+            ? 'saves about ' + bytes(i.EstimatedSavingBytes)
+            : (i.SkippedReason || 'skipped')));
+          host.appendChild(row);
+        });
+      }
+
+      var RULE_FIELDS = [
+        ['Name', 'Name', 'text', null],
+        ['Kinds', 'Applies to', 'select', [['Everything', 'Films and episodes'], ['MoviesOnly', 'Films only'], ['EpisodesOnly', 'Episodes only']]],
+        ['MinHeight', 'Minimum resolution', 'select', [['', 'Any'], ['2160', '4K and up'], ['1440', '1440p and up'], ['1080', '1080p and up'], ['720', '720p and up']]],
+        ['MinSizeMb', 'Minimum size', 'select', [['', 'Any'], ['20480', '20 GB and up'], ['10240', '10 GB and up'], ['5120', '5 GB and up'], ['2048', '2 GB and up'], ['1024', '1 GB and up']]],
+        ['Container', 'Container', 'text', null],
+        ['VideoCodec', 'Video codec', 'text', null],
+        ['Watched', 'Watched', 'select', [['Any', 'Either'], ['Watched', 'Watched by someone'], ['Unwatched', 'Not watched by anyone']]],
+        ['AddedMoreThanDaysAgo', 'Only if added over (days) ago', 'number', null],
+        ['Strategy', 'Convert using', 'select', [['Standard', 'Standard — same resolution, better codec'], ['Medium', 'Medium — one step down'], ['HighReduction', 'High — one step down, lower bitrate'], ['LosslessOnly', 'Lossless only']]],
+        ['TargetHeight', 'Force a resolution', 'select', [['', 'Let the preset decide'], ['2160', '2160p'], ['1440', '1440p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']]],
+        ['OutputContainer', 'Container to write', 'select', [['', 'Best for each file'], ['mkv', 'MKV'], ['mp4', 'MP4']]],
+        ['OutputPolicy', 'The original file', 'select', [['', 'Plugin default'], ['Replace', 'Replace it'], ['ReplaceAndDelete', 'Replace and delete now'], ['Sidecar', 'Keep, save alongside'], ['AlternateVersion', 'Keep, add as a version']]],
+        ['KeepAudioLanguages', 'Keep audio languages', 'text', null],
+        ['KeepSubtitleLanguages', 'Keep subtitle languages', 'text', null],
+        ['MaxItemsPerRun', 'Files per run (at most)', 'number', null],
+        ['MinSavingPercent', 'Only when it saves at least (%)', 'number', null]
+      ];
+
+      function openRuleEditor(existing) {
+        var host = page.querySelector('#moptRuleEditor');
+        host.innerHTML = '';
+        page.querySelector('#moptRulePreview').innerHTML = '';
+
+        var draft = existing
+          ? JSON.parse(JSON.stringify(existing))
+          : { Name: 'New rule', Enabled: false, Kinds: 'Everything', Watched: 'Any',
+              AddedMoreThanDaysAgo: 30, Strategy: 'Standard', MaxItemsPerRun: 3,
+              MinSavingPercent: 15, UseHardware: false };
+
+        var form = el('div', 'moptForm');
+        RULE_FIELDS.forEach(function (field) {
+          var key = field[0], label = field[1], kind = field[2], options = field[3];
+          var wrap = el('div', 'moptFilter');
+          wrap.appendChild(el('label', null, label));
+
+          var input;
+          if (kind === 'select') {
+            input = document.createElement('select');
+            input.setAttribute('is', 'emby-select');
+            input.className = 'emby-select';
+            options.forEach(function (o) {
+              var opt = document.createElement('option');
+              opt.value = o[0];
+              opt.textContent = o[1];
+              if (String(draft[key] === null || draft[key] === undefined ? '' : draft[key]) === o[0]) {
+                opt.selected = true;
+              }
+              input.appendChild(opt);
+            });
+          } else {
+            input = document.createElement('input');
+            input.setAttribute('is', 'emby-input');
+            input.type = kind;
+            input.value = draft[key] === null || draft[key] === undefined ? '' : draft[key];
+          }
+
+          input.addEventListener('change', function () {
+            var value = input.value;
+            if (value === '') { draft[key] = kind === 'text' ? null : null; return; }
+            draft[key] = (kind === 'number' || /^(MinHeight|MinSizeMb|TargetHeight)$/.test(key))
+              ? Number(value) : value;
+          });
+
+          wrap.appendChild(input);
+          form.appendChild(wrap);
+        });
+        host.appendChild(form);
+
+        var hw = el('label', 'moptSelectAll');
+        var hwInput = document.createElement('input');
+        hwInput.type = 'checkbox';
+        hwInput.checked = !!draft.UseHardware;
+        hwInput.addEventListener('change', function () { draft.UseHardware = hwInput.checked; });
+        hw.appendChild(hwInput);
+        hw.appendChild(el('span', null, 'Encode on the graphics card (faster, larger files)'));
+        host.appendChild(hw);
+
+        var bar = el('div', 'moptQueueBar');
+        var save = document.createElement('button');
+        save.setAttribute('is', 'emby-button');
+        save.type = 'button';
+        save.className = 'raised button-submit emby-button';
+        save.textContent = 'Save rule';
+        save.addEventListener('click', function () {
+          save.disabled = true;
+          saveRule(draft).then(function () { host.innerHTML = ''; save.disabled = false; });
+        });
+        bar.appendChild(save);
+
+        var cancel = document.createElement('button');
+        cancel.setAttribute('is', 'emby-button');
+        cancel.type = 'button';
+        cancel.className = 'raised emby-button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', function () { host.innerHTML = ''; });
+        bar.appendChild(cancel);
+        host.appendChild(bar);
+
+        host.appendChild(el('div', 'moptStatNote',
+          'A new rule is saved switched off. Preview it, then switch it on when it takes what you expected.'));
+      }
+
       // ---- queue -----------------------------------------------------------------------
       function renderJobs(jobs) {
         var host = page.querySelector('#moptJobs');
@@ -535,6 +834,16 @@
 
         page.querySelector('#moptBatch').addEventListener('click', openBatch);
 
+        page.querySelector('#moptAddRule').addEventListener('click', function () { openRuleEditor(null); });
+
+        page.querySelector('#moptRunRules').addEventListener('click', function () {
+          Dashboard.confirm('Run every rule that is switched on, now?', 'Run rules')
+            .then(function () { return api('POST', 'MediaOptimizer/Rules/Run'); })
+            .then(function (result) { showRuleResult(result, false); return loadRules(); })
+            .then(refresh)
+            .catch(function () {});
+        });
+
         page.querySelector('#moptPause').addEventListener('click', function (e) {
           var paused = e.target.dataset.paused === '1';
           api('POST', 'MediaOptimizer/Queue/' + (paused ? 'Resume' : 'Pause')).then(refresh)
@@ -565,6 +874,7 @@
 
         renderDiagnostics();
         loadFacets();
+        loadRules();
         search();
         refresh();
 

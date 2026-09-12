@@ -22,6 +22,7 @@ public class ApiSurfaceTests
         typeof(MediaOptimizerController),
         typeof(QueueControlController),
         typeof(DiagnosticsController),
+        typeof(RulesController),
         typeof(ClientAssetController)
     ];
 
@@ -29,8 +30,15 @@ public class ApiSurfaceTests
         controller.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(m => m.GetCustomAttributes<HttpMethodAttribute>().Any());
 
+    /// <summary>
+    /// Whether an administrator is required, counting a policy declared on the controller as
+    /// covering every action on it — which is how ASP.NET actually applies it.
+    /// </summary>
+    /// <param name="action">The action method.</param>
+    /// <returns>Whether the action demands an administrator.</returns>
     private static bool RequiresElevation(MethodInfo action) =>
         action.GetCustomAttributes<AuthorizeAttribute>()
+            .Concat(action.DeclaringType?.GetCustomAttributes<AuthorizeAttribute>() ?? [])
             .Any(a => string.Equals(a.Policy, "RequiresElevation", StringComparison.Ordinal));
 
     private static string Route(MethodInfo action) =>
@@ -139,6 +147,72 @@ public class ApiSurfaceTests
                 Assert.DoesNotContain("text/html", produces, StringComparer.OrdinalIgnoreCase);
             }
         }
+    }
+
+    /// <summary>
+    /// A rule rewrites files on a schedule, so reading, writing and previewing them is all
+    /// administrator-only — including the read, because a rule describes the library.
+    /// </summary>
+    [Fact]
+    public void Every_rule_endpoint_demands_an_administrator()
+    {
+        var controllerPolicy = typeof(RulesController).GetCustomAttributes<AuthorizeAttribute>()
+            .Any(a => string.Equals(a.Policy, "RequiresElevation", StringComparison.Ordinal));
+
+        Assert.True(controllerPolicy, "The rules controller must require an administrator for everything on it.");
+        Assert.All(Actions(typeof(RulesController)), action =>
+            Assert.Empty(action.GetCustomAttributes<AllowAnonymousAttribute>()));
+    }
+
+    /// <summary>
+    /// A rule with no ceiling queues the whole library on its first run, at three in the morning.
+    /// The validation is the only thing standing between a typo and that.
+    /// </summary>
+    [Theory]
+    [InlineData(0, 15, "between 1 and 500")]
+    [InlineData(100000, 15, "between 1 and 500")]
+    [InlineData(3, 150, "between 0 and 99")]
+    [InlineData(3, -5, "between 0 and 99")]
+    public void An_unusable_rule_is_refused_with_a_reason(int perRun, int savingPercent, string expected)
+    {
+        var error = RulesController.Validate(new Jellyfin.Plugin.MediaOptimizer.Models.AutomationRule
+        {
+            Name = "Rule",
+            MaxItemsPerRun = perRun,
+            MinSavingPercent = savingPercent
+        });
+
+        Assert.NotNull(error);
+        Assert.Contains(expected, error!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_rule_without_a_name_is_refused()
+    {
+        var error = RulesController.Validate(new Jellyfin.Plugin.MediaOptimizer.Models.AutomationRule
+        {
+            Name = "   ",
+            MaxItemsPerRun = 3,
+            MinSavingPercent = 15
+        });
+
+        Assert.NotNull(error);
+        Assert.Contains("name", error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_sensible_rule_is_accepted()
+    {
+        Assert.Null(RulesController.Validate(new Jellyfin.Plugin.MediaOptimizer.Models.AutomationRule
+        {
+            Name = "Big 4K films",
+            MaxItemsPerRun = 3,
+            MinSavingPercent = 15,
+            MinHeight = 2160,
+            TargetHeight = 1080,
+            MinSizeMb = 20480,
+            AddedMoreThanDaysAgo = 30
+        }));
     }
 
     /// <summary>The script is cacheable, so the browser has to be able to tell when it changed.</summary>
