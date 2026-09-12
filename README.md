@@ -375,6 +375,14 @@ Copy `Jellyfin.Plugin.MediaOptimizer/bin/Release/net9.0/Jellyfin.Plugin.MediaOpt
 `plugins/MediaOptimizer` folder inside your Jellyfin **data** directory (not the install
 directory), then restart.
 
+## How it is reviewed
+
+Each release carries a written self-review: what was checked, what was found, and what was not
+verified. [`docs/self-review-1.5.0.md`](docs/self-review-1.5.0.md) is the current one, including the
+six defects that review found in the same release's own new code.
+
+---
+
 ## Development
 
 ```bash
