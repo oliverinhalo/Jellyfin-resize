@@ -98,14 +98,39 @@ public class OperationRegistry : IOperationRegistry, IDisposable
     /// </summary>
     internal const int MaxOperations = 50;
 
+    /// <summary>
+    /// The longest any one operation may run.
+    /// <para>
+    /// It exists because the work now outlives the request that asked for it. A browser tab closed
+    /// mid-search sends nothing — the dialog's own cancel never happens — and before this work was
+    /// moved off the request, a dropped connection was what stopped the encoding. An hour is long
+    /// enough for the slowest server to finish a quality search on a long film, and short enough
+    /// that a forgotten one cannot hold an ffmpeg for ever.
+    /// </para>
+    /// </summary>
+    internal static readonly TimeSpan TimeLimit = TimeSpan.FromHours(1);
+
     private readonly ConcurrentDictionary<Guid, Entry> _entries = new();
     private readonly ILogger<OperationRegistry> _logger;
+    private readonly TimeSpan _limit;
 
     /// <summary>Initializes a new instance of the <see cref="OperationRegistry"/> class.</summary>
     /// <param name="logger">Logger.</param>
     public OperationRegistry(ILogger<OperationRegistry> logger)
+        : this(logger, TimeLimit)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="OperationRegistry"/> class with an explicit
+    /// time limit, so that the limit itself can be tested without waiting an hour.
+    /// </summary>
+    /// <param name="logger">Logger.</param>
+    /// <param name="limit">The longest any one operation may run.</param>
+    internal OperationRegistry(ILogger<OperationRegistry> logger, TimeSpan limit)
     {
         _logger = logger;
+        _limit = limit;
     }
 
     /// <inheritdoc />
@@ -118,7 +143,7 @@ public class OperationRegistry : IOperationRegistry, IDisposable
         var entry = new Entry
         {
             State = new OperationState { Id = Guid.NewGuid(), Kind = kind, Status = OperationStatus.Running },
-            Cancellation = new CancellationTokenSource()
+            Cancellation = new CancellationTokenSource(_limit)
         };
 
         var id = entry.State.Id;
@@ -145,7 +170,24 @@ public class OperationRegistry : IOperationRegistry, IDisposable
             catch (OperationCanceledException)
             {
                 finished.Status = OperationStatus.Cancelled;
-                finished.Error = "Stopped.";
+
+                // Somebody closing the dialog and an operation running out of time both arrive
+                // here, and they are not the same thing to whoever reads it. Which one it was is
+                // recorded rather than inferred from the clock: the deadline's own timer can fire
+                // a hair before the wall-clock time it was set for.
+                var expired = !entry.StoppedDeliberately;
+                finished.Error = expired
+                    ? FormattableString.Invariant(
+                        $"Stopped after {_limit.TotalMinutes:F0} minutes without finishing.")
+                    : "Stopped.";
+
+                if (expired)
+                {
+                    _logger.LogWarning(
+                        "[MediaOptimizer] {Kind} ran out of time after {Minutes} minutes",
+                        kind,
+                        _limit.TotalMinutes);
+                }
             }
 #pragma warning disable CA1031 // A failure here is an answer to report, never an unhandled crash.
             catch (Exception ex)
@@ -180,6 +222,7 @@ public class OperationRegistry : IOperationRegistry, IDisposable
 
         try
         {
+            entry.StoppedDeliberately = true;
             entry.Cancellation.Cancel();
         }
         catch (ObjectDisposedException)
@@ -198,6 +241,7 @@ public class OperationRegistry : IOperationRegistry, IDisposable
         {
             try
             {
+                entry.StoppedDeliberately = true;
                 entry.Cancellation.Cancel();
                 entry.Cancellation.Dispose();
             }
@@ -260,6 +304,9 @@ public class OperationRegistry : IOperationRegistry, IDisposable
         }
 
         public CancellationTokenSource Cancellation { get; init; } = new CancellationTokenSource();
+
+        /// <summary>Whether something asked this to stop, as opposed to it running out of time.</summary>
+        public bool StoppedDeliberately { get; set; }
 
         public void Publish(OperationState next) => Volatile.Write(ref _state, next);
     }

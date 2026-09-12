@@ -5,9 +5,9 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Thirty-two defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 455, and the browser
-suites from three to seven.
+**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, ten features,
+and the tests for both. Against the previous release the test suite goes from 174 to 457, and the
+browser suites from three to seven.
 
 ---
 
@@ -119,7 +119,15 @@ the part of a self-review that is actually worth reading.
    wrong thing is the one failure a measurement cannot have. The loop now always ends on a setting
    it has actually measured, and the test asserts exactly that relationship rather than a
    particular value.
-10. **Measuring and searching held an HTTP request open for minutes.** Sixty seconds is the default
+10. **Moving that work off the request took away the thing that stopped it.** A browser tab
+    closed mid-search sends nothing — the dialog's own cancel never happens — and a dropped
+    connection was exactly what used to stop the encoding. So an operation now has a deadline of
+    its own: an hour, which is long enough for the slowest server to finish a search on a long
+    film and short enough that a forgotten one cannot hold an ffmpeg for ever. Which of the two
+    stopped it is recorded rather than worked out from the clock, because a deadline's own timer
+    can fire a hair before the time it was set for — and "stopped" and "ran out of time" are not
+    the same message to whoever reads it.
+11. **Measuring and searching held an HTTP request open for minutes.** Sixty seconds is the default
     read timeout in nearly every reverse proxy in front of a Jellyfin server, so a one-minute
     measurement was already marginal and a five-minute search would have failed for most people —
     looking exactly like a broken feature while the server carried on encoding for another four
@@ -136,7 +144,7 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **455 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
+- **457 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared

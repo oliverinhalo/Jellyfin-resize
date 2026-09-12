@@ -206,4 +206,44 @@ public class OperationRegistryTests
         var finished = await Task.WhenAny(stopped.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         Assert.Same(stopped.Task, finished);
     }
+
+    /// <summary>
+    /// The work outlives the request that asked for it, which means nothing stops it if the
+    /// browser goes away: a closed tab sends no cancellation, and before this work was moved off
+    /// the request, a dropped connection was exactly what stopped the encoding. So it has a
+    /// deadline of its own.
+    /// </summary>
+    [Fact]
+    public async Task An_operation_nobody_is_waiting_for_any_more_runs_out_of_time()
+    {
+        using var registry = new OperationRegistry(
+            NullLogger<OperationRegistry>.Instance,
+            TimeSpan.FromMilliseconds(200));
+
+        var id = registry.Start("search", async token =>
+        {
+            await Task.Delay(Timeout.Infinite, token);
+            return "never";
+        });
+
+        var state = await SettleAsync(registry, id);
+
+        Assert.Equal(OperationStatus.Cancelled, state.Status);
+        Assert.Contains("without finishing", state.Error!, StringComparison.Ordinal);
+    }
+
+    /// <summary>And an operation that finishes in time is not blamed for the deadline.</summary>
+    [Fact]
+    public async Task Finishing_in_time_is_not_reported_as_running_out_of_it()
+    {
+        using var registry = new OperationRegistry(
+            NullLogger<OperationRegistry>.Instance,
+            TimeSpan.FromSeconds(30));
+
+        var id = registry.Start("measure", _ => Task.FromResult<object>("done"));
+        var state = await SettleAsync(registry, id);
+
+        Assert.Equal(OperationStatus.Completed, state.Status);
+        Assert.Null(state.Error);
+    }
 }
