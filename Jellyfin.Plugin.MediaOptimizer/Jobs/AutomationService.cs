@@ -97,6 +97,12 @@ public class AutomationService : IAutomationService
             return result;
         }
 
+        // Asking for one rule by name is an explicit act: previewing it, or running it by hand.
+        // Both are how a rule gets written in the first place -- see what it would take, then
+        // switch it on -- so being switched off does not stop them. The scheduled run passes no
+        // id, and there "off" means off.
+        var explicitRule = ruleId is not null;
+
         var candidates = _candidates.GetCandidates(cancellationToken);
         result.Considered = candidates.Count;
 
@@ -130,7 +136,7 @@ public class AutomationService : IAutomationService
                     continue;
                 }
 
-                var decision = RuleMatcher.Evaluate(rule, candidate, now);
+                var decision = RuleMatcher.Evaluate(rule, candidate, now, explicitRule);
                 if (!decision.Matches)
                 {
                     // Only the near-misses are reported: a library of ten thousand items would
@@ -270,6 +276,13 @@ public class AutomationService : IAutomationService
                 Queued = true,
                 EstimatedSavingBytes = saving
             };
+        }
+
+        // The candidate list was taken at the start of the run, and a run over a large library
+        // spends minutes probing files. Somebody may have queued this one by hand in between.
+        if (_store.HasActiveJobForItem(candidate.ItemId))
+        {
+            return Skip(rule, candidate, "Already queued or converting.");
         }
 
         var job = new EncodeJob

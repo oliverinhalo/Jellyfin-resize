@@ -257,19 +257,42 @@ public class AutomationServiceTests
         Assert.True(result.EstimatedSavingBytes > 0);
     }
 
-    /// <summary>A preview has to work on a rule that is switched off — that is when it is used.</summary>
+    /// <summary>
+    /// Previewing a rule that is switched off is the entire point of previewing: a new rule is
+    /// saved off, and the way to decide whether to switch it on is to see what it would take. A
+    /// preview that answered "nothing, because the rule is off" would be useless.
+    /// </summary>
     [Fact]
     public async Task A_disabled_rule_can_still_be_previewed_by_id()
     {
         var rule = Rule();
         rule.Enabled = false;
-        var (service, _, _, _) = Build([Item("Film", 40)], rule);
+        var (service, store, _, _) = Build([Item("Film", 40)], rule);
 
         var result = await service.RunAsync(dryRun: true, ruleId: rule.Id, CancellationToken.None);
 
-        // The matcher refuses a disabled rule, so the preview reports nothing queued rather than
-        // pretending the rule is on.
-        Assert.Equal(0, result.Queued);
+        Assert.Equal(1, result.Queued);
+        Assert.Empty(store.Jobs);
+    }
+
+    /// <summary>
+    /// Running one rule by hand is an explicit act too, so it works on a rule that is off — but
+    /// the scheduled run, which passes no id, must never touch one.
+    /// </summary>
+    [Fact]
+    public async Task A_disabled_rule_runs_when_asked_for_by_name_but_never_on_the_schedule()
+    {
+        var rule = Rule();
+        rule.Enabled = false;
+        var (service, store, _, _) = Build([Item("Film", 40)], rule);
+
+        var scheduled = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+        Assert.Equal(0, scheduled.Queued);
+        Assert.Empty(store.Jobs);
+
+        var byHand = await service.RunAsync(dryRun: false, ruleId: rule.Id, CancellationToken.None);
+        Assert.Equal(1, byHand.Queued);
+        Assert.Single(store.Jobs);
     }
 
     [Fact]
@@ -391,6 +414,26 @@ public class AutomationServiceTests
         await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
         Assert.Equal("eng", settings.Configuration.KeepAudioLanguages);
+    }
+
+    /// <summary>
+    /// The candidate list is taken once, and a run over a large library spends minutes probing
+    /// files. Somebody queueing the same item by hand in between must not get a second job.
+    /// </summary>
+    [Fact]
+    public async Task An_item_queued_by_hand_mid_run_is_not_queued_again()
+    {
+        var item = Item("Film", 40);
+        var (service, store, _, _) = Build([item], Rule());
+
+        // Exactly what a user clicking "Optimize…" during the run would leave behind.
+        store.Add(new EncodeJob { ItemId = item.ItemId, ItemName = "Film", Status = JobStatus.Queued });
+
+        var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+
+        Assert.Equal(0, result.Queued);
+        Assert.Single(store.Jobs);
+        Assert.Contains(result.Items, i => i.SkippedReason!.Contains("Already queued", StringComparison.Ordinal));
     }
 
     [Fact]

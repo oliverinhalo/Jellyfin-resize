@@ -19,13 +19,23 @@ public static class RuleMatcher
     /// <param name="rule">The rule.</param>
     /// <param name="candidate">The item's facts.</param>
     /// <param name="now">The current time, so the age filter is testable.</param>
+    /// <param name="ignoreEnabled">
+    /// Whether to apply the rule even though it is switched off. True when a person has asked for
+    /// this one rule by name — previewing it, or running it by hand — which is the whole way a
+    /// rule is meant to be written: see what it takes, then switch it on. False for the scheduled
+    /// run, where "off" means off.
+    /// </param>
     /// <returns>The decision, with a reason when the answer is no.</returns>
-    public static RuleDecision Evaluate(AutomationRule rule, RuleCandidate candidate, DateTime now)
+    public static RuleDecision Evaluate(
+        AutomationRule rule,
+        RuleCandidate candidate,
+        DateTime now,
+        bool ignoreEnabled = false)
     {
         ArgumentNullException.ThrowIfNull(rule);
         ArgumentNullException.ThrowIfNull(candidate);
 
-        if (!rule.Enabled)
+        if (!rule.Enabled && !ignoreEnabled)
         {
             return RuleDecision.No("The rule is switched off.");
         }

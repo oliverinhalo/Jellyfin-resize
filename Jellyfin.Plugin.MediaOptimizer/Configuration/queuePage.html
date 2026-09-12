@@ -507,7 +507,8 @@
           button('Edit', function () { openRuleEditor(r); });
           button('Run now', function () {
             return Dashboard.confirm('Run "' + r.Name + '" now? It will queue up to ' +
-              r.MaxItemsPerRun + ' conversion(s).', 'Run rule')
+              r.MaxItemsPerRun + ' conversion(s)' +
+              (r.Enabled ? '.' : ', even though this rule is switched off.'), 'Run rule')
               .then(function () { return api('POST', 'MediaOptimizer/Rules/Run?id=' + r.Id); })
               .then(function (result) { showRuleResult(result, false); return loadRules(); });
           });
@@ -557,7 +558,6 @@
       function showRuleResult(result, isPreview) {
         var host = page.querySelector('#moptRulePreview');
         host.innerHTML = '';
-        host.appendChild(el('div', 'moptSec'));
 
         var taken = (result.Items || []).filter(function (i) { return i.Queued; });
         var skipped = (result.Items || []).filter(function (i) { return !i.Queued; });
@@ -641,7 +641,9 @@
 
           input.addEventListener('change', function () {
             var value = input.value;
-            if (value === '') { draft[key] = kind === 'text' ? null : null; return; }
+            // An empty field means "no filter", which the server reads as null rather than as 0 —
+            // a minimum height of 0 and no minimum height are not the same rule.
+            if (value === '') { draft[key] = null; return; }
             draft[key] = (kind === 'number' || /^(MinHeight|MinSizeMb|TargetHeight)$/.test(key))
               ? Number(value) : value;
           });
