@@ -1,8 +1,13 @@
 name: build
 
 on:
+  # The default branch by name, and every pull request. A branch with an open pull request would
+  # otherwise be built twice for each push -- once for the branch and once for the merge ref --
+  # and the two runs cannot be deduplicated by the concurrency group below, because their refs
+  # differ. Work happens on branches that become pull requests immediately, so the pull_request
+  # trigger is what actually covers it.
   push:
-    branches: [main, "claude/**"]
+    branches: [main, "claude/jellyfin-media-optimizer-92xiw8"]
   pull_request:
   workflow_dispatch:
 
