@@ -125,6 +125,13 @@ changelog: |
   - Rules can be reordered. They are applied top to bottom and the first one to take a file keeps
     it, so with two rules that overlap, which one is above decides which converts the file — and
     there was no way to change it. Every job a rule queues now says which rule queued it.
+  - A failed save on the settings page now says so. It did nothing at all: the loading overlay
+    stayed up, no message appeared, and the settings were the old ones — so a page whose save had
+    failed looked exactly like one whose save had worked. Settings that cannot be read now say
+    that too, and warn you not to save a form that is showing its defaults over them.
+  - The totals and the conversion queue on the Conversions page now say when they could not be
+    read. A failed request and an empty queue looked identical, on the one page somebody opens to
+    check whether last night's conversions actually ran.
 
   ### 1.4.4.0
   - Fixed the dialog showing a file as having no video and no audio, with a blank duration and

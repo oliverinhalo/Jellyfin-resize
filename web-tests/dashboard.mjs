@@ -104,7 +104,11 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
         if (u.includes('Diagnostics')) return Promise.resolve(JSON.stringify(diag));
         if (u.includes('Library/Facets')) return Promise.resolve(JSON.stringify({ containers: ['mkv', 'mp4'], codecs: ['hevc', 'h264'], libraries: ['Films', 'TV'] }));
         if (u.includes('Library/Search')) return Promise.resolve(JSON.stringify(items));
-        if (u.includes('Statistics')) return Promise.resolve(JSON.stringify(stats));
+        if (u.includes('Statistics')) {
+          return window.__failStats
+            ? Promise.reject({ status: 503, statusText: 'Service Unavailable' })
+            : Promise.resolve(JSON.stringify(stats));
+        }
         if (u.endsWith('Rules/Preview')) {
           return Promise.resolve(JSON.stringify({
             DryRun: true, Considered: 912, Queued: 2, EstimatedSavingBytes: 26 * 1024 ** 3,
@@ -134,7 +138,11 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
           return Promise.resolve(JSON.stringify(rules));
         }
         if (u.includes('Rules')) return Promise.resolve(JSON.stringify(rules));
-        if (u.includes('Jobs')) return Promise.resolve(JSON.stringify(jobs));
+        if (u.includes('Jobs')) {
+          return window.__failJobs
+            ? Promise.reject({ status: 500, statusText: 'Internal Server Error' })
+            : Promise.resolve(JSON.stringify(jobs));
+        }
         return Promise.resolve('{}');
       }
     };
@@ -348,6 +356,41 @@ for (const vp of [{ name: 'desktop', width: 1280, height: 1000 }, { name: 'mobil
     return window.__calls.filter(c => c.includes('Queue/Pause') || c.includes('Queue/Resume')).length;
   });
   check(repeated === 1, `one click still sends one request after re-navigating (sent ${repeated})`);
+
+  // A read that fails and a queue with nothing in it looked identical: both left the panel empty.
+  // That is the one failure on this page that matters, because the person looking at it is
+  // usually checking whether an overnight run is happening.
+  const failedRead = await page.evaluate(async () => {
+    window.__failJobs = true;
+    window.__failStats = true;
+    document.querySelector('#MediaOptimizerQueuePage').dispatchEvent(new Event('pageshow'));
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      jobs: (document.querySelector('#moptJobs') || {}).textContent || '',
+      stats: (document.querySelector('#moptStats') || {}).textContent || '',
+      errors: document.querySelectorAll('.moptErr').length
+    };
+  });
+
+  check(/Could not read the conversion queue/.test(failedRead.jobs),
+    `a queue read that fails says so (${failedRead.jobs.slice(0, 80)})`);
+  check(/Internal Server Error/.test(failedRead.jobs),
+    'and quotes what the server said, so it can be looked up');
+  check(/unaffected/.test(failedRead.jobs),
+    'and says the queue itself is not the thing that broke');
+  check(/Could not read the totals/.test(failedRead.stats),
+    `a statistics read that fails says so too (${failedRead.stats.slice(0, 60)})`);
+  check(logs.length === 0,
+    `and neither leaves an unhandled error behind${logs.length ? ': ' + logs[0] : ''}`);
+
+  // Put the page back into its working state so the screenshot below is of the dashboard rather
+  // than of the banner just tested.
+  await page.evaluate(async () => {
+    window.__failJobs = false;
+    window.__failStats = false;
+    document.querySelector('#MediaOptimizerQueuePage').dispatchEvent(new Event('pageshow'));
+    await new Promise(r => setTimeout(r, 400));
+  });
 
   fs.mkdirSync(path.join(here, 'shots'), { recursive: true });
   await page.screenshot({ path: path.join(here, 'shots', `dashboard-${vp.name}.png`), fullPage: true });

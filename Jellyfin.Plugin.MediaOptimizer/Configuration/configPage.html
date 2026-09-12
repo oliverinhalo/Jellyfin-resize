@@ -339,6 +339,17 @@
             if (input) { input.checked = !!config[name]; }
           });
           Dashboard.hideLoadingMsg();
+        }).catch(function (e) {
+          // Without this the spinner never stops and the form shows its defaults, which reads as
+          // "every setting is back to how it shipped" rather than "these could not be read".
+          Dashboard.hideLoadingMsg();
+          Dashboard.alert({
+            title: 'Could not read the settings',
+            message: 'The saved settings could not be loaded'
+              + ((e && e.statusText) ? ': ' + e.statusText : '')
+              + '. What is shown below is the defaults, so do not save this page — reload it '
+              + 'instead, or the settings you cannot see will be overwritten.'
+          });
         });
       });
 
@@ -363,8 +374,20 @@
             var input = page.querySelector('#' + name);
             if (input) { config[name] = input.checked; }
           });
-          ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+          return ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
             Dashboard.processPluginConfigurationUpdateResult(result);
+          });
+        }).catch(function (e) {
+          // A save that fails silently is the worst of these: the spinner stops eventually, the
+          // page looks exactly as it does after a successful save, and the settings are the old
+          // ones. Whether the read or the write failed, nothing was changed.
+          Dashboard.hideLoadingMsg();
+          Dashboard.alert({
+            title: 'Nothing was saved',
+            message: 'The settings could not be saved'
+              + ((e && e.statusText) ? ': ' + e.statusText : '')
+              + '. They are unchanged — try again, and if it keeps failing look at the status '
+              + 'panel on the Conversions page.'
           });
         });
         return false;

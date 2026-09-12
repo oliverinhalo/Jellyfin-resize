@@ -890,8 +890,23 @@
       }
 
       function refresh() {
-        api('GET', 'MediaOptimizer/Statistics').then(renderStats).catch(function () {});
-        return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function () {});
+        // Both of these used to fail silently, which for the queue is the worst possible
+        // outcome: a request that failed and an empty queue look exactly the same, so somebody
+        // waiting on an overnight run would be told nothing is happening.
+        api('GET', 'MediaOptimizer/Statistics').then(renderStats).catch(function (e) {
+          var host = page.querySelector('#moptStats');
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptErr',
+            'Could not read the totals: ' + ((e && e.statusText) || e) + '.'));
+        });
+
+        return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function (e) {
+          var host = page.querySelector('#moptJobs');
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptErr',
+            'Could not read the conversion queue: ' + ((e && e.statusText) || e) +
+            '. The queue itself is unaffected — this page could not ask about it.'));
+        });
       }
 
       // Jellyfin raises pageshow every time the user navigates back to this page, and the page

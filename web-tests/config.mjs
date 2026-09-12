@@ -69,11 +69,14 @@ const doc = window.document;
 
 let saved = null;
 
+const alerts = [];
+let spinner = 0;
+
 window.Dashboard = {
-    showLoadingMsg: () => {},
-    hideLoadingMsg: () => {},
+    showLoadingMsg: () => { spinner++; },
+    hideLoadingMsg: () => { spinner--; },
     processPluginConfigurationUpdateResult: () => {},
-    alert: () => {}
+    alert: options => { alerts.push(options); }
 };
 
 window.ApiClient = {
@@ -143,6 +146,40 @@ ok(saved && saved.QuarantineRetentionDays === 14,
 ok(saved && Array.isArray(saved.Rules) && saved.Rules.length === 1,
     'settings the page does not show survive a save');
 ok(saved && saved.Rules[0].Name === 'The anime library', 'and survive intact');
+
+console.log('\n=== and says so when the server does not answer ===');
+
+// A save that fails silently is indistinguishable from one that worked: the spinner stops, the
+// page looks the same, and the settings are the old ones. Both calls here used to have no
+// rejection handler at all, so a failure also left Jellyfin's loading overlay up for ever.
+alerts.length = 0;
+spinner = 0;
+window.ApiClient.updatePluginConfiguration = () =>
+    Promise.reject({ status: 500, statusText: 'Internal Server Error' });
+
+doc.querySelector('#MediaOptimizerConfigForm').dispatchEvent(
+    new window.Event('submit', { bubbles: true, cancelable: true }));
+await tick(80);
+
+ok(alerts.length === 1, `a save that fails says so (${alerts.length} message(s))`);
+ok(/Nothing was saved/.test((alerts[0] || {}).title || ''),
+    `and says plainly that nothing changed (${(alerts[0] || {}).title})`);
+ok(/Internal Server Error/.test((alerts[0] || {}).message || ''),
+    'and quotes what the server said');
+ok(spinner <= 0, `and does not leave the loading overlay up (${spinner} outstanding)`);
+
+alerts.length = 0;
+spinner = 0;
+window.ApiClient.getPluginConfiguration = () =>
+    Promise.reject({ status: 503, statusText: 'Service Unavailable' });
+
+doc.querySelector('#MediaOptimizerConfigPage').dispatchEvent(new window.Event('pageshow'));
+await tick(80);
+
+ok(alerts.length === 1, `settings that cannot be read say so (${alerts.length} message(s))`);
+ok(/defaults/.test((alerts[0] || {}).message || ''),
+    'and warn that the form is showing defaults, not the saved settings');
+ok(spinner <= 0, `and the overlay comes down here too (${spinner} outstanding)`);
 
 console.log(failures === 0 ? '\nAll settings-page checks passed.' : `\n${failures} settings-page check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

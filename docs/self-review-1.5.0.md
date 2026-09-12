@@ -5,7 +5,7 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-three defect fixes, twelve features,
+**Scope:** 89 files, 12,400 lines added and 500 removed. Thirty-five defect fixes, twelve features,
 and the tests for both. Against the previous release the test suite goes from 174 to 463, and the
 browser suites from three to eight.
 
@@ -13,7 +13,7 @@ browser suites from three to eight.
 
 ## How this was reviewed
 
-Five passes, each with a different question, plus one rule that applies to all of them.
+Six passes, each with a different question, plus one rule that applies to all of them.
 
 1. **Read the whole plugin, before changing anything.** Every C# file, both dashboard pages and
    the injected client script. Rows 1 to 10 of the table below come from that pass, not from a bug
@@ -35,6 +35,10 @@ Five passes, each with a different question, plus one rule that applies to all o
 5. **A coverage pass**, writing tests for whatever had none. The settings page had twenty-nine
    controls, a load path, a save path and no test at all; writing one found a defect in the first
    ten minutes. The capability probe had none either, for want of a seam.
+6. **A failure pass** over every request the two dashboard pages make, asking only: what does the
+   person looking at the screen see when this one fails? Not what is logged — what is *shown*.
+   Rows 23 and 24. Three of the four answers were "nothing", which is the specific failure this
+   project's own standard calls out: fail closed and say why.
 
 And throughout: **every regression test was run against the unfixed code first.** A test that
 passes before the fix is not a regression test, and several of the ones written here initially
@@ -68,6 +72,8 @@ did.
 | 20 | The weakest estimate the plugin can make — a guess for a file that does not report its own video bitrate — was shown in exactly the same words as a good one, with no label at all. And the README's opening sentence claimed every number the interface shows "is measured rather than guessed", which the body of the same document then contradicts. | The one thing this plugin sells is that its numbers can be trusted, which depends entirely on each one saying what kind of number it is. The dialog now labels a guess as a guess and a file it can predict nothing about as exactly that, and the README's first paragraph says what is true. |
 | 21 | Clearing a number box on the settings page saved zero. `Number('')` is 0, and 0 is a real setting for several of them — none of which anybody chooses by emptying the field. | The same mistake as the rule editor's cleared limit, which posted null and produced a raw model-binding error; here it silently wrote "delete quarantined originals immediately" or "keep no job history". A cleared box now leaves the setting as it was. Found by writing the settings page its first test. |
 | 22 | An interrupted job was resumed on every restart, for ever, with no limit. | Resuming is right up to the point where the job is what stopped the server. A file or a setting that takes the machine down mid-encode — a hardware encoder wedging a driver, an ffmpeg that exhausts memory — would be requeued on the next boot, take the server down again, and be requeued again: the plugin turning one bad file into a reboot loop with no visible cause. Three interruptions is generous for bad luck; past that the job is held with a message saying so and naming what to try instead, and a person can still retry it by hand. |
+| 23 | The settings page had no rejection handler on either of its two calls to the server. | A save that failed did nothing at all: Jellyfin's loading overlay stayed up until the user navigated away, no message appeared, and the settings were the old ones — so the page after a failed save is indistinguishable from the page after a successful one. Somebody who ticked "verify before replacing" and pressed Save would believe it was on. A failed *load* was worse in a quieter way: the form showed its defaults, which reads as "the settings are back to how they shipped", and saving that page would have written those defaults over everything. Both now say what failed and what it means, and the load warns not to save the page. |
+| 24 | The two panels on the Conversions page — the totals and the queue — swallowed a failed read and left whatever was on screen. | A request that failed and a queue with nothing in it look exactly the same, and this is the page somebody opens to check whether last night's run happened: it would show an empty queue, or worse the stale contents of the last successful read, and say nothing. Both panels now name the failure, and the queue one says that the queue itself is unaffected — this page could not ask about it — because the obvious reading of a queue that has gone blank is that the conversions have gone with it. |
 
 Also in the first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
 navigating away and back one click on "pause queue" sent two requests; endpoints that reveal
