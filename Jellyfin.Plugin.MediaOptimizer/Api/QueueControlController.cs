@@ -82,16 +82,18 @@ public class QueueControlController : ControllerBase
             FailedJobs = all.Count(j => j.Status == JobStatus.Failed),
             ActiveJobs = all.Count(j => j.IsActive),
             RestorableOriginals = all.Count(j => j.CanRevert),
-            IsPaused = JobStore.IsPaused
+            IsPaused = _store.IsPaused
         };
 
         foreach (var job in completed)
         {
             stats.SourceBytesProcessed += job.SourceSizeBytes!.Value;
 
-            // Only count a replace or an in-place swap as reclaimed space. A sidecar or an
-            // alternate version keeps the original, so nothing was actually freed.
-            if (job.OutputPolicy == Configuration.OutputPolicy.Replace)
+            // Only count a policy that actually took the original away. A sidecar or an alternate
+            // version keeps both files, so nothing was freed. Replace counts even while the
+            // original sits in quarantine, because that space comes back on its own; the
+            // "still undoable" figure alongside says how much is not free yet.
+            if (job.OutputPolicy is Configuration.OutputPolicy.Replace or Configuration.OutputPolicy.ReplaceAndDelete)
             {
                 stats.BytesSaved += job.SourceSizeBytes.Value - job.OutputSizeBytes!.Value;
             }
@@ -139,7 +141,7 @@ public class QueueControlController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<object> Pause()
     {
-        JobStore.IsPaused = true;
+        _store.IsPaused = true;
         _logger.LogInformation("[MediaOptimizer] Queue paused");
         return Ok(new { paused = true });
     }
@@ -151,7 +153,7 @@ public class QueueControlController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<object> Resume()
     {
-        JobStore.IsPaused = false;
+        _store.IsPaused = false;
         _logger.LogInformation("[MediaOptimizer] Queue resumed");
         return Ok(new { paused = false });
     }

@@ -177,10 +177,7 @@ public class SweepTask : IScheduledTask
 
             foreach (var file in leftovers)
             {
-                // ".mo-<jobid>.<ext>.motmp"
-                var name = Path.GetFileName(file);
-                var jobId = name.Length > 4 ? name[4..].Split('.')[0] : string.Empty;
-                if (activeIds.Contains(jobId))
+                if (activeIds.Contains(JobIdFromWorkFileName(file)))
                 {
                     continue;
                 }
@@ -199,6 +196,28 @@ public class SweepTask : IScheduledTask
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Reads the job id out of a working file name of the form ".mo-&lt;jobid&gt;.&lt;ext&gt;.motmp".
+    /// <para>
+    /// Getting this wrong is not cosmetic: the id is the only thing that marks a file as belonging
+    /// to a job that is still running, and a file that fails to match is deleted once it has been
+    /// untouched for six hours. A finished encode being verified with a deep decode scan writes
+    /// nothing for exactly that long.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <returns>The job id in "N" form, or an empty string when the name does not carry one.</returns>
+    internal static string JobIdFromWorkFileName(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (!name.StartsWith(".mo-", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return name[4..].Split('.')[0];
     }
 
     private void CleanTempDirectory(CancellationToken cancellationToken)
@@ -221,8 +240,7 @@ public class SweepTask : IScheduledTask
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var name = Path.GetFileNameWithoutExtension(file);
-            if (activeIds.Contains(name))
+            if (activeIds.Contains(JobIdFromWorkFileName(file)))
             {
                 continue;
             }

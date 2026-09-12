@@ -45,6 +45,39 @@ public class PlanWarning
     public string Message { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// One bit-exactness check to run after encoding: a source audio stream and the position the same
+/// track occupies among the output's audio streams.
+/// <para>
+/// Both halves are needed. FFmpeg renumbers output streams from zero, so the Nth lossless track is
+/// only the Nth output track when every track before it was also kept and also lossless. A file
+/// whose first track is a copied AC-3 commentary and whose second is FLAC from DTS-HD would
+/// otherwise be checked against the wrong stream and fail verification for no reason.
+/// </para>
+/// </summary>
+public class LosslessAudioCheck
+{
+    /// <summary>Initializes a new instance of the <see cref="LosslessAudioCheck"/> class.</summary>
+    public LosslessAudioCheck()
+    {
+    }
+
+    /// <summary>Initializes a new instance of the <see cref="LosslessAudioCheck"/> class.</summary>
+    /// <param name="sourceStreamIndex">The source stream index, as ffmpeg numbers all streams.</param>
+    /// <param name="outputAudioIndex">The position among the output's audio streams.</param>
+    public LosslessAudioCheck(int sourceStreamIndex, int outputAudioIndex)
+    {
+        SourceStreamIndex = sourceStreamIndex;
+        OutputAudioIndex = outputAudioIndex;
+    }
+
+    /// <summary>Gets or sets the source stream index, across all stream types.</summary>
+    public int SourceStreamIndex { get; set; }
+
+    /// <summary>Gets or sets the zero-based position among the output's audio streams.</summary>
+    public int OutputAudioIndex { get; set; }
+}
+
 /// <summary>A validated conversion, ready to run.</summary>
 public class PlanResult
 {
@@ -80,6 +113,9 @@ public class PlanResult
     /// <summary>Gets or sets a value indicating whether every operation in this plan is bit-exact.</summary>
     public bool IsLossless { get; set; }
 
-    /// <summary>Gets or sets the audio stream indexes whose decoded output should hash-match the source.</summary>
-    public IReadOnlyList<int> LosslessAudioIndexes { get; set; } = Array.Empty<int>();
+    /// <summary>
+    /// Gets or sets the audio tracks whose decoded output must hash-match the source, each paired
+    /// with the position it occupies in the output.
+    /// </summary>
+    public IReadOnlyList<LosslessAudioCheck> LosslessAudioChecks { get; set; } = Array.Empty<LosslessAudioCheck>();
 }

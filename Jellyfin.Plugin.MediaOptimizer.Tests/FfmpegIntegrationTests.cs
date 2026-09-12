@@ -163,6 +163,31 @@ public class FfmpegIntegrationTests : IDisposable
     }
 
     /// <summary>
+    /// Builds a clip whose first audio track is lossy and whose second is lossless, which is how a
+    /// remux with a commentary track in front of the main audio is laid out.
+    /// </summary>
+    /// <returns>The path of the generated file.</returns>
+    private async Task<string> CreateTwoAudioSourceAsync()
+    {
+        var path = Path.Combine(_dir, "twoaudio.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=4",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
+            "-c:a:0", "aac", "-c:a:1", "flac",
+            path
+        ];
+
+        var result = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(result.Success, "Could not build the two-audio test source: " + result.StandardError);
+        return path;
+    }
+
+    /// <summary>
     /// Builds a clip that looks like a Blu-ray remux to the muxer: a text subtitle track that MP4
     /// cannot store as-is.
     /// </summary>
@@ -293,7 +318,7 @@ public class FfmpegIntegrationTests : IDisposable
 
         Assert.True(plan.IsRunnable, "Plan was blocked: " + string.Join("; ", plan.Warnings.Select(w => w.Message)));
         Assert.True(plan.IsLossless, "Copying video and re-encoding lossless audio to FLAC must count as lossless.");
-        Assert.Contains(1, plan.LosslessAudioIndexes);
+        Assert.Contains(plan.LosslessAudioChecks, c => c.SourceStreamIndex == 1 && c.OutputAudioIndex == 0);
 
         var samples = new List<EncodeProgress>();
         var result = await Runner.RunEncodeAsync(
@@ -305,10 +330,64 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, analysis.DurationSeconds, deepScan: true, plan.LosslessAudioIndexes, CancellationToken.None);
+            source, output, analysis.DurationSeconds, deepScan: true, plan.LosslessAudioChecks, CancellationToken.None);
 
         Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
         Assert.True(verification.LosslessVerified, "The audio should have hashed identically.");
+    }
+
+    /// <summary>
+    /// A file whose first audio track is copied and whose second is the lossless one. The
+    /// bit-exactness check compares each source track against a position in the output, and
+    /// assuming the Nth lossless track is the Nth output track is only true when no copied track
+    /// sits in front of it. It did here, so the FLAC track was compared against the copied AAC
+    /// one, the hashes differed, and a job that was genuinely bit-exact was failed and thrown away.
+    /// </summary>
+    [SkippableFact]
+    public async Task Lossless_track_behind_a_copied_track_still_verifies()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateTwoAudioSourceAsync();
+        var output = Path.Combine(_dir, "mixed.mkv");
+
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Audio =
+        [
+            new AudioTrackInfo { Index = 1, TypeIndex = 0, Codec = "aac", Channels = 1, SampleRate = 48000, IsLossless = false },
+            new AudioTrackInfo { Index = 2, TypeIndex = 1, Codec = "flac", Channels = 1, SampleRate = 48000, IsLossless = true }
+        ];
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Strategy = OptimizationStrategy.LosslessOnly,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks =
+            [
+                new AudioTrackRequest { Index = 1, Action = AudioAction.Copy },
+                new AudioTrackRequest { Index = 2, Action = AudioAction.Encode, Codec = "flac" }
+            ]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        // The lossless track is the second audio stream of the output, not the first.
+        var check = Assert.Single(plan.LosslessAudioChecks);
+        Assert.Equal(2, check.SourceStreamIndex);
+        Assert.Equal(1, check.OutputAudioIndex);
+
+        var result = await Runner.RunEncodeAsync(plan.Arguments, 4d, null, false, CancellationToken.None);
+        Assert.True(result.Success, "ffmpeg failed: " + result.StandardError);
+
+        var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
+        var verification = await verifier.VerifyAsync(
+            source, output, 4d, deepScan: false, plan.LosslessAudioChecks, CancellationToken.None);
+
+        Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
+        Assert.True(verification.LosslessVerified, "The FLAC track is bit-exact and must verify as such.");
     }
 
     [SkippableFact]
@@ -328,7 +407,7 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, 4d, deepScan: false, [1], CancellationToken.None);
+            source, output, 4d, deepScan: false, [new LosslessAudioCheck(1, 0)], CancellationToken.None);
 
         Assert.False(verification.Passed);
         Assert.False(verification.LosslessVerified);

@@ -55,6 +55,13 @@ public interface IJobStore
     /// </summary>
     /// <returns>The jobs that were recovered, with their new status already applied.</returns>
     IReadOnlyList<EncodeJob> ReconcileInterrupted();
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the worker may claim new jobs. Persisted, so a
+    /// queue an administrator paused is still paused after a restart rather than quietly
+    /// encoding overnight.
+    /// </summary>
+    bool IsPaused { get; set; }
 }
 
 /// <summary>
@@ -83,11 +90,13 @@ public class JobStore : IJobStore
     private readonly string _directory;
     private readonly string _snapshotPath;
     private readonly string _journalPath;
+    private readonly string _pausedPath;
     private readonly ILogger<JobStore> _logger;
     private readonly Lock _lock = new Lock();
     private readonly Dictionary<Guid, EncodeJob> _jobs = new Dictionary<Guid, EncodeJob>();
 
     private int _journalRecords;
+    private bool _paused;
 
     /// <summary>Initializes a new instance of the <see cref="JobStore"/> class.</summary>
     /// <param name="appPaths">Application paths.</param>
@@ -107,12 +116,44 @@ public class JobStore : IJobStore
         Directory.CreateDirectory(_directory);
         _snapshotPath = Path.Combine(_directory, "queue.snapshot.json");
         _journalPath = Path.Combine(_directory, "queue.journal.jsonl");
+        _pausedPath = Path.Combine(_directory, "queue.paused");
+
+        _paused = File.Exists(_pausedPath);
 
         Load();
     }
 
-    /// <summary>Gets or sets a value indicating whether the worker may claim new jobs.</summary>
-    public static bool IsPaused { get; set; }
+    /// <inheritdoc />
+    public bool IsPaused
+    {
+        get => _paused;
+
+        set
+        {
+            lock (_lock)
+            {
+                _paused = value;
+                try
+                {
+                    // A marker file rather than a plugin setting: the queue state is operational
+                    // rather than configuration, and this way pausing cannot rewrite -- or be lost
+                    // by -- a configuration save happening at the same moment.
+                    if (value)
+                    {
+                        File.WriteAllText(_pausedPath, DateTime.UtcNow.ToString("u", CultureInfo.InvariantCulture));
+                    }
+                    else if (File.Exists(_pausedPath))
+                    {
+                        File.Delete(_pausedPath);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(ex, "[MediaOptimizer] Could not record the paused state; it will not survive a restart");
+                }
+            }
+        }
+    }
 
     /// <inheritdoc />
     public void Add(EncodeJob job)
@@ -165,7 +206,7 @@ public class JobStore : IJobStore
     /// <inheritdoc />
     public EncodeJob? TakeNextQueued()
     {
-        if (IsPaused)
+        if (_paused)
         {
             return null;
         }

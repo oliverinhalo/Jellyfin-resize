@@ -68,7 +68,7 @@ public class DiagnosticsController : ControllerBase
                 "Version {0}. The API is responding, so the assembly loaded and its routes are registered.",
                 typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "unknown")));
 
-        await AddFfmpegChecksAsync(checks, cancellationToken).ConfigureAwait(false);
+        await AddFfmpegChecksAsync(checks, isAdmin, cancellationToken).ConfigureAwait(false);
         AddQueueCheck(checks);
         AddSpeedCheck(checks);
         AddInjectionCheck(checks);
@@ -94,11 +94,24 @@ public class DiagnosticsController : ControllerBase
         });
     }
 
-    private async Task AddFfmpegChecksAsync(List<DiagnosticCheck> checks, CancellationToken cancellationToken)
+    /// <summary>Runs the FFmpeg checks.</summary>
+    /// <param name="checks">The list being built.</param>
+    /// <param name="isAdmin">
+    /// Whether the caller administers this server. Server paths are only shown to administrators:
+    /// the detail is what makes this page worth reading, but it is also a description of someone
+    /// else's filesystem.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task.</returns>
+    private async Task AddFfmpegChecksAsync(
+        List<DiagnosticCheck> checks,
+        bool isAdmin,
+        CancellationToken cancellationToken)
     {
         try
         {
             var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+            var where = isAdmin ? caps.FfmpegPath : "the configured path";
 
             if (string.IsNullOrEmpty(caps.FfmpegPath))
             {
@@ -118,7 +131,7 @@ public class DiagnosticsController : ControllerBase
                     string.Format(
                         CultureInfo.InvariantCulture,
                         "Found at {0}, but it reported no usable video encoders. {1}",
-                        caps.FfmpegPath,
+                        where,
                         caps.ProbeError ?? "The binary may be missing or not executable.")));
                 return;
             }
@@ -130,7 +143,7 @@ public class DiagnosticsController : ControllerBase
                     CultureInfo.InvariantCulture,
                     "{0} at {1} — {2} video encoders, {3} audio encoders. Hardware acceleration: {4}.",
                     caps.FfmpegVersion ?? "version unknown",
-                    caps.FfmpegPath,
+                    where,
                     caps.VideoEncoders.Count,
                     caps.AudioEncoders.Count,
                     string.IsNullOrEmpty(caps.HardwareAcceleration) ? "none" : caps.HardwareAcceleration)));
@@ -248,7 +261,7 @@ public class DiagnosticsController : ControllerBase
             var resumed = all.Count(j => j.ResumeCount > 0);
             checks.Add(new DiagnosticCheck(
                 "Conversion queue",
-                JobStore.IsPaused ? CheckStatus.Warning : CheckStatus.Ok,
+                _store.IsPaused ? CheckStatus.Warning : CheckStatus.Ok,
                 string.Format(
                     CultureInfo.InvariantCulture,
                     "{0} active, {1} in history.{2} Every change is written to disk before it is "
@@ -256,7 +269,7 @@ public class DiagnosticsController : ControllerBase
                     + "are picked up again on restart.{3}",
                     active.Count,
                     all.Count,
-                    JobStore.IsPaused ? " The queue is paused." : string.Empty,
+                    _store.IsPaused ? " The queue is paused." : string.Empty,
                     resumed > 0
                         ? string.Format(CultureInfo.InvariantCulture, " {0} job(s) have already been resumed this way.", resumed)
                         : string.Empty)));

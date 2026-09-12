@@ -193,7 +193,6 @@ public class DurabilityTests : IDisposable
     [Fact]
     public void Higher_priority_jobs_are_claimed_first()
     {
-        JobStore.IsPaused = false;
         var store = NewStore();
 
         var normal = Job("Normal");
@@ -211,17 +210,38 @@ public class DurabilityTests : IDisposable
         var store = NewStore();
         store.Add(Job("Waiting"));
 
-        JobStore.IsPaused = true;
+        store.IsPaused = true;
         try
         {
             Assert.Null(store.TakeNextQueued());
         }
         finally
         {
-            JobStore.IsPaused = false;
+            store.IsPaused = false;
         }
 
         Assert.NotNull(store.TakeNextQueued());
+    }
+
+    /// <summary>
+    /// Pausing is how an administrator stops the server encoding during the day. It used to live
+    /// in a static field, so a restart silently resumed the queue -- and a restart is exactly what
+    /// follows an upgrade, which is when someone is most likely to have paused it.
+    /// </summary>
+    [Fact]
+    public void A_paused_queue_is_still_paused_after_a_restart()
+    {
+        var store = NewStore();
+        store.Add(Job("Waiting"));
+        store.IsPaused = true;
+
+        var reopened = NewStore();
+
+        Assert.True(reopened.IsPaused);
+        Assert.Null(reopened.TakeNextQueued());
+
+        reopened.IsPaused = false;
+        Assert.False(NewStore().IsPaused);
     }
 
     [Fact]

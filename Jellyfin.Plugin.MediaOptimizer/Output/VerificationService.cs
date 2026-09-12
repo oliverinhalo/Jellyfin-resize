@@ -40,7 +40,7 @@ public interface IVerificationService
     /// <param name="outputPath">The produced file.</param>
     /// <param name="expectedDurationSeconds">Duration the output should have.</param>
     /// <param name="deepScan">Whether to run a full decode pass looking for corruption.</param>
-    /// <param name="losslessAudioIndexes">Audio streams that should be bit-identical, if any.</param>
+    /// <param name="losslessAudio">Audio tracks that should be bit-identical, if any.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The verification result.</returns>
     Task<VerificationResult> VerifyAsync(
@@ -48,7 +48,7 @@ public interface IVerificationService
         string outputPath,
         double? expectedDurationSeconds,
         bool deepScan,
-        IReadOnlyList<int> losslessAudioIndexes,
+        IReadOnlyList<LosslessAudioCheck> losslessAudio,
         CancellationToken cancellationToken);
 }
 
@@ -73,7 +73,7 @@ public class VerificationService : IVerificationService
         string outputPath,
         double? expectedDurationSeconds,
         bool deepScan,
-        IReadOnlyList<int> losslessAudioIndexes,
+        IReadOnlyList<LosslessAudioCheck> losslessAudio,
         CancellationToken cancellationToken)
     {
         var result = new VerificationResult();
@@ -128,12 +128,12 @@ public class VerificationService : IVerificationService
             }
         }
 
-        if (losslessAudioIndexes.Count > 0)
+        if (losslessAudio.Count > 0)
         {
             var verified = await VerifyLosslessAudioAsync(
                 sourcePath,
                 outputPath,
-                losslessAudioIndexes,
+                losslessAudio,
                 cancellationToken).ConfigureAwait(false);
 
             result.LosslessVerified = verified;
@@ -186,21 +186,23 @@ public class VerificationService : IVerificationService
     private async Task<bool?> VerifyLosslessAudioAsync(
         string sourcePath,
         string outputPath,
-        IReadOnlyList<int> sourceIndexes,
+        IReadOnlyList<LosslessAudioCheck> checks,
         CancellationToken cancellationToken)
     {
-        // Output audio streams are renumbered, so compare the Nth kept lossless track against
-        // the Nth audio stream of the output.
-        for (var i = 0; i < sourceIndexes.Count; i++)
+        // Each check carries both halves of the pairing. Assuming the Nth lossless track is the
+        // Nth output track is wrong the moment a copied track sits in front of it -- a file with a
+        // copied AC-3 commentary before a FLAC-from-DTS-HD track then compared the FLAC against
+        // the AC-3 and failed a job that was in fact bit-exact.
+        foreach (var check in checks)
         {
             var sourceHash = await HashAudioStreamAsync(
                 sourcePath,
-                FormattableString.Invariant($"0:{sourceIndexes[i]}"),
+                FormattableString.Invariant($"0:{check.SourceStreamIndex}"),
                 cancellationToken).ConfigureAwait(false);
 
             var outputHash = await HashAudioStreamAsync(
                 outputPath,
-                FormattableString.Invariant($"0:a:{i}"),
+                FormattableString.Invariant($"0:a:{check.OutputAudioIndex}"),
                 cancellationToken).ConfigureAwait(false);
 
             if (sourceHash is null || outputHash is null)
@@ -212,7 +214,9 @@ public class VerificationService : IVerificationService
             if (!string.Equals(sourceHash, outputHash, StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogError(
-                    "[MediaOptimizer] Lossless verification FAILED: source {Source} != output {Output}",
+                    "[MediaOptimizer] Lossless verification FAILED for source stream {Stream} vs output audio {Output}: {SourceHash} != {OutputHash}",
+                    check.SourceStreamIndex,
+                    check.OutputAudioIndex,
                     sourceHash,
                     outputHash);
                 return false;

@@ -89,6 +89,14 @@ public class MediaOptimizerController : ControllerBase
     private bool IsAdmin => User.IsInRole("Administrator");
 
     /// <summary>
+    /// Whether the caller may inspect files. Every endpoint that probes a file honours this, not
+    /// just the one named "Analyze": resolving a strategy and estimating a conversion both run
+    /// ffprobe over the same file and return the same information about it, so gating one and not
+    /// the others was a setting that did not do what it said.
+    /// </summary>
+    private bool MayAnalyze => IsAdmin || (Plugin.Instance?.Configuration.AllowNonAdminAnalysis ?? true);
+
+    /// <summary>
     /// Lists convertible library items with sorting and filtering, so a conversion can be started
     /// from the dashboard without depending on the injected in-app UI.
     /// </summary>
@@ -103,6 +111,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Matching items.</returns>
     [HttpGet("Library/Search")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<LibraryItemSummary>>> SearchLibrary(
         [FromQuery] string? query,
@@ -199,6 +208,7 @@ public class MediaOptimizerController : ControllerBase
     /// </summary>
     /// <returns>Available filter values.</returns>
     [HttpGet("Library/Facets")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<object> GetFacets()
     {
@@ -253,6 +263,11 @@ public class MediaOptimizerController : ControllerBase
         [FromQuery] OptimizationStrategy strategy,
         CancellationToken cancellationToken)
     {
+        if (!MayAnalyze)
+        {
+            return Forbid();
+        }
+
         var analysis = await _probe.AnalyzeAsync(itemId, cancellationToken).ConfigureAwait(false);
         if (analysis is null)
         {
@@ -407,33 +422,10 @@ public class MediaOptimizerController : ControllerBase
         string? audio,
         string? subtitles)
     {
-        return new Configuration.PluginConfiguration
-        {
-            Injection = source.Injection,
-            DefaultOutputPolicy = source.DefaultOutputPolicy,
-            DefaultContainer = source.DefaultContainer,
-            SidecarDirectory = source.SidecarDirectory,
-            TempDirectory = source.TempDirectory,
-            QuarantineDirectory = source.QuarantineDirectory,
-            QuarantineRetentionDays = source.QuarantineRetentionDays,
-            MaxConcurrentJobs = source.MaxConcurrentJobs,
-            PauseWhilePlaybackActive = source.PauseWhilePlaybackActive,
-            LowProcessPriority = source.LowProcessPriority,
-            EncodingThreadCount = source.EncodingThreadCount,
-            FileStabilitySeconds = source.FileStabilitySeconds,
-            DeepVerifyBeforeReplace = source.DeepVerifyBeforeReplace,
-            FreeSpaceSafetyFactor = source.FreeSpaceSafetyFactor,
-            AllowNonAdminAnalysis = source.AllowNonAdminAnalysis,
-            JobHistoryLimit = source.JobHistoryLimit,
-            KeepAudioLanguages = audio ?? source.KeepAudioLanguages,
-            KeepSubtitleLanguages = subtitles ?? source.KeepSubtitleLanguages,
-            KeepUntaggedTracks = source.KeepUntaggedTracks,
-            DropCommentaryTracks = source.DropCommentaryTracks,
-            Speed = source.Speed,
-            PreferHardwareEncoding = source.PreferHardwareEncoding,
-            ResumeJobsAfterRestart = source.ResumeJobsAfterRestart,
-            RegenerateTrickplayAfterReplace = source.RegenerateTrickplayAfterReplace
-        };
+        var copy = source.Clone();
+        copy.KeepAudioLanguages = audio ?? source.KeepAudioLanguages;
+        copy.KeepSubtitleLanguages = subtitles ?? source.KeepSubtitleLanguages;
+        return copy;
     }
 
     private async Task<Jellyfin.Database.Implementations.Entities.User?> GetCallingUserAsync()
@@ -545,7 +537,7 @@ public class MediaOptimizerController : ControllerBase
         [FromRoute] Guid itemId,
         CancellationToken cancellationToken)
     {
-        if (!IsAdmin && !(Plugin.Instance?.Configuration.AllowNonAdminAnalysis ?? true))
+        if (!MayAnalyze)
         {
             return Forbid();
         }
@@ -595,6 +587,11 @@ public class MediaOptimizerController : ControllerBase
         [FromBody] EncodeRequest request,
         CancellationToken cancellationToken)
     {
+        if (!MayAnalyze)
+        {
+            return Forbid();
+        }
+
         var analysis = await _probe.AnalyzeAsync(request.ItemId, cancellationToken).ConfigureAwait(false);
         if (analysis is null)
         {
@@ -614,6 +611,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The measured video bitrate.</returns>
     [HttpGet("MeasureBitrate/{itemId}")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<BitrateInfo>> MeasureBitrate(
@@ -640,6 +638,7 @@ public class MediaOptimizerController : ControllerBase
     /// <summary>Lists the queue and recent history.</summary>
     /// <returns>All known jobs, newest first.</returns>
     [HttpGet("Jobs")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<EncodeJob>> GetJobs() => Ok(_store.GetAll());
 
@@ -647,6 +646,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="id">Job id.</param>
     /// <returns>The job.</returns>
     [HttpGet("Jobs/{id}")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public ActionResult<EncodeJob> GetJob([FromRoute] Guid id)

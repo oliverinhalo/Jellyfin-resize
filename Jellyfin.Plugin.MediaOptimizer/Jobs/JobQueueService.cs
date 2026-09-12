@@ -303,7 +303,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 tempPath,
                 analysis.DurationSeconds,
                 deepScan,
-                plan.LosslessAudioIndexes,
+                plan.LosslessAudioChecks,
                 cancellationToken).ConfigureAwait(false);
 
             job.LosslessVerified = verification.LosslessVerified;

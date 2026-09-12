@@ -56,7 +56,7 @@ public class EncodePlanner : IEncodePlanner
         args.Add("-i");
         args.Add(analysis.Path);
 
-        var losslessAudioIndexes = new List<int>();
+        var losslessAudioChecks = new List<LosslessAudioCheck>();
         var everythingBitExact = true;
 
         // ---- video ----
@@ -141,7 +141,7 @@ public class EncodePlanner : IEncodePlanner
             }
             else
             {
-                PlanAudioEncode(track, req, audioOutIndex, args, warnings, losslessAudioIndexes, ref everythingBitExact);
+                PlanAudioEncode(track, req, audioOutIndex, args, warnings, losslessAudioChecks, ref everythingBitExact);
             }
 
             audioOutIndex++;
@@ -182,6 +182,14 @@ public class EncodePlanner : IEncodePlanner
             args.Add("-movflags");
             args.Add("+faststart");
         }
+
+        // The muxer buffers packets from every stream until it can interleave them. The default
+        // ceiling is small enough that a file whose audio and video timestamps drift apart -- a
+        // long silent lead-in, a stream that starts late -- dies with "Too many packets buffered
+        // for output stream" after however long it took to reach that point. This is the same
+        // headroom Jellyfin gives its own transcodes.
+        args.Add("-max_muxing_queue_size");
+        args.Add("2048");
 
         var threads = Plugin.Instance?.Configuration.EncodingThreadCount ?? 0;
         if (threads > 0)
@@ -224,7 +232,7 @@ public class EncodePlanner : IEncodePlanner
             Warnings = warnings,
             OutputExtension = extension,
             IsLossless = isLossless,
-            LosslessAudioIndexes = losslessAudioIndexes
+            LosslessAudioChecks = losslessAudioChecks
         };
     }
 
@@ -423,15 +431,37 @@ public class EncodePlanner : IEncodePlanner
         args.Add("-fps_mode");
         args.Add("passthrough");
 
-        PlanRateControl(request, option, ComputeTargetVideoBitrate(analysis, request), args, warnings);
+        // x265 takes all of its own options through one -x265-params, and ffmpeg keeps only the
+        // last occurrence of an option. Passing it twice -- which a lossless HDR encode did, once
+        // for lossless=1 and once for hdr10=1 -- silently threw the first away. Collected here
+        // and emitted once instead.
+        var x265Params = new List<string>();
+        var explicitPreset = !string.IsNullOrEmpty(request.Preset) && option.Presets.Count > 0
+            ? request.Preset
+            : null;
 
-        if (!string.IsNullOrEmpty(request.Preset) && option.Presets.Count > 0)
+        PlanRateControl(
+            request,
+            option,
+            ComputeTargetVideoBitrate(analysis, request),
+            args,
+            warnings,
+            x265Params,
+            explicitPreset is not null);
+
+        if (explicitPreset is not null)
         {
             args.Add("-preset");
-            args.Add(request.Preset);
+            args.Add(explicitPreset);
         }
 
-        PlanHdr(video, option, args, warnings);
+        PlanHdr(video, option, args, warnings, x265Params);
+
+        if (x265Params.Count > 0)
+        {
+            args.Add("-x265-params");
+            args.Add(string.Join(':', x265Params));
+        }
 
         if (video.IsVariableFrameRate)
         {
@@ -475,7 +505,9 @@ public class EncodePlanner : IEncodePlanner
         EncoderOption option,
         long? targetVideoBitrate,
         List<string> args,
-        List<PlanWarning> warnings)
+        List<PlanWarning> warnings,
+        List<string> x265Params,
+        bool presetAlreadyChosen)
     {
         switch (request.RateControl)
         {
@@ -483,7 +515,7 @@ public class EncodePlanner : IEncodePlanner
                 var quality = request.Quality ?? DefaultQualityFor(option.Codec);
                 if (option.IsHardware)
                 {
-                    AddHardwareQualityArgs(option, quality, args, warnings);
+                    AddHardwareQualityArgs(option, quality, args, warnings, presetAlreadyChosen);
                 }
                 else
                 {
@@ -525,8 +557,7 @@ public class EncodePlanner : IEncodePlanner
             case RateControlMode.Lossless:
                 if (option.Name == "libx265")
                 {
-                    args.Add("-x265-params");
-                    args.Add("lossless=1");
+                    x265Params.Add("lossless=1");
                 }
                 else if (option.Name == "libx264")
                 {
@@ -560,11 +591,17 @@ public class EncodePlanner : IEncodePlanner
     /// <param name="quality">The requested constant-quality value.</param>
     /// <param name="args">Argument list being built.</param>
     /// <param name="warnings">Planner messages.</param>
+    /// <param name="presetAlreadyChosen">
+    /// Whether the caller will pass the user's own preset. When it will, no preset is added here:
+    /// two -preset arguments left ffmpeg silently using whichever came last, so the quality
+    /// preset below was either redundant or quietly overrode the user's choice.
+    /// </param>
     private static void AddHardwareQualityArgs(
         EncoderOption option,
         int quality,
         List<string> args,
-        List<PlanWarning> warnings)
+        List<PlanWarning> warnings,
+        bool presetAlreadyChosen)
     {
         var q = quality.ToString(CultureInfo.InvariantCulture);
 
@@ -576,9 +613,13 @@ public class EncodePlanner : IEncodePlanner
             args.Add(q);
             args.Add("-b:v");
             args.Add("0");
-            // p7 is NVENC's slowest, highest-quality preset and is still far quicker than x265.
-            args.Add("-preset");
-            args.Add("p7");
+            if (!presetAlreadyChosen)
+            {
+                // p7 is NVENC's slowest, highest-quality preset and is still far quicker than x265.
+                args.Add("-preset");
+                args.Add("p7");
+            }
+
             args.Add("-tune");
             args.Add("hq");
             args.Add("-multipass");
@@ -600,8 +641,12 @@ public class EncodePlanner : IEncodePlanner
         {
             args.Add("-global_quality");
             args.Add(q);
-            args.Add("-preset");
-            args.Add("veryslow");
+            if (!presetAlreadyChosen)
+            {
+                args.Add("-preset");
+                args.Add("veryslow");
+            }
+
             args.Add("-look_ahead");
             args.Add("1");
             args.Add("-look_ahead_depth");
@@ -657,7 +702,8 @@ public class EncodePlanner : IEncodePlanner
         VideoTrackInfo video,
         EncoderOption option,
         List<string> args,
-        List<PlanWarning> warnings)
+        List<PlanWarning> warnings,
+        List<string> x265Params)
     {
         var isHdr = video.Range.StartsWith("HDR", StringComparison.OrdinalIgnoreCase)
             || video.Range.StartsWith("Dolby", StringComparison.OrdinalIgnoreCase);
@@ -688,8 +734,8 @@ public class EncodePlanner : IEncodePlanner
 
         if (option.Name == "libx265")
         {
-            args.Add("-x265-params");
-            args.Add("hdr10=1:repeat-headers=1");
+            x265Params.Add("hdr10=1");
+            x265Params.Add("repeat-headers=1");
         }
         else if (option.Codec == "av1" || option.IsHardware)
         {
@@ -714,7 +760,7 @@ public class EncodePlanner : IEncodePlanner
         int outIndex,
         List<string> args,
         List<PlanWarning> warnings,
-        List<int> losslessAudioIndexes,
+        List<LosslessAudioCheck> losslessAudioChecks,
         ref bool everythingBitExact)
     {
         var codec = req.Codec ?? "libopus";
@@ -726,7 +772,9 @@ public class EncodePlanner : IEncodePlanner
 
         if (bitExact)
         {
-            losslessAudioIndexes.Add(track.Index);
+            // Paired with the output position, because the check compares the source stream
+            // against the output's Nth audio stream and N is not the source index.
+            losslessAudioChecks.Add(new LosslessAudioCheck(track.Index, outIndex));
 
             if (track.HasObjectAudio && !string.IsNullOrEmpty(track.Profile))
             {

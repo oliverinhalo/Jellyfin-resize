@@ -185,5 +185,7 @@ public class LanguageFilterTests
         public bool Remove(Guid id) => false;
 
         public System.Collections.Generic.IReadOnlyList<EncodeJob> ReconcileInterrupted() => Array.Empty<EncodeJob>();
+
+        public bool IsPaused { get; set; }
     }
 }

@@ -1,3 +1,4 @@
+using System.Reflection;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Configuration;
@@ -181,4 +182,31 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Gets or sets a value indicating whether trickplay images are rebuilt after a replace.</summary>
     public bool RegenerateTrickplayAfterReplace { get; set; } = true;
+
+    /// <summary>
+    /// Makes a copy of these settings, for callers that need to override one value for a single
+    /// operation without touching what is saved.
+    /// <para>
+    /// Copying property by property is what this replaces: the hand-written version quietly
+    /// omitted three settings, so a batch run that overrode the language list also reverted
+    /// "keep originals beside the media" to its default for that run. Reflection cannot forget a
+    /// property that is added later.
+    /// </para>
+    /// </summary>
+    /// <returns>An independent copy.</returns>
+    public PluginConfiguration Clone()
+    {
+        var copy = new PluginConfiguration();
+
+        foreach (var property in typeof(PluginConfiguration).GetProperties(
+            BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
+            {
+                property.SetValue(copy, property.GetValue(this));
+            }
+        }
+
+        return copy;
+    }
 }
