@@ -1,5 +1,4 @@
 using System;
-using Jellyfin.Plugin.MediaOptimizer.Api;
 using Jellyfin.Plugin.MediaOptimizer.Web;
 using Xunit;
 
@@ -36,15 +35,6 @@ public class InjectionTests
     {
         const string Fragment = "<div>no body element here</div>";
         Assert.Equal(Fragment, WebInjectionHostedService.InjectInto(Fragment));
-    }
-
-    [Fact]
-    public void Transformation_payload_accepts_both_json_and_raw_bodies()
-    {
-        Assert.Equal("<html></html>", ClientAssetController.ExtractContents("{\"contents\":\"<html></html>\"}"));
-        Assert.Equal("<html></html>", ClientAssetController.ExtractContents("{\"Contents\":\"<html></html>\"}"));
-        Assert.Equal("<html></html>", ClientAssetController.ExtractContents("<html></html>"));
-        Assert.Null(ClientAssetController.ExtractContents("   "));
     }
 
     private static int CountOccurrences(string haystack, string needle)

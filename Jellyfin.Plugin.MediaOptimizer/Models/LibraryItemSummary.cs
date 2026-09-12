@@ -43,4 +43,14 @@ public class LibraryItemSummary
 
     /// <summary>Gets or sets a value indicating whether a conversion is already queued or running.</summary>
     public bool HasActiveJob { get; set; }
+
+    /// <summary>
+    /// Gets or sets roughly what a conversion would reclaim, from size, resolution and codec
+    /// alone. Null when there is nothing worth doing. This is an ordering aid, not the estimate:
+    /// the dialog's number reads the file's real stream bitrates.
+    /// </summary>
+    public long? PotentialSavingBytes { get; set; }
+
+    /// <summary>Gets or sets the change that saving would come from, in words.</summary>
+    public string? SavingBasis { get; set; }
 }

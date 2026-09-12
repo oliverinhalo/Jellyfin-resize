@@ -233,20 +233,75 @@
         overlay.setAttribute('aria-label', title || 'Optimize media file');
 
         var dialog = el('div', 'mopt-dialog');
+        dialog.tabIndex = -1;
         overlay.appendChild(dialog);
         root.appendChild(overlay);
         document.body.appendChild(host);
 
+        // Whatever had focus before the dialog opened gets it back afterwards, so closing with
+        // Escape does not dump a keyboard user back at the top of the page.
+        var returnFocusTo = document.activeElement;
+        var closed = false;
+        var cleanups = [];
+
         function close() {
+            if (closed) { return; }
+            closed = true;
+            // Anything the dialog started -- most importantly the progress poll -- has to be
+            // stopped here. Closing with the X, Escape or a click on the backdrop all come
+            // through this one function precisely so nothing can be left running.
+            cleanups.forEach(function (fn) {
+                try { fn(); } catch (e) { warnOnce('cleanup', 'A dialog cleanup failed: ' + e.message); }
+            });
+            cleanups.length = 0;
             document.removeEventListener('keydown', onKey, true);
             if (host.parentNode) { host.parentNode.removeChild(host); }
+            if (returnFocusTo && returnFocusTo.focus) {
+                try { returnFocusTo.focus(); } catch (e) { /* the element may be gone */ }
+            }
         }
-        function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+
+        function focusables() {
+            return Array.prototype.filter.call(
+                root.querySelectorAll('button, select, input, textarea, a[href], [tabindex]'),
+                function (node) { return !node.disabled && node.tabIndex !== -1; });
+        }
+
+        // A modal that lets Tab wander out into the page behind it is not modal for anyone
+        // navigating by keyboard, and the page behind is inert to the mouse but not to Tab.
+        function trap(e) {
+            var items = focusables();
+            if (!items.length) { return; }
+            var first = items[0];
+            var last = items[items.length - 1];
+            var active = root.activeElement;
+            if (e.shiftKey && (active === first || !active)) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && active === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
+
+        function onKey(e) {
+            if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+            if (e.key === 'Tab' && host.parentNode) { trap(e); }
+        }
 
         overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
         document.addEventListener('keydown', onKey, true);
+        dialog.focus();
 
-        return { host: host, root: root, overlay: overlay, dialog: dialog, close: close };
+        return {
+            host: host,
+            root: root,
+            overlay: overlay,
+            dialog: dialog,
+            close: close,
+            /** Registers work to undo when the dialog closes, however it is closed. */
+            onClose: function (fn) { cleanups.push(fn); }
+        };
     }
 
     function buildHeader(shell, title, close) {
@@ -328,6 +383,14 @@
             right.appendChild(warningBox('info',
                 'You are signed in without administrator rights, so this is a read-only view. ' +
                 'Converting rewrites files in the library and is restricted to administrators.'));
+            return;
+        }
+
+        // A file that is already converting: show the conversion. The form would offer to start
+        // one, and the server would refuse it — which is a worse answer than the progress bar for
+        // the job that is running right now.
+        if (analysis.ActiveJobId) {
+            showProgress(shell, right, foot, { Id: analysis.ActiveJobId });
             return;
         }
 
@@ -439,8 +502,10 @@
                 b.setAttribute('aria-pressed', 'true');
                 strategy = preset.key;
                 hint.textContent = preset.hint;
-                if (preset.key === 'Custom') { req.Strategy = 'Custom'; rebuild(); }
-                else { loadStrategy(preset.key); }
+                // "Custom" edits whatever is currently loaded, so before anything has loaded it
+                // has to fall back to fetching a starting point rather than reading from null.
+                if (preset.key === 'Custom' && req) { req.Strategy = 'Custom'; rebuild(); }
+                else { loadStrategy(preset.key === 'Custom' ? 'Standard' : preset.key); }
             });
             presetRow.appendChild(b);
         });
@@ -455,15 +520,166 @@
         estimate.appendChild(estSub);
         foot.appendChild(estimate);
 
+        var targetHost = el('div', 'mopt-target-host');
+        foot.appendChild(targetHost);
+
         var cancelBtn = el('button', 'mopt-btn', 'Cancel');
         cancelBtn.addEventListener('click', shell.close);
         foot.appendChild(cancelBtn);
+
+        // Everything else shown before a conversion is modelled. This runs a little of the real
+        // encode and measures it, which takes about a minute and is the only number here that is
+        // not a prediction.
+        var measureBtn = el('button', 'mopt-btn', 'Measure it');
+        measureBtn.title = 'Encodes three short stretches of this file with these settings, measures '
+            + 'what they produced, and compares the picture against the source. Takes about a minute.';
+        foot.appendChild(measureBtn);
+
+        // The other half of measuring: instead of reporting what a setting does, find the setting.
+        var findBtn = el('button', 'mopt-btn', 'Find the setting…');
+        findBtn.title = 'Encodes short stretches at several quality settings and picks the '
+            + 'smallest file that still looks as close to the source as you ask for. '
+            + 'Takes a few minutes.';
+        foot.appendChild(findBtn);
 
         var startBtn = el('button', 'mopt-btn mopt-btn-primary', 'Start conversion');
         startBtn.disabled = true;
         foot.appendChild(startBtn);
 
+        var TARGETS = [
+            { key: 'Indistinguishable', label: 'Indistinguishable' },
+            { key: 'VeryClose', label: 'Very hard to tell apart' },
+            { key: 'SlightlySofter', label: 'Slightly softer' }
+        ];
+
+        // What the search found, kept so that re-estimating the form it just changed does not
+        // wipe out the one measured answer on the screen.
+        var searchNote = null;
+
+        // Measuring takes a minute and searching takes several, so the server starts the work,
+        // answers with an id, and this asks how it is going. A request held open that long does
+        // not survive the reverse proxy in front of most Jellyfin servers.
+        var operationTimer = null;
+        var operationId = null;
+
+        shell.onClose(function () {
+            clearInterval(operationTimer);
+            // Closing the dialog stops the encoding. Without this, walking away from a search
+            // leaves the server working for five minutes with nobody left to tell.
+            if (operationId) {
+                request('DELETE', 'MediaOptimizer/Operations/' + operationId).catch(function () {});
+                operationId = null;
+            }
+        });
+
+        function operation(path, body, onProgress) {
+            return request('POST', path, body).then(function (handle) {
+                if (!handle || !handle.Id) { throw new Error('The server did not start it.'); }
+                operationId = handle.Id;
+
+                return new Promise(function (resolve, reject) {
+                    clearInterval(operationTimer);
+                    operationTimer = setInterval(function () {
+                        request('GET', 'MediaOptimizer/Operations/' + handle.Id).then(function (state) {
+                            if (!state || state.Status === 'Running') {
+                                if (onProgress && state) { onProgress(state); }
+                                return;
+                            }
+
+                            clearInterval(operationTimer);
+                            operationId = null;
+                            if (state.Status === 'Completed') { resolve(state.Result); }
+                            else { reject(new Error(state.Error || 'It stopped before it finished.')); }
+                        }).catch(function (e) {
+                            clearInterval(operationTimer);
+                            operationId = null;
+                            reject(e);
+                        });
+                    }, 2000);
+                });
+            });
+        }
+
+        findBtn.addEventListener('click', function () {
+            if (!req) { return; }
+            targetHost.innerHTML = '';
+
+            var row = el('div', 'mopt-targets');
+            row.appendChild(el('span', 'mopt-targets-label', 'How close to the source?'));
+            TARGETS.forEach(function (t) {
+                var b = el('button', 'mopt-btn', t.label);
+                b.addEventListener('click', function () { runSearch(t); });
+                row.appendChild(b);
+            });
+
+            targetHost.appendChild(row);
+            targetHost.appendChild(el('div', 'mopt-estimate-sub',
+                'Each choice encodes several short stretches of this file and compares them with '
+                + 'the source, which takes a few minutes.'));
+        });
+
+        function runSearch(target) {
+            targetHost.innerHTML = '';
+            findBtn.disabled = true;
+            findBtn.textContent = 'Searching…';
+            estSub.textContent = 'Encoding short stretches at different settings and comparing each '
+                + 'with the source. This takes a few minutes.';
+
+            operation('MediaOptimizer/Estimate/FindQuality?target=' + encodeURIComponent(target.key), req,
+                function (state) {
+                    estSub.textContent = 'Encoding short stretches at different settings and comparing '
+                        + 'each with the source — ' + Math.round(state.ElapsedSeconds) + 's so far.';
+                })
+                .then(function (result) {
+                    if (!result.Quality) {
+                        searchNote = null;
+                        estSub.textContent = result.FailureReason || 'No setting met that target.';
+                        return;
+                    }
+
+                    // Apply it: finding the setting and not using it is not what was asked for.
+                    req.Quality = result.Quality;
+                    req.RateControl = 'ConstantQuality';
+
+                    searchNote = 'Quality ' + result.Quality + ' — ' + result.Metric + ' '
+                        + result.WorstScoreText + ' at its worst across '
+                        + Math.round(result.SecondsConfirmed) + ' seconds of this file, '
+                        + result.Verdict + '. Found by ' + result.Probes + ' sample encodes.'
+                        + (result.Note ? ' ' + result.Note : '');
+
+                    rebuild();
+                })
+                .catch(function (e) { estSub.textContent = 'Could not search: ' + e.message; })
+                .then(function () {
+                    findBtn.disabled = false;
+                    findBtn.textContent = 'Find the setting…';
+                });
+        }
+
+        measureBtn.addEventListener('click', function () {
+            if (!req) { return; }
+            measureBtn.disabled = true;
+            measureBtn.textContent = 'Measuring…';
+            estSub.textContent = 'Encoding three short samples of this file and comparing them with the '
+                + 'source. This takes about a minute.';
+            operation('MediaOptimizer/Estimate/Sample', req, function (state) {
+                estSub.textContent = 'Encoding three short samples of this file and comparing them with '
+                    + 'the source — ' + Math.round(state.ElapsedSeconds) + 's so far.';
+            }).then(function (result) {
+                renderEstimate(result);
+            }).catch(function (e) {
+                estSub.textContent = 'Could not measure it: ' + e.message;
+            }).then(function () {
+                measureBtn.disabled = false;
+                measureBtn.textContent = 'Measure it';
+            });
+        });
+
         function loadStrategy(key) {
+            // A different preset is a different question; the answer to the last one no longer
+            // describes what is on screen.
+            searchNote = null;
+            targetHost.innerHTML = '';
             formHost.innerHTML = '';
             formHost.appendChild(skeleton(5));
             request('GET', 'MediaOptimizer/ResolveStrategy/' + a.ItemId + '?strategy=' + encodeURIComponent(key))
@@ -483,6 +699,7 @@
         function setContainer(value) { req.Container = value; rebuild(); }
 
         var estimateTimer = null;
+        shell.onClose(function () { clearTimeout(estimateTimer); });
         function refreshEstimate() {
             clearTimeout(estimateTimer);
             estimateTimer = setTimeout(function () {
@@ -513,17 +730,49 @@
 
             var parts = [];
             if (pct > 0) { parts.push('frees ' + bytes(savedBytes)); }
-            if (result.Confidence === 'Medium') { parts.push('estimate ' + bytes(result.EstimatedSizeLowBytes) + ' – ' + bytes(result.EstimatedSizeHighBytes)); }
-            if (result.EstimatedSeconds && result.TimeBasis === 'measured on this server') {
+            // Every number on this line says what kind of number it is. A figure with no label
+            // reads as a fact, and the weakest of these is a guess from a file that does not
+            // report its own bitrate.
+            if (result.Confidence === 'Medium' || result.Confidence === 'Measured') {
+                parts.push((result.Confidence === 'Measured' ? 'measured ' : 'estimate ') +
+                    bytes(result.EstimatedSizeLowBytes) + ' – ' + bytes(result.EstimatedSizeHighBytes));
+            } else if (result.Confidence === 'Low') {
+                parts.push('rough guess — this file does not report its video bitrate');
+            } else if (result.Confidence === 'Unknown') {
+                parts.push('no estimate — this file reports neither its size nor its duration');
+            }
+            if (result.EstimatedSeconds && (result.TimeBasis === 'measured on this server'
+                || result.TimeBasis === 'measured on this file')) {
                 parts.push('about ' + duration(result.EstimatedSeconds) + ' to encode');
             } else if (result.TimeBasis === 'unmeasured') {
                 parts.push('encode time shown once it starts');
             }
+            // A measured quality score is the one number nothing else here can offer, so it goes
+            // in the summary line rather than only in the note underneath. The server formats it:
+            // VMAF and SSIM are on different scales, and rounding an SSIM to one decimal turns
+            // every possible answer into "1.0".
+            if (result.QualityScoreText && result.QualityMetric) {
+                parts.push(result.QualityMetric + ' ' + result.QualityScoreText +
+                    (result.QualityVerdict ? ' — ' + result.QualityVerdict : ''));
+            }
+
             parts.push(result.IsLossless ? 'bit-exact — hash verified afterwards' : 'lossy');
             estSub.textContent = parts.join(' · ');
 
             if (result.SavingNote) {
                 warnHost.insertBefore(warningBox('info', result.SavingNote), warnHost.firstChild);
+            }
+
+            // What the measurement covered, and what it cannot know. A single averaged number
+            // would quietly imply the whole film encodes like its middle eight seconds.
+            if (result.MeasurementNote) {
+                warnHost.insertBefore(warningBox('info', result.MeasurementNote), warnHost.firstChild);
+            }
+
+            // The searched setting is a measurement of this file, so it outlives the modelled
+            // estimate that follows it.
+            if (searchNote) {
+                warnHost.insertBefore(warningBox('info', searchNote), warnHost.firstChild);
             }
 
             startBtn.disabled = blockers > 0;
@@ -795,6 +1044,24 @@
                         enc.Presets.map(function (p) { return { value: p, label: p }; }),
                         req.Preset, function (v) { req.Preset = v; rebuild(); });
                 }
+
+                // The one thing about a file a person can see instantly and no probe can tell:
+                // grain and animation want opposite decisions from an encoder. Only the software
+                // encoders have a setting that means this, so it is only offered for them.
+                if (enc && (enc.Name === 'libx264' || enc.Name === 'libx265')) {
+                    selectField(row2, 'Content', [
+                        { value: 'Auto', label: 'Leave it to the encoder' },
+                        { value: 'Film', label: 'Live action' },
+                        { value: 'Animation', label: 'Animation' },
+                        { value: 'Grain', label: 'Film grain' }
+                    ], req.Tune || 'Auto', function (v) { req.Tune = v; rebuild(); }, {
+                        Auto: 'The encoder\'s own default, which suits most live action.',
+                        Film: 'Live action.',
+                        Animation: 'Flat areas and hard edges; stops the encoder smoothing line art.',
+                        Grain: 'Keeps grain and sensor noise instead of smearing it into blotches. Makes a bigger file.'
+                    });
+                }
+
                 host.appendChild(row2);
 
                 var row3 = el('div', 'mopt-row');
@@ -1095,10 +1362,29 @@
             'This runs on the server. You can close this — progress stays visible under ' +
             'Dashboard → Media Optimizer, and the original is not touched until the result passes verification.'));
 
+        var qualityLine = el('div', 'mopt-sub');
+        qualityLine.style.display = 'none';
+        pane.appendChild(qualityLine);
+
+        // Its own line, because the poll below rewrites the status line every 1.5 seconds and
+        // would wipe anything written there.
+        var note = warningBox('blocker', '');
+        note.style.display = 'none';
+        pane.appendChild(note);
+
         var cancelBtn = el('button', 'mopt-btn mopt-btn-danger', 'Cancel conversion');
         cancelBtn.addEventListener('click', function () {
             cancelBtn.disabled = true;
-            request('DELETE', 'MediaOptimizer/Jobs/' + job.Id).catch(function () {});
+            note.style.display = 'none';
+            request('DELETE', 'MediaOptimizer/Jobs/' + job.Id).catch(function (e) {
+                // The button going grey was the only feedback this had, so a cancel the server
+                // refused looked exactly like one it accepted — while the encode carried on.
+                cancelBtn.disabled = false;
+                note.firstChild.textContent = 'Could not cancel this conversion: '
+                    + ((e && e.message) || 'the server did not answer')
+                    + '. It is still running.';
+                note.style.display = '';
+            });
         });
         foot.appendChild(cancelBtn);
 
@@ -1108,10 +1394,15 @@
 
         var timer = setInterval(poll, 1500);
         function stop() { clearInterval(timer); }
+        shell.onClose(stop);
         poll();
+
+        var missedPolls = 0;
 
         function poll() {
             request('GET', 'MediaOptimizer/Jobs/' + job.Id).then(function (j) {
+                missedPolls = 0;
+                note.style.display = 'none';
                 var pct = Math.round(j.ProgressPercent || 0);
                 fill.style.width = pct + '%';
                 status.textContent = ({
@@ -1128,6 +1419,14 @@
                     bits.push(bytes(j.SourceSizeBytes) + ' → ' + bytes(j.OutputSizeBytes));
                     if (j.LosslessVerified === true) { bits.push('bit-exactness verified'); }
                 }
+
+                // Measured against the original after the fact, which makes it the only figure in
+                // this dialog that is not a prediction. The server's own sentence is used as-is:
+                // it names the metric, because SSIM 0.98 and VMAF 98 are different claims.
+                if (j.QualityNote) {
+                    qualityLine.textContent = j.QualityNote;
+                    qualityLine.style.display = '';
+                }
                 if (j.Error) { bits.push(j.Error); }
                 sub.textContent = bits.join(' · ');
 
@@ -1135,7 +1434,20 @@
                     stop();
                     cancelBtn.style.display = 'none';
                 }
-            }).catch(function () { /* transient; the next tick retries */ });
+            }).catch(function (e) {
+                // One failed poll is a hiccup and the next tick retries. Several in a row means
+                // this window no longer knows anything — and a progress bar that has stopped
+                // moving reads as an encode that is still going, which is the wrong answer to be
+                // left with while deciding whether to wait up for it.
+                missedPolls++;
+                if (missedPolls < 3) { return; }
+
+                note.firstChild.textContent = 'This window cannot reach the server to ask how the '
+                    + 'conversion is going' + ((e && e.message) ? ' (' + e.message + ')' : '')
+                    + ', so the progress below has stopped updating. The conversion itself is '
+                    + 'unaffected — Dashboard → Media Optimizer shows the same progress.';
+                note.style.display = '';
+            });
         }
     }
 

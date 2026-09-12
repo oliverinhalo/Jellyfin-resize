@@ -344,7 +344,11 @@ public static class StrategyResolver
         request.Video = VideoAction.Encode;
         request.VideoCodec = encoder;
         request.RateControl = RateControlMode.ConstantQuality;
-        request.BitDepth = analysis.Video.BitDepth ?? 8;
+        // The encoders here offer 8-bit and 10-bit. A source that probes as 9, 12 or 16 bit --
+        // which real files do, and which the pixel format now reveals rather than hiding -- must
+        // be carried to the nearest depth that can actually be written, not passed through as a
+        // number that would be refused as impossible.
+        request.BitDepth = (analysis.Video.BitDepth ?? 8) >= 10 ? 10 : 8;
         request.UseHardware = caps.VideoEncoders.Any(e => e.Name == encoder && e.IsHardware);
 
         var family = CodecFamilyOf(encoder);

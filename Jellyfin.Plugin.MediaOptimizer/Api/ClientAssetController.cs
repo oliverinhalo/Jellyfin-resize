@@ -1,24 +1,33 @@
 using System;
 using System.IO;
-using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
-using System.Threading.Tasks;
-using Jellyfin.Plugin.MediaOptimizer.Web;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Primitives;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Api;
 
 /// <summary>
-/// Serves the injected client bundle, and the transformation callback the File Transformation
-/// plugin posts index.html to.
+/// Serves the injected client bundle.
+/// <para>
+/// There used to be a companion endpoint here that accepted index.html by HTTP and returned it
+/// with the script tag added, for older File Transformation versions that worked that way. It had
+/// to be anonymous, because the caller carried no credentials — which made it an unauthenticated
+/// endpoint that echoed whatever was posted to it back as text/html on the Jellyfin origin, and
+/// anything reachable from a browser that reflects HTML is a cross-site scripting hole whatever it
+/// was meant for. Registration now goes through File Transformation's in-process service
+/// (see <see cref="Web.FileTransformationRegistrar"/>), so nothing needed it.
+/// </para>
 /// </summary>
 [ApiController]
 [Route("MediaOptimizer")]
 public class ClientAssetController : ControllerBase
 {
+    private static ClientBundle? _bundle;
+
     private readonly ILogger<ClientAssetController> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="ClientAssetController"/> class.</summary>
@@ -28,6 +37,42 @@ public class ClientAssetController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Gets the assembled bundle, reading the embedded resources on first use. Reading and
+    /// re-splicing two embedded files on every request is pure waste when neither can change
+    /// without the process restarting.
+    /// </summary>
+    private static ClientBundle? Bundle
+    {
+        get
+        {
+            var cached = _bundle;
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            var js = ReadResource("Web.Resources.client.js");
+            if (js is null)
+            {
+                return null;
+            }
+
+            var css = ReadResource("Web.Resources.client.css") ?? string.Empty;
+
+            // The stylesheet ships inside the script so the page makes one request, and so the
+            // styles cannot arrive after the dialog has already been opened.
+            var text = js.Replace(
+                "/*__MEDIAOPTIMIZER_CSS__*/",
+                System.Text.Json.JsonSerializer.Serialize(css),
+                StringComparison.Ordinal);
+
+            cached = new ClientBundle(text);
+            _bundle = cached;
+            return cached;
+        }
+    }
+
     /// <summary>Serves the client script. Anonymous because a script tag carries no auth header.</summary>
     /// <returns>The JavaScript bundle.</returns>
     [HttpGet("client.js")]
@@ -35,90 +80,68 @@ public class ClientAssetController : ControllerBase
     [Produces("application/javascript")]
     public ActionResult GetClientScript()
     {
-        var js = ReadResource("Web.Resources.client.js");
-        if (js is null)
+        var bundle = Bundle;
+        if (bundle is null)
         {
+            _logger.LogError("[MediaOptimizer] The client script is missing from the plugin assembly");
             return NotFound();
         }
 
-        var css = ReadResource("Web.Resources.client.css") ?? string.Empty;
+        // Every page load in every open browser asks for this. The contents only change when the
+        // plugin is upgraded, so give it a validator and let the browser skip the transfer: the
+        // tag is derived from the bundle itself, so an upgrade invalidates it without anyone
+        // having to remember to bump a version. The revalidation window is deliberately short --
+        // a stale script after an upgrade would be a confusing bug to chase.
+        Response.Headers.ETag = bundle.Tag;
+        Response.Headers.CacheControl = "public, max-age=300, must-revalidate";
 
-        // The stylesheet ships inside the script so the page makes one request, and so the
-        // styles cannot arrive after the dialog has already been opened.
-        var bundle = js.Replace(
-            "/*__MEDIAOPTIMIZER_CSS__*/",
-            System.Text.Json.JsonSerializer.Serialize(css),
-            StringComparison.Ordinal);
+        if (MatchesEtag(Request.Headers.IfNoneMatch, bundle.Tag))
+        {
+            return StatusCode(StatusCodes.Status304NotModified);
+        }
 
-        return Content(bundle, "application/javascript", Encoding.UTF8);
+        return Content(bundle.Text, "application/javascript", Encoding.UTF8);
     }
 
-    /// <summary>
-    /// Receives index.html from the File Transformation plugin and returns it with the script tag added.
-    /// </summary>
-    /// <returns>The transformed document.</returns>
-    [HttpPost("Transform")]
-    [AllowAnonymous]
-    public async Task<ActionResult> Transform()
+    /// <summary>Checks an If-None-Match header against our tag, honouring the "*" wildcard.</summary>
+    /// <param name="header">The header values as sent.</param>
+    /// <param name="tag">Our current entity tag.</param>
+    /// <returns>Whether the browser already holds this exact bundle.</returns>
+    internal static bool MatchesEtag(StringValues header, string tag)
     {
-        try
+        foreach (var value in header)
         {
-            using var reader = new StreamReader(Request.Body, Encoding.UTF8);
-            var body = await reader.ReadToEndAsync().ConfigureAwait(false);
-
-            var html = ExtractContents(body);
-            if (html is null)
+            if (string.IsNullOrEmpty(value))
             {
-                _logger.LogWarning("[MediaOptimizer] Transformation payload did not contain document contents");
-                return BadRequest();
+                continue;
             }
 
-            return Content(WebInjectionHostedService.InjectInto(html), "text/html", Encoding.UTF8);
-        }
-        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
-        {
-            _logger.LogError(ex, "[MediaOptimizer] Failed to transform index.html");
-            return StatusCode(StatusCodes.Status500InternalServerError);
-        }
-    }
-
-    /// <summary>
-    /// Pulls the document out of the transformation payload. Older builds post the raw file,
-    /// newer ones wrap it in a JSON object, so both shapes are accepted.
-    /// </summary>
-    /// <param name="body">The raw request body.</param>
-    /// <returns>The document, or null when it could not be found.</returns>
-    internal static string? ExtractContents(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body))
-        {
-            return null;
-        }
-
-        var trimmed = body.TrimStart();
-        if (!trimmed.StartsWith('{'))
-        {
-            return body;
-        }
-
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(body);
-            foreach (var name in new[] { "contents", "Contents" })
+            foreach (var candidate in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                if (doc.RootElement.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String)
+                var trimmed = candidate.StartsWith("W/", StringComparison.Ordinal) ? candidate[2..] : candidate;
+                if (trimmed == "*" || string.Equals(trimmed, tag, StringComparison.Ordinal))
                 {
-                    return value.GetString();
+                    return true;
                 }
             }
         }
-        catch (System.Text.Json.JsonException)
+
+        return false;
+    }
+
+    /// <summary>The assembled script and its ETag, built once per process.</summary>
+    private sealed class ClientBundle
+    {
+        public ClientBundle(string text)
         {
-            // Not JSON after all; treat the body as the document.
-            return body;
+            Text = text;
+            Tag = "\"" + Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..16].ToLowerInvariant() + "\"";
         }
 
-        return null;
+        public string Text { get; }
+
+        public string Tag { get; }
     }
 
     private static string? ReadResource(string relativeName)

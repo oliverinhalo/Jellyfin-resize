@@ -168,7 +168,7 @@ public class SweepTask : IScheduledTask
             string[] leftovers;
             try
             {
-                leftovers = Directory.GetFiles(directory!, ".mo-*.motmp");
+                leftovers = Directory.GetFiles(directory!, WorkFilePattern + ".motmp");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
@@ -177,10 +177,7 @@ public class SweepTask : IScheduledTask
 
             foreach (var file in leftovers)
             {
-                // ".mo-<jobid>.<ext>.motmp"
-                var name = Path.GetFileName(file);
-                var jobId = name.Length > 4 ? name[4..].Split('.')[0] : string.Empty;
-                if (activeIds.Contains(jobId))
+                if (activeIds.Contains(JobIdFromWorkFileName(file)))
                 {
                     continue;
                 }
@@ -201,6 +198,34 @@ public class SweepTask : IScheduledTask
         }
     }
 
+    /// <summary>
+    /// The name every file this plugin writes into a working directory begins with: the temporary
+    /// output of a job, its probe copy, and the sample encodes behind a measured estimate.
+    /// </summary>
+    internal const string WorkFilePattern = ".mo-*";
+
+    /// <summary>
+    /// Reads the job id out of a working file name of the form ".mo-&lt;jobid&gt;.&lt;ext&gt;.motmp".
+    /// <para>
+    /// Getting this wrong is not cosmetic: the id is the only thing that marks a file as belonging
+    /// to a job that is still running, and a file that fails to match is deleted once it has been
+    /// untouched for six hours. A finished encode being verified with a deep decode scan writes
+    /// nothing for exactly that long.
+    /// </para>
+    /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <returns>The job id in "N" form, or an empty string when the name does not carry one.</returns>
+    internal static string JobIdFromWorkFileName(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (!name.StartsWith(".mo-", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return name[4..].Split('.')[0];
+    }
+
     private void CleanTempDirectory(CancellationToken cancellationToken)
     {
         string tempDir;
@@ -217,12 +242,17 @@ public class SweepTask : IScheduledTask
         var activeIds = _store.GetActive().Select(j => j.Id.ToString("N")).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var cutoff = DateTime.UtcNow.AddHours(-6);
 
-        foreach (var file in Directory.EnumerateFiles(tempDir))
+        // Only the files this plugin wrote. The working directory is a path an administrator
+        // types into a settings box, and the obvious thing to type is a directory that already
+        // exists -- a scratch disk, the server's own transcoding folder. Deleting everything in
+        // there that is six hours old is then this plugin destroying files it never created, once
+        // a night, silently. Everything it does create is named ".mo-..."; nothing else in the
+        // directory is its business.
+        foreach (var file in Directory.EnumerateFiles(tempDir, WorkFilePattern))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var name = Path.GetFileNameWithoutExtension(file);
-            if (activeIds.Contains(name))
+            if (activeIds.Contains(JobIdFromWorkFileName(file)))
             {
                 continue;
             }

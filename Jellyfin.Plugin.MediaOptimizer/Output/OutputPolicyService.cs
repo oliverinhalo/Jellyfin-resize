@@ -236,17 +236,25 @@ public class OutputPolicyService : IOutputPolicyService
             Directory.CreateDirectory(destDir);
         }
 
+        // A destination that already exists is a different problem from a destination on another
+        // filesystem, and both arrive as IOException. Copying several gigabytes and then failing
+        // the rename anyway is a pointless way to find that out.
+        if (!overwrite && File.Exists(destination))
+        {
+            throw new IOException(FormattableString.Invariant($"'{destination}' already exists."));
+        }
+
         try
         {
             File.Move(source, destination, overwrite);
             return;
         }
-        catch (IOException)
+        catch (IOException ex) when (IsCrossVolume(ex))
         {
             // Different filesystem: fall through to copy.
         }
 
-        var staging = destination + ".mopt-partial";
+        var staging = StagingPathFor(destination);
         try
         {
             File.Copy(source, staging, overwrite: true);
@@ -269,12 +277,64 @@ public class OutputPolicyService : IOutputPolicyService
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    // Nothing useful to do; the partial file is named so it is obvious.
+                    // Nothing useful to do here, which is exactly why the name matters: the file
+                    // is hidden from the library scanner and housekeeping will remove it.
                 }
             }
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Names the temporary file a cross-volume copy lands on before it is renamed into place.
+    /// <para>
+    /// It has to be a sibling of the destination, because the point of it is that the final step
+    /// is an atomic rename within one directory. That directory is usually the library folder, so
+    /// the name follows the same rules as every other working file this plugin writes: a leading
+    /// dot and a .motmp suffix, so the library scanner never indexes a half-copied film, and the
+    /// ".mo-" prefix housekeeping looks for, so a copy interrupted by a power cut is cleaned up
+    /// instead of sitting next to the media at full size forever. The identifier also keeps two
+    /// moves to the same destination from writing over each other's staging file.
+    /// </para>
+    /// </summary>
+    /// <param name="destination">Where the file is going.</param>
+    /// <returns>The staging path.</returns>
+    internal static string StagingPathFor(string destination)
+    {
+        var name = FormattableString.Invariant($".mo-partial-{Guid.NewGuid():N}.motmp");
+        var directory = Path.GetDirectoryName(destination);
+        return string.IsNullOrEmpty(directory) ? name : Path.Combine(directory, name);
+    }
+
+    /// <summary>
+    /// Whether a failed rename means "the destination is on another filesystem", which is the one
+    /// case worth answering with a whole-file copy.
+    /// <para>
+    /// .NET does not surface EXDEV as anything but IOException, so this reads the error code
+    /// underneath. When it cannot tell, it says yes: attempting the copy is recoverable, whereas
+    /// refusing it would fail a conversion that could have completed.
+    /// </para>
+    /// </summary>
+    /// <param name="exception">The exception File.Move threw.</param>
+    /// <returns>Whether to fall back to copying.</returns>
+    private static bool IsCrossVolume(IOException exception)
+    {
+        const int Exdev = 18;          // Linux, macOS: EXDEV
+        const int NotSameDevice = 17;  // Windows: ERROR_NOT_SAME_DEVICE
+
+        var code = exception.HResult & 0xFFFF;
+        if (code is Exdev or NotSameDevice)
+        {
+            return true;
+        }
+
+        // Anything that clearly is not a device boundary -- a permission problem, a file in use --
+        // should surface as itself rather than being retried as a copy that will fail the same way.
+        return code is not 13     // EACCES
+            and not 16            // EBUSY / ERROR_BUSY
+            and not 28            // ENOSPC
+            and not 2;            // ENOENT
     }
 
     private void ApplySidecar(EncodeJob job, string tempOutputPath)
@@ -330,18 +390,36 @@ public class OutputPolicyService : IOutputPolicyService
         _logger.LogInformation("[MediaOptimizer] Alternate version written to {Path}", destination);
     }
 
+    /// <summary>
+    /// Where a replacement goes: the source's own path when the container has not changed, and
+    /// otherwise the same folder and the same name with the new extension.
+    /// <para>
+    /// Keeping the name is what keeps everything Jellyfin finds by name working — .nfo metadata,
+    /// artwork, external subtitles, all of which are matched on the file name without its
+    /// extension. An earlier version of this moved those files alongside the new one, which was
+    /// both unnecessary and never actually ran: the name it moved them to was the name they
+    /// already had.
+    /// </para>
+    /// </summary>
+    /// <param name="sourcePath">The file being replaced.</param>
+    /// <param name="outputExtension">The new file's extension, with its dot.</param>
+    /// <returns>The path the replacement takes.</returns>
+    internal static string ReplacementPathFor(string sourcePath, string outputExtension)
+    {
+        if (string.Equals(Path.GetExtension(sourcePath), outputExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            return sourcePath;
+        }
+
+        return Path.Combine(
+            Path.GetDirectoryName(sourcePath) ?? ".",
+            Path.GetFileNameWithoutExtension(sourcePath) + outputExtension);
+    }
+
     private async Task ApplyReplaceAsync(EncodeJob job, string tempOutputPath, CancellationToken cancellationToken)
     {
         var sourcePath = job.SourcePath;
-        var extension = Path.GetExtension(tempOutputPath);
-        var sourceExtension = Path.GetExtension(sourcePath);
-        var sameExtension = string.Equals(extension, sourceExtension, StringComparison.OrdinalIgnoreCase);
-
-        var finalPath = sameExtension
-            ? sourcePath
-            : Path.Combine(
-                Path.GetDirectoryName(sourcePath) ?? ".",
-                Path.GetFileNameWithoutExtension(sourcePath) + extension);
+        var finalPath = ReplacementPathFor(sourcePath, Path.GetExtension(tempOutputPath));
 
         var deleteNow = job.OutputPolicy == OutputPolicy.ReplaceAndDelete;
         var keptPath = deleteNow ? null : BuildKeptOriginalPath(sourcePath);
@@ -395,14 +473,6 @@ public class OutputPolicyService : IOutputPolicyService
             job.OutputPath = finalPath;
             job.OutputSizeBytes = new FileInfo(finalPath).Length;
 
-            if (!sameExtension)
-            {
-                var moved = _reconciler.MoveCompanionFiles(sourcePath, finalPath);
-                if (moved.Count > 0)
-                {
-                    _logger.LogInformation("[MediaOptimizer] Moved {Count} companion file(s) alongside the new media file", moved.Count);
-                }
-            }
         }
         finally
         {

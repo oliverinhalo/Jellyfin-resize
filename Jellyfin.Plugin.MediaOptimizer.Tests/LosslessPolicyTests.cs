@@ -171,7 +171,7 @@ public class LosslessPolicyTests
 
         Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
         Assert.True(plan.IsLossless);
-        Assert.Contains(1, plan.LosslessAudioIndexes);
+        Assert.Contains(plan.LosslessAudioChecks, c => c.SourceStreamIndex == 1 && c.OutputAudioIndex == 0);
     }
 
     [Fact]

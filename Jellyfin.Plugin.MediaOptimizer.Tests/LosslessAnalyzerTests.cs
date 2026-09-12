@@ -34,6 +34,15 @@ public class LosslessAnalyzerTests
     [InlineData("DTS-HD HRA", false)]
     [InlineData("DTS", false)]
     [InlineData(null, false)]
+    // "Matrix" begins with the same two letters as "MA", and DTS-ES Matrix is lossy. Reading it
+    // as Master Audio would have the plugin call a conversion of it bit-exact and predict the
+    // output at 85% of the source, when re-encoding a lossy track to FLAC makes it several times
+    // larger.
+    [InlineData("DTS-ES Matrix", false)]
+    [InlineData("DTS-ES", false)]
+    [InlineData("DTS Express", false)]
+    [InlineData("DTS-HD MA + DTS:X", true)]
+    [InlineData("dts-hd ma", true)]
     public void IsLosslessAudio_distinguishes_dts_variants(string? profile, bool expected) =>
         Assert.Equal(expected, LosslessAnalyzer.IsLosslessAudio("dts", profile));
 

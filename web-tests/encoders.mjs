@@ -185,6 +185,42 @@ console.log('\n=== chosen codec missing from this server ===');
     'the dropdown shows the codec the request actually carries');
 }
 
+// --- 4. Content tuning is only offered where it means something -------------------------------
+// Grain and animation want opposite decisions from an encoder, and only the software encoders have
+// a setting that means that. Offering it for a hardware encoder would be offering something the
+// plan then has to explain it ignored.
+console.log('\n=== content tuning follows the encoder ===');
+{
+  const software = await open(caps(ENCODERS), {
+    ItemId: ITEM, Strategy: 'Standard', Container: 'mkv', Video: 'Encode', VideoCodec: 'libx265',
+    BitDepth: 10, RateControl: 'ConstantQuality', Quality: 28, Preset: 'medium',
+    AudioTracks: [{ Index: 1, Action: 'Copy' }], KeepAttachments: true, KeepChapters: true,
+    OutputPolicy: 'Replace'
+  });
+
+  check(software.pageErrors.length === 0,
+    `no page errors${software.pageErrors.length ? ': ' + software.pageErrors[0] : ''}`);
+  check(!!software.fields.Content, 'x265 is offered content tuning');
+  check(software.fields.Content
+    && ['Auto', 'Film', 'Animation', 'Grain'].every(v => software.fields.Content.options.includes(v)),
+    `and the choices are the ones the planner knows (${software.fields.Content
+      && software.fields.Content.options.join(', ')})`);
+  check(software.fields.Content && software.fields.Content.value === 'Auto',
+    'it starts on the encoder\'s own default');
+
+  const hardware = await open(
+    caps([{ Name: 'hevc_nvenc', Codec: 'hevc', DisplayName: 'HEVC (NVENC)', IsHardware: true, Supports10Bit: true, Presets: ['p4', 'p7'] }]),
+    {
+      ItemId: ITEM, Strategy: 'Standard', Container: 'mkv', Video: 'Encode', VideoCodec: 'hevc_nvenc',
+      BitDepth: 10, RateControl: 'ConstantQuality', Quality: 28, Preset: 'p7',
+      AudioTracks: [{ Index: 1, Action: 'Copy' }], KeepAttachments: true, KeepChapters: true,
+      OutputPolicy: 'Replace'
+    });
+
+  check(hardware.fields.Content === undefined,
+    'a hardware encoder is not offered a setting it does not have');
+}
+
 await browser.close();
 console.log(failures === 0 ? '\nAll encoder-selection checks passed.' : `\n${failures} encoder-selection check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
@@ -22,9 +23,13 @@ public class SizeEstimator : ISizeEstimator
     // Each CRF step changes bitrate by roughly this factor, in both directions.
     private const double CrfStepFactor = 1.12d;
 
-    // Bitrate does not scale linearly with pixel count: half the pixels needs rather more than
-    // half the bitrate. This exponent is the usual rule of thumb.
-    private const double ResolutionExponent = 0.75d;
+    /// <summary>
+    /// Bitrate does not scale linearly with pixel count: half the pixels needs rather more than
+    /// half the bitrate. This exponent is the usual rule of thumb, and is shared with
+    /// <see cref="SavingForecast"/> so the library worklist and the per-file estimate cannot
+    /// disagree about what a resolution change buys.
+    /// </summary>
+    internal const double ResolutionExponent = 0.75d;
 
     private readonly IJobStore _store;
 
@@ -33,6 +38,96 @@ public class SizeEstimator : ISizeEstimator
     public SizeEstimator(IJobStore store)
     {
         _store = store;
+    }
+
+    /// <summary>
+    /// Turns a sample measurement into the same shape as a modelled estimate, so the dialog shows
+    /// one thing in one place and the difference is in what it says about itself.
+    /// </summary>
+    /// <param name="analysis">Source analysis.</param>
+    /// <param name="measurement">What the sample encodes produced.</param>
+    /// <param name="modelled">The modelled estimate, whose warnings and flags are kept.</param>
+    /// <returns>The measured estimate.</returns>
+    internal static EstimateResult FromMeasurement(
+        FileAnalysis analysis,
+        SampleMeasurement measurement,
+        EstimateResult modelled)
+    {
+        var duration = analysis.DurationSeconds ?? 0d;
+        if (!measurement.Succeeded || duration <= 0d)
+        {
+            return modelled;
+        }
+
+        var result = new EstimateResult
+        {
+            CurrentSizeBytes = modelled.CurrentSizeBytes,
+            IsLossless = modelled.IsLossless,
+            Warnings = modelled.Warnings,
+            Method = "sampled",
+            Confidence = EstimateConfidence.Measured,
+            EstimatedSizeBytes = (long)(measurement.BytesPerSecond * duration),
+            EstimatedSizeLowBytes = (long)(measurement.LowBytesPerSecond * duration),
+            EstimatedSizeHighBytes = (long)(measurement.HighBytesPerSecond * duration)
+        };
+
+        if (result.CurrentSizeBytes > 0)
+        {
+            result.SavingFraction = 1d - ((double)result.EstimatedSizeBytes / result.CurrentSizeBytes);
+        }
+
+        // The speed came from encoding this very file with these very settings, which is a far
+        // better basis for a time than an average over whatever this server last converted.
+        if (measurement.SpeedFactor is > 0d)
+        {
+            result.EstimatedSeconds = duration / measurement.SpeedFactor.Value;
+            result.TimeBasis = "measured on this file";
+        }
+        else
+        {
+            result.EstimatedSeconds = modelled.EstimatedSeconds;
+            result.TimeBasis = modelled.TimeBasis;
+        }
+
+        if (measurement.QualityScore is not null && !string.IsNullOrEmpty(measurement.QualityMetric))
+        {
+            result.QualityMetric = measurement.QualityMetric;
+            result.QualityScore = measurement.QualityScore.Value;
+            result.QualityScoreText = QualityProbe.FormatScore(measurement.QualityMetric, measurement.QualityScore.Value);
+            result.QualityVerdict = QualityProbe.Describe(measurement.QualityMetric, measurement.QualityScore.Value);
+        }
+
+        var spread = measurement.BytesPerSecond > 0d
+            ? (measurement.HighBytesPerSecond - measurement.LowBytesPerSecond) / measurement.BytesPerSecond * 100d
+            : 0d;
+
+        result.MeasurementNote = string.Format(
+            CultureInfo.InvariantCulture,
+            "Measured by encoding {0} sample(s) totalling {1:F0} seconds of this file with these settings. "
+            + "The samples varied by {2:F0}%, so the range above is real: a stretch of dark, grainy "
+            + "footage elsewhere in the file will land outside it.",
+            measurement.Samples,
+            measurement.SampledSeconds,
+            spread);
+
+        if (result.QualityScore is not null && measurement.WorstQualityScore is not null)
+        {
+            // A verdict each, next to the number it belongs to. One verdict sitting after both
+            // numbers reads as a description of whichever the eye lands on -- and the two can be
+            // genuinely different answers: "indistinguishable" on average and "noticeably softer"
+            // on the worst sample is exactly the case somebody needs to see.
+            result.MeasurementNote += string.Format(
+                CultureInfo.InvariantCulture,
+                " Picture quality was compared frame by frame against the source: {0} {1} on average "
+                + "({2}), {3} at its worst ({4}).",
+                result.QualityMetric,
+                result.QualityScoreText,
+                result.QualityVerdict,
+                QualityProbe.FormatScore(result.QualityMetric!, measurement.WorstQualityScore.Value),
+                QualityProbe.Describe(result.QualityMetric!, measurement.WorstQualityScore.Value));
+        }
+
+        return result;
     }
 
     /// <inheritdoc />
