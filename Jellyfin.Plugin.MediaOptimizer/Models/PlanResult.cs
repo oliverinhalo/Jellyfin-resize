@@ -126,6 +126,22 @@ public class PlanResult
     public bool VideoIsAbsent { get; set; }
 
     /// <summary>
+    /// Gets or sets how many video streams this plan maps into the output: 0 or 1.
+    /// <para>
+    /// What the plan intends to produce, so that what came out can be checked against it. An
+    /// encode that exits successfully having quietly dropped a track is the one failure the
+    /// duration check cannot see.
+    /// </para>
+    /// </summary>
+    public int MappedVideoStreams { get; set; }
+
+    /// <summary>Gets or sets how many audio streams this plan maps into the output.</summary>
+    public int MappedAudioStreams { get; set; }
+
+    /// <summary>Gets or sets how many subtitle streams this plan maps into the output.</summary>
+    public int MappedSubtitleStreams { get; set; }
+
+    /// <summary>
     /// Gets or sets the audio tracks whose decoded output must hash-match the source, each paired
     /// with the position it occupies in the output.
     /// </summary>

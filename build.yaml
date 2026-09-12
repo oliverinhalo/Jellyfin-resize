@@ -83,6 +83,12 @@ changelog: |
     animated series want settings four or five apart. It confirms its answer at three points across
     the film, where the worst of the three has to meet the target, and says plainly when a source
     cannot reach one at all.
+  - Fixed the one conversion failure the checks could not see: an output missing a track. An
+    encoder or muxer that drops a track it could not write and still reports success produces a
+    file that parses and runs for exactly the right length — and the next step replaces your only
+    copy with it. The plan now records what it maps and verification counts what came out, so a
+    conversion that lost an audio or subtitle track is refused with the track named, and the
+    original is left alone.
   - New: tell it what the footage is. Grain and animation want opposite decisions from an encoder,
     and it is the one thing about a file you can see instantly and no probe can tell reliably, so
     "Content" in the dialog — live action, animation, film grain — is passed straight through to

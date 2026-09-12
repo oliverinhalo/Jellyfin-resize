@@ -5,8 +5,8 @@ here because a plugin that rewrites people's media files should carry a written 
 checked and what was not, and because the useful half of a self-review is the half that says what
 is still wrong.
 
-**Scope:** ~70 files, ~8,200 lines added. Twenty-three defect fixes, ten features, and the
-tests for both. Against the previous release the test suite goes from 174 to 430.
+**Scope:** ~70 files, ~8,200 lines added. Twenty-four defect fixes, ten features, and the
+tests for both. Against the previous release the test suite goes from 174 to 432.
 
 ---
 
@@ -49,7 +49,11 @@ tests for both. Against the previous release the test suite goes from 174 to 430
 | 12 | The analysis dialog handed a non-administrator the absolute path of the file on the server, and any FFmpeg error quoting it. | Every other read on that controller is administrator-only for exactly this reason, and the diagnostics page added on this same branch deliberately hides server paths from non-administrators. The one endpoint a non-administrator can actually open was the one giving it away. They now see the file name. |
 | 13 | A cross-volume move copied the whole file to `<destination>.mopt-partial` first — a name the library scanner does not hide and housekeeping does not recognise. | A power cut in the middle of that copy left a full-size duplicate of a film next to it, forever. It is now named like every other working file: hidden from the scanner, swept by housekeeping, and unique per move so two conversions to one destination cannot overwrite each other's staging file. |
 
-The last three are the security pass's. The first ten came from reading the plugin end to end.
+| 14 | Verification never checked that the output actually contained the streams the plan mapped — while the setting that governs the deep scan said in so many words that "the streams are all present" was one of the cheap checks that "already run every time". It was not a check at all. | This is the one failure the other checks cannot see. An encoder or muxer that drops a track it could not write and still exits zero produces a file that parses and runs for exactly the right length, missing one audio track — and the next thing the queue does is replace the user's only copy with it. The plan now records what it maps, verification counts what came out, and a shortfall fails the job with the missing track named. The regression test asserts both halves: that the old checks passed that file, and that the new one does not. |
+
+Rows 11 to 13 are the security pass's; row 14 came from a fifth pass over the code that
+verification and the queue actually run, reading for what a check claims versus what it does. The
+first ten came from reading the plugin end to end.
 
 Also in that first pass: the dashboard re-bound its event handlers on every `pageshow`, so after
 navigating away and back one click on "pause queue" sent two requests; endpoints that reveal
@@ -116,12 +120,14 @@ under repetition, so their tests repeat.
 
 ## What is verified, and how
 
-- **430 tests**, none skipped when ffmpeg is present. The suite includes 17 that drive a real
+- **432 tests**, none skipped when ffmpeg is present. The suite includes 22 that drive a real
   ffmpeg: lossless FLAC round-trips verified by hash, a truncated output being rejected, a planned
   downscale producing exactly the requested resolution, upscaling being refused, cancellation
   actually killing the process, MP4 muxing with text subtitles, the sampled estimate being compared
   against a full encode of the same file, a worse encode actually scoring worse on VMAF than a
-  better one, and the quality search's answer measuring at or above the target it was given.
+  better one, the quality search's answer measuring at or above the target it was given, every content-tuning
+  name being one the real encoder accepts, and an output that lost a track being refused while the
+  complete one is not.
 - **Six browser tests** in real Chromium: the injected UI grafting onto real jellyfin-web markup,
   the dialog surviving deliberately hostile host CSS, dialog and dashboard layout at 412px and
   1280px, the dialog's teardown, the dashboard's rules panel and its reordering, and the searched

@@ -183,7 +183,7 @@ public class EncodePlanner : IEncodePlanner
         }
 
         // ---- subtitles, attachments, chapters ----
-        PlanPassthrough(analysis, request, args, warnings, ref everythingBitExact);
+        var mappedSubtitles = PlanPassthrough(analysis, request, args, warnings, ref everythingBitExact);
 
         // ---- container ----
         var extension = NormaliseContainer(request.Container);
@@ -244,6 +244,9 @@ public class EncodePlanner : IEncodePlanner
             IsLossless = isLossless,
             VideoIsCopied = videoAction == VideoAction.Copy,
             VideoIsAbsent = videoAction == VideoAction.Drop || video is null,
+            MappedVideoStreams = videoAction == VideoAction.Drop || video is null ? 0 : 1,
+            MappedAudioStreams = keptAudio,
+            MappedSubtitleStreams = mappedSubtitles,
             LosslessAudioChecks = losslessAudioChecks
         };
     }
@@ -910,7 +913,13 @@ public class EncodePlanner : IEncodePlanner
         }
     }
 
-    private static void PlanPassthrough(
+    /// <summary>
+    /// Maps the streams that are carried rather than encoded, and reports how many subtitle
+    /// tracks made it into the plan — which is one of the numbers verification checks the output
+    /// against afterwards.
+    /// </summary>
+    /// <returns>How many subtitle streams were mapped.</returns>
+    private static int PlanPassthrough(
         FileAnalysis analysis,
         EncodeRequest request,
         List<string> args,
@@ -1018,6 +1027,8 @@ public class EncodePlanner : IEncodePlanner
             args.Add("-map_chapters");
             args.Add("-1");
         }
+
+        return subOutIndex;
     }
 
     /// <summary>

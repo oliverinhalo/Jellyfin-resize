@@ -353,6 +353,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 analysis.DurationSeconds,
                 deepScan,
                 plan.LosslessAudioChecks,
+                ExpectedStreams.From(plan),
                 cancellationToken).ConfigureAwait(false);
 
             job.LosslessVerified = verification.LosslessVerified;

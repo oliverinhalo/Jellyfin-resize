@@ -353,7 +353,8 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, analysis.DurationSeconds, deepScan: true, plan.LosslessAudioChecks, CancellationToken.None);
+            source, output, analysis.DurationSeconds, deepScan: true, plan.LosslessAudioChecks,
+            ExpectedStreams.From(plan), CancellationToken.None);
 
         Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
         Assert.True(verification.LosslessVerified, "The audio should have hashed identically.");
@@ -407,7 +408,8 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, 4d, deepScan: false, plan.LosslessAudioChecks, CancellationToken.None);
+            source, output, 4d, deepScan: false, plan.LosslessAudioChecks,
+            ExpectedStreams.From(plan), CancellationToken.None);
 
         Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
         Assert.True(verification.LosslessVerified, "The FLAC track is bit-exact and must verify as such.");
@@ -430,7 +432,7 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, 4d, deepScan: false, [new LosslessAudioCheck(1, 0)], CancellationToken.None);
+            source, output, 4d, deepScan: false, [new LosslessAudioCheck(1, 0)], null, CancellationToken.None);
 
         Assert.False(verification.Passed);
         Assert.False(verification.LosslessVerified);
@@ -533,7 +535,7 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, 4d, deepScan: false, [], CancellationToken.None);
+            source, output, 4d, deepScan: false, [], null, CancellationToken.None);
 
         Assert.False(verification.Passed);
         Assert.Contains("Duration mismatch", verification.FailureReason!, StringComparison.Ordinal);
@@ -783,5 +785,113 @@ public class FfmpegIntegrationTests : IDisposable
 
         Assert.True(run.Success, "ffmpeg rejected the tuning: " + run.StandardError);
         Assert.True(new FileInfo(output).Length > 0);
+    }
+
+    /// <summary>
+    /// The failure the duration check cannot see. An encoder or a muxer that drops a track it
+    /// could not write and still exits zero produces a file that parses, runs for exactly the
+    /// right length, and is missing an audio track — and the next step after verification
+    /// replaces the user's only copy with it. Verification now checks the output against what the
+    /// plan said it would map.
+    /// </summary>
+    [SkippableFact]
+    public async Task Verification_rejects_an_output_that_lost_a_track_the_plan_mapped()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateTwoAudioSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Audio =
+        [
+            new AudioTrackInfo { Index = 1, TypeIndex = 0, Codec = "aac", Channels = 1, SampleRate = 48000 },
+            new AudioTrackInfo { Index = 2, TypeIndex = 1, Codec = "flac", Channels = 1, SampleRate = 48000, IsLossless = true }
+        ];
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks =
+            [
+                new AudioTrackRequest { Index = 1, Action = AudioAction.Copy },
+                new AudioTrackRequest { Index = 2, Action = AudioAction.Copy }
+            ]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(
+            analysis, request, Path.Combine(_dir, "both.mkv"), CancellationToken.None);
+
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+        Assert.Equal(2, plan.MappedAudioStreams);
+        Assert.Equal(1, plan.MappedVideoStreams);
+
+        // An output built the way a dropped track actually looks: everything else intact, right
+        // duration, one audio track short.
+        var truncated = Path.Combine(_dir, "one-track-short.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-i", source,
+            "-map", "0:v:0", "-map", "0:1",
+            "-c", "copy",
+            truncated
+        ];
+
+        var built = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(built.Success, "Could not build the short output: " + built.StandardError);
+
+        var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
+
+        // Without the check it passes: this is what the plugin used to do.
+        var blind = await verifier.VerifyAsync(
+            source, truncated, null, deepScan: false, [], null, CancellationToken.None);
+        Assert.True(blind.Passed, "The old checks cannot see a missing track: " + blind.FailureReason);
+
+        var verification = await verifier.VerifyAsync(
+            source, truncated, null, deepScan: false, [], ExpectedStreams.From(plan), CancellationToken.None);
+
+        Assert.False(verification.Passed, "A conversion that lost an audio track must never be applied.");
+        Assert.Contains("audio track", verification.FailureReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("original has not been touched", verification.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>And a real, complete encode is not failed by that check.</summary>
+    [SkippableFact]
+    public async Task Verification_accepts_an_output_with_everything_the_plan_mapped()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateTwoAudioSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Audio =
+        [
+            new AudioTrackInfo { Index = 1, TypeIndex = 0, Codec = "aac", Channels = 1, SampleRate = 48000 },
+            new AudioTrackInfo { Index = 2, TypeIndex = 1, Codec = "flac", Channels = 1, SampleRate = 48000, IsLossless = true }
+        ];
+
+        var output = Path.Combine(_dir, "complete.mkv");
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks =
+            [
+                new AudioTrackRequest { Index = 1, Action = AudioAction.Copy },
+                new AudioTrackRequest { Index = 2, Action = AudioAction.Copy }
+            ]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(analysis, request, output, CancellationToken.None);
+        var run = await Runner.RunEncodeAsync(plan.Arguments, 4d, null, false, CancellationToken.None);
+        Assert.True(run.Success, "ffmpeg failed: " + run.StandardError);
+
+        var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
+        var verification = await verifier.VerifyAsync(
+            source, output, 4d, deepScan: false, plan.LosslessAudioChecks,
+            ExpectedStreams.From(plan), CancellationToken.None);
+
+        Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
     }
 }
