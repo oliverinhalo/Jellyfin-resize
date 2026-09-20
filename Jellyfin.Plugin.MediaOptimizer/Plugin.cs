@@ -35,8 +35,9 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <inheritdoc />
     public override string Description =>
         "Inspect any media file from inside Jellyfin and convert it with FFmpeg: resolution, codec, "
-        + "bit depth, bitrate and audio presets, plus a genuinely lossless mode. The in-app dialog "
-        + "requires the browser-based web client; every feature is also available from this dashboard.";
+        + "bit depth, bitrate and audio presets, plus a genuinely lossless mode. Also moves media "
+        + "between drives, copying and checking each file before the original is removed. The in-app "
+        + "dialogs require the browser-based web client; every feature is also available from this dashboard.";
 
     /// <inheritdoc />
     public IEnumerable<PluginPageInfo> GetPages()
@@ -48,6 +49,14 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = Name,
                 EmbeddedResourcePath = string.Format(CultureInfo.InvariantCulture, "{0}.Configuration.configPage.html", ns)
+            },
+            new PluginPageInfo
+            {
+                Name = "MediaOptimizerMove",
+                DisplayName = "Move Media",
+                EnableInMainMenu = true,
+                MenuIcon = "drive_file_move",
+                EmbeddedResourcePath = string.Format(CultureInfo.InvariantCulture, "{0}.Configuration.movePage.html", ns)
             },
             new PluginPageInfo
             {

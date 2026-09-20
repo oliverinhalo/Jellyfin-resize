@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Configuration;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -31,6 +32,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(5);
 
     private readonly IJobStore _store;
+    private readonly IMoveJobStore _moves;
     private readonly IMediaProbeService _probe;
     private readonly IEncodePlanner _planner;
     private readonly ISizeEstimator _estimator;
@@ -47,6 +49,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
 
     /// <summary>Initializes a new instance of the <see cref="JobQueueService"/> class.</summary>
     /// <param name="store">Job store.</param>
+    /// <param name="moves">Move queue, so a file about to change drive is not encoded first.</param>
     /// <param name="probe">Probe service.</param>
     /// <param name="planner">Encode planner.</param>
     /// <param name="estimator">Size estimator.</param>
@@ -60,6 +63,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
     /// <param name="logger">Logger.</param>
     public JobQueueService(
         IJobStore store,
+        IMoveJobStore moves,
         IMediaProbeService probe,
         IEncodePlanner planner,
         ISizeEstimator estimator,
@@ -73,6 +77,7 @@ public class JobQueueService : BackgroundService, IJobQueueService
         ILogger<JobQueueService> logger)
     {
         _store = store;
+        _moves = moves;
         _probe = probe;
         _planner = planner;
         _estimator = estimator;
@@ -661,6 +666,14 @@ public class JobQueueService : BackgroundService, IJobQueueService
         if (string.IsNullOrEmpty(analysis.Path) || !File.Exists(analysis.Path))
         {
             return "The source file no longer exists on disk.";
+        }
+
+        // A move queued after this job was is the race the queue-time checks cannot see: the file
+        // is about to be on another drive, and an encode reading it there would be reading a path
+        // that stops existing halfway through.
+        if (_moves.HasActiveJobForItem(job.ItemId))
+        {
+            return "This file is queued to move to another drive. Convert it once the move has finished.";
         }
 
         var stability = Config.FileStabilitySeconds;

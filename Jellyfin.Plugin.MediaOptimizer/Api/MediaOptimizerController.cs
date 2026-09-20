@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
@@ -40,6 +41,7 @@ public class MediaOptimizerController : ControllerBase
     private readonly IQualitySearch _qualitySearch;
     private readonly IOperationRegistry _operations;
     private readonly IJobStore _store;
+    private readonly IMoveJobStore _moves;
     private readonly IJobQueueService _queue;
     private readonly IOutputPolicyService _output;
     private readonly ILibraryManager _libraryManager;
@@ -57,6 +59,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="qualitySearch">Quality search, for finding a setting by measuring.</param>
     /// <param name="operations">Registry of work that outlives the request that started it.</param>
     /// <param name="store">Job store.</param>
+    /// <param name="moves">Move queue, so a file about to change drive is not converted first.</param>
     /// <param name="queue">Job queue.</param>
     /// <param name="output">Output policy service.</param>
     /// <param name="libraryManager">Library manager.</param>
@@ -73,6 +76,7 @@ public class MediaOptimizerController : ControllerBase
         IQualitySearch qualitySearch,
         IOperationRegistry operations,
         IJobStore store,
+        IMoveJobStore moves,
         IJobQueueService queue,
         IOutputPolicyService output,
         ILibraryManager libraryManager,
@@ -89,6 +93,7 @@ public class MediaOptimizerController : ControllerBase
         _qualitySearch = qualitySearch;
         _operations = operations;
         _store = store;
+        _moves = moves;
         _queue = queue;
         _output = output;
         _libraryManager = libraryManager;
@@ -119,6 +124,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="minSizeMb">Only include files at least this large.</param>
     /// <param name="container">Only include this container extension.</param>
     /// <param name="codec">Only include this video codec.</param>
+    /// <param name="location">Only include files living under this folder.</param>
     /// <param name="limit">Maximum results returned.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Matching items.</returns>
@@ -133,6 +139,7 @@ public class MediaOptimizerController : ControllerBase
         [FromQuery] long? minSizeMb = null,
         [FromQuery] string? container = null,
         [FromQuery] string? codec = null,
+        [FromQuery] string? location = null,
         [FromQuery] int limit = 50,
         CancellationToken cancellationToken = default)
     {
@@ -160,6 +167,13 @@ public class MediaOptimizerController : ControllerBase
             cancellationToken.ThrowIfCancellationRequested();
 
             if (string.IsNullOrEmpty(item.Path))
+            {
+                continue;
+            }
+
+            // Used by the move page to ask "what is on this drive?", which the item query itself
+            // cannot answer: Jellyfin indexes items by library, not by the folder they sit in.
+            if (!string.IsNullOrWhiteSpace(location) && !Move.MovePathPlanner.IsUnder(item.Path, location))
             {
                 continue;
             }
@@ -360,6 +374,13 @@ public class MediaOptimizerController : ControllerBase
             if (_store.HasActiveJobForItem(itemId))
             {
                 outcome.SkippedReason = "Already queued.";
+                items.Add(outcome);
+                continue;
+            }
+
+            if (_moves.HasActiveJobForItem(itemId))
+            {
+                outcome.SkippedReason = "Queued to move to another drive.";
                 items.Add(outcome);
                 continue;
             }
@@ -939,6 +960,11 @@ public class MediaOptimizerController : ControllerBase
             return BadRequest(new { error = "This item already has a conversion queued or running." });
         }
 
+        if (_moves.HasActiveJobForItem(request.ItemId))
+        {
+            return BadRequest(new { error = "This file is queued to move to another drive. Convert it once the move has finished." });
+        }
+
         // Validate before queueing so blockers surface immediately rather than on a worker
         // thread minutes later.
         var plan = await _planner
@@ -1069,6 +1095,11 @@ public class MediaOptimizerController : ControllerBase
         if (_store.HasActiveJobForItem(original.ItemId))
         {
             return BadRequest(new { error = "This item already has a conversion queued or running." });
+        }
+
+        if (_moves.HasActiveJobForItem(original.ItemId))
+        {
+            return BadRequest(new { error = "This file is queued to move to another drive. Convert it once the move has finished." });
         }
 
         var job = new EncodeJob

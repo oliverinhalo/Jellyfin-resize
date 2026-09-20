@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Move Media</title></head>
+<body>
+<div id="MediaOptimizerMovePage" data-role="page" class="page type-interior pluginConfigurationPage">
+  <div data-role="content">
+    <div class="content-primary">
+
+      <p class="movIntro">
+        Move films and episodes from one drive to another. Each file is copied to the new drive,
+        checked against the original, and only then removed from the old one — the library entry,
+        watched state and artwork follow it. Nothing is re-encoded here; use
+        <strong>Media Optimizer</strong> for that.
+      </p>
+
+      <div class="verticalSection">
+        <h2 class="sectionTitle">Where your media lives</h2>
+        <div id="movLocations" class="movLocations"></div>
+        <div id="movLocationsError" class="movErr"></div>
+      </div>
+
+      <div class="verticalSection">
+        <h2 class="sectionTitle">What to move</h2>
+
+        <div class="movFilters">
+          <div class="movFilter">
+            <label for="movSource">Currently on</label>
+            <select is="emby-select" id="movSource" class="emby-select">
+              <option value="">Any folder</option>
+            </select>
+          </div>
+          <div class="movFilter movFilterWide">
+            <label for="movSearch">Search</label>
+            <input is="emby-input" type="text" id="movSearch" placeholder="Title, or leave empty for everything" />
+          </div>
+          <div class="movFilter">
+            <label for="movSort">Sort by</label>
+            <select is="emby-select" id="movSort" class="emby-select">
+              <option value="SizeDescending">Largest first</option>
+              <option value="SizeAscending">Smallest first</option>
+              <option value="DateAdded">Recently added</option>
+              <option value="Name">Name (A–Z)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="movSelectBar">
+          <label class="movSelectAll">
+            <input type="checkbox" id="movSelectAll" /> <span>Select all shown</span>
+          </label>
+          <span id="movSelectionInfo" class="movDim">Nothing selected</span>
+          <span style="flex:1"></span>
+          <label class="movSelectAll" title="Move every file under the folder chosen above, not just the ones listed here.">
+            <input type="checkbox" id="movWholeFolder" /> <span>Move the whole folder</span>
+          </label>
+        </div>
+
+        <div id="movResults"></div>
+      </div>
+
+      <div class="verticalSection">
+        <h2 class="sectionTitle">Move to</h2>
+        <div class="movFilters">
+          <div class="movFilter movFilterWide">
+            <label for="movDestination">Destination folder</label>
+            <select is="emby-select" id="movDestination" class="emby-select">
+              <option value="">Choose a folder…</option>
+              <option value="__custom">Somewhere else…</option>
+            </select>
+          </div>
+          <div class="movFilter movFilterWide" id="movCustomWrap" style="display:none">
+            <label for="movCustom">Full path</label>
+            <input is="emby-input" type="text" id="movCustom" placeholder="D:\media\movies  or  /mnt/disk2/movies" />
+          </div>
+        </div>
+
+        <div id="movPreview" class="movPreview"></div>
+
+        <div class="movQueueBar">
+          <button is="emby-button" type="button" id="movStart" class="raised button-submit emby-button" disabled>
+            Move files
+          </button>
+          <button is="emby-button" type="button" id="movRefresh" class="raised emby-button">Refresh</button>
+        </div>
+      </div>
+
+      <div class="verticalSection">
+        <h2 class="sectionTitle">Moves in progress</h2>
+        <div id="movActive"></div>
+
+        <details class="movPanel" id="movHistoryPanel">
+          <summary class="movSummary">
+            <strong>History</strong>
+            <span class="movSummaryHint" id="movHistoryHint"></span>
+          </summary>
+          <div id="movHistory" class="movPanelBody"></div>
+        </details>
+      </div>
+
+    </div>
+  </div>
+
+  <style>
+    .movIntro{opacity:.8;font-size:13.5px;max-width:70ch;margin-bottom:16px}
+    .movLocations{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px}
+    .movLoc{flex:1 1 280px;border:1px solid rgba(128,128,128,.3);border-radius:6px;padding:11px 13px;min-width:0}
+    .movLoc.dest{border-color:#00a4dc;background:rgba(0,164,220,.07)}
+    .movLocPath{font-weight:600;overflow-wrap:anywhere}
+    .movLocMeta{font-size:12.5px;opacity:.68;margin-top:3px}
+    .movLocBar{height:5px;border-radius:3px;background:rgba(128,128,128,.3);overflow:hidden;margin:8px 0 6px}
+    .movLocBar i{display:block;height:100%;background:#00a4dc}
+    .movLocBar i.full{background:#e05a50}
+    .movLocActions{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+    .movTag{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;
+      padding:1px 5px;border-radius:3px;background:rgba(128,128,128,.28);margin-left:6px;font-weight:700}
+
+    .movFilters{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+    .movFilter{display:flex;flex-direction:column;gap:4px;flex:1 1 170px;min-width:0}
+    .movFilterWide{flex:2 1 280px}
+    .movFilter label{font-size:12px;opacity:.7}
+    .movSelectBar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      padding:9px 0;border-top:1px solid rgba(128,128,128,.25);
+      border-bottom:1px solid rgba(128,128,128,.25);margin-bottom:10px}
+    .movSelectAll{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13.5px}
+    .movDim{opacity:.65;font-size:13px}
+
+    .movItem{display:flex;gap:12px;align-items:center;border:1px solid rgba(128,128,128,.3);
+      border-radius:5px;padding:9px 12px;margin-bottom:7px}
+    .movItem.sel{border-color:#00a4dc;background:rgba(0,164,220,.07)}
+    .movItemBody{min-width:0;flex:1}
+    .movItemName{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .movItemMeta{font-size:12.5px;opacity:.68;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+    .movPreview{margin-bottom:12px}
+    .movLine{padding:9px 12px;border-radius:5px;margin-bottom:7px;font-size:13.5px}
+    .movLine.ok{background:rgba(76,175,80,.14)}
+    .movLine.note{background:rgba(128,128,128,.14)}
+    .movLine.blocker{background:rgba(224,90,80,.18)}
+    .movSkips{font-size:12.5px;opacity:.72;margin-top:4px}
+    .movSkip{padding:2px 0;overflow-wrap:anywhere}
+
+    .movJob{border:1px solid rgba(128,128,128,.35);border-radius:5px;padding:12px 14px;margin-bottom:10px}
+    .movJobHead{display:flex;gap:12px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+    .movJobName{font-weight:600}
+    .movJobStatus{font-size:12px;text-transform:uppercase;letter-spacing:.07em;opacity:.75}
+    .movJobMeta{font-size:13px;opacity:.7;margin-top:5px;overflow-wrap:anywhere}
+    .movBar{height:5px;border-radius:3px;background:rgba(128,128,128,.3);overflow:hidden;margin-top:8px}
+    .movBar i{display:block;height:100%;background:#00a4dc;transition:width .3s ease}
+    .movActions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
+    .movEmpty{opacity:.65;padding:18px 0}
+    .movQueueBar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    .movPanel{border:1px solid rgba(128,128,128,.28);border-radius:6px;margin-bottom:14px;
+      background:rgba(128,128,128,.05)}
+    .movSummary{display:flex;align-items:center;gap:10px;padding:10px 13px;cursor:pointer;
+      list-style:none;font-size:14px;user-select:none}
+    .movSummary::-webkit-details-marker{display:none}
+    .movSummary::after{content:"\25BE";margin-left:auto;opacity:.5;font-size:12px;transition:transform .15s ease}
+    .movPanel[open] .movSummary::after{transform:rotate(180deg)}
+    .movPanelBody{padding:2px 13px 13px}
+    .movErr{color:#e05a50;margin-top:5px;font-size:13px}
+  </style>
+
+  <script type="text/javascript">
+    (function () {
+      var page = document.querySelector('#MediaOptimizerMovePage');
+      var timer = null, searchTimer = null, previewTimer = null;
+      var selection = {};     // itemId -> summary
+      var shown = [];
+      var locations = [];
+      var lastPlan = null;
+
+      function bytes(n) {
+        if (n === null || n === undefined) { return '—'; }
+        if (n < 1024) { return n + ' B'; }
+        var u = ['KiB','MiB','GiB','TiB'], v = n / 1024, i = 0;
+        while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+        return v.toFixed(v < 10 ? 2 : 1) + ' ' + u[i];
+      }
+
+      function duration(seconds) {
+        if (!seconds || seconds < 0) { return null; }
+        var s = Math.round(seconds), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+        if (h > 0) { return h + 'h ' + m + 'm'; }
+        if (m > 0) { return m + 'm'; }
+        return s + 's';
+      }
+
+      function api(method, path, body) {
+        var opts = { type: method, url: ApiClient.getUrl(path), headers: { accept: 'application/json' } };
+        if (body !== undefined) { opts.data = JSON.stringify(body); opts.contentType = 'application/json'; }
+        return ApiClient.ajax(opts).then(function (r) {
+          return typeof r === 'string' ? (r.length ? JSON.parse(r) : null) : r;
+        });
+      }
+
+      function el(tag, cls, text) {
+        var n = document.createElement(tag);
+        if (cls) { n.className = cls; }
+        if (text !== undefined && text !== null) { n.textContent = String(text); }
+        return n;
+      }
+
+      function button(label, handler, cls) {
+        var b = document.createElement('button');
+        b.setAttribute('is', 'emby-button');
+        b.type = 'button';
+        b.className = 'raised emby-button ' + (cls || '');
+        b.textContent = label;
+        b.addEventListener('click', handler);
+        return b;
+      }
+
+      // ---- locations -------------------------------------------------------------------
+      function destination() {
+        var value = page.querySelector('#movDestination').value;
+        return value === '__custom' ? page.querySelector('#movCustom').value.trim() : value;
+      }
+
+      function renderLocations() {
+        var host = page.querySelector('#movLocations');
+        host.innerHTML = '';
+
+        if (!locations.length) {
+          host.appendChild(el('div', 'movEmpty',
+            'No library folders were found. Add a library under Dashboard → Libraries, or list extra ' +
+            'destinations in the Media Optimizer settings.'));
+          return;
+        }
+
+        var chosen = destination();
+
+        locations.forEach(function (loc) {
+          var card = el('div', 'movLoc' + (loc.Path === chosen ? ' dest' : ''));
+
+          var title = el('div', 'movLocPath', loc.Path);
+          if (loc.IsExtraTarget) { title.appendChild(el('span', 'movTag', 'extra')); }
+          if (!loc.Exists) { title.appendChild(el('span', 'movTag', 'missing')); }
+          else if (!loc.IsWritable) { title.appendChild(el('span', 'movTag', 'read only')); }
+          card.appendChild(title);
+
+          card.appendChild(el('div', 'movLocMeta', [
+            loc.LibraryName,
+            loc.ItemCount ? loc.ItemCount + ' file' + (loc.ItemCount === 1 ? '' : 's') + ' · ' + bytes(loc.ItemBytes) : null
+          ].filter(Boolean).join(' · ') || 'Empty'));
+
+          if (loc.TotalBytes) {
+            var used = loc.TotalBytes - (loc.FreeBytes || 0);
+            var pct = Math.min(100, Math.round(used * 100 / loc.TotalBytes));
+            var bar = el('div', 'movLocBar');
+            var fill = el('i');
+            fill.style.width = pct + '%';
+            if (pct >= 90) { fill.className = 'full'; }
+            bar.appendChild(fill);
+            card.appendChild(bar);
+            card.appendChild(el('div', 'movLocMeta',
+              bytes(loc.FreeBytes) + ' free of ' + bytes(loc.TotalBytes)));
+          }
+
+          var actions = el('div', 'movLocActions');
+          actions.appendChild(button('Move into this', function () {
+            page.querySelector('#movDestination').value = loc.Path;
+            page.querySelector('#movCustomWrap').style.display = 'none';
+            renderLocations();
+            refreshPreview();
+          }));
+          actions.appendChild(button('Show what is here', function () {
+            page.querySelector('#movSource').value = loc.Path;
+            search();
+          }));
+          card.appendChild(actions);
+
+          host.appendChild(card);
+        });
+      }
+
+      function loadLocations() {
+        return api('GET', 'MediaOptimizer/Move/Locations?includeUsage=true').then(function (list) {
+          locations = list || [];
+          page.querySelector('#movLocationsError').textContent = '';
+
+          function fill(id, first) {
+            var select = page.querySelector(id);
+            var previous = select.value;
+            select.innerHTML = '';
+            var head = document.createElement('option');
+            head.value = ''; head.textContent = first;
+            select.appendChild(head);
+            locations.forEach(function (loc) {
+              var o = document.createElement('option');
+              o.value = loc.Path;
+              o.textContent = loc.Path + (loc.LibraryName ? '  (' + loc.LibraryName + ')' : '');
+              select.appendChild(o);
+            });
+            if (id === '#movDestination') {
+              var custom = document.createElement('option');
+              custom.value = '__custom'; custom.textContent = 'Somewhere else…';
+              select.appendChild(custom);
+            }
+            select.value = previous;
+          }
+
+          fill('#movSource', 'Any folder');
+          fill('#movDestination', 'Choose a folder…');
+          renderLocations();
+        }).catch(function (e) {
+          page.querySelector('#movLocationsError').textContent =
+            'Could not read the library folders: ' + ((e && e.statusText) || e);
+        });
+      }
+
+      // ---- file picking ----------------------------------------------------------------
+      function updateSelectionInfo() {
+        var ids = Object.keys(selection);
+        var total = 0;
+        ids.forEach(function (id) { total += selection[id].SizeBytes || 0; });
+        page.querySelector('#movSelectionInfo').textContent = ids.length
+          ? ids.length + ' selected · ' + bytes(total)
+          : 'Nothing selected';
+        refreshPreview();
+      }
+
+      function renderResults(items) {
+        shown = items || [];
+        var host = page.querySelector('#movResults');
+        host.innerHTML = '';
+        page.querySelector('#movSelectAll').checked = false;
+
+        if (!shown.length) {
+          host.appendChild(el('div', 'movEmpty', 'Nothing matches those filters.'));
+          updateSelectionInfo();
+          return;
+        }
+
+        shown.forEach(function (item) {
+          var row = el('div', 'movItem' + (selection[item.Id] ? ' sel' : ''));
+
+          var check = document.createElement('input');
+          check.type = 'checkbox';
+          check.checked = !!selection[item.Id];
+          check.addEventListener('change', function () {
+            if (check.checked) { selection[item.Id] = item; row.classList.add('sel'); }
+            else { delete selection[item.Id]; row.classList.remove('sel'); }
+            updateSelectionInfo();
+          });
+          row.appendChild(check);
+
+          var body = el('div', 'movItemBody');
+          body.appendChild(el('div', 'movItemName', item.Name));
+          body.appendChild(el('div', 'movItemMeta',
+            [bytes(item.SizeBytes), item.Path].filter(Boolean).join(' · ')));
+          row.appendChild(body);
+          host.appendChild(row);
+        });
+
+        updateSelectionInfo();
+      }
+
+      function search() {
+        function val(id) { return page.querySelector(id).value; }
+        var params = ['limit=100',
+          'query=' + encodeURIComponent(val('#movSearch')),
+          'sort=' + encodeURIComponent(val('#movSort'))];
+        if (val('#movSource')) { params.push('location=' + encodeURIComponent(val('#movSource'))); }
+
+        return api('GET', 'MediaOptimizer/Library/Search?' + params.join('&'))
+          .then(renderResults)
+          .catch(function (e) {
+            var host = page.querySelector('#movResults');
+            host.innerHTML = '';
+            host.appendChild(el('div', 'movErr', 'Search failed: ' + ((e && e.statusText) || e)));
+          });
+      }
+
+      // ---- preview ---------------------------------------------------------------------
+      function currentRequest() {
+        var wholeFolder = page.querySelector('#movWholeFolder').checked;
+        var source = page.querySelector('#movSource').value;
+        return {
+          ItemIds: wholeFolder ? [] : Object.keys(selection),
+          SourcePath: wholeFolder && source ? source : null,
+          DestinationPath: destination()
+        };
+      }
+
+      function refreshPreview() {
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(runPreview, 250);
+      }
+
+      function runPreview() {
+        var request = currentRequest();
+        var host = page.querySelector('#movPreview');
+        var start = page.querySelector('#movStart');
+
+        if (!request.DestinationPath) {
+          host.innerHTML = '';
+          host.appendChild(el('div', 'movLine note', 'Choose a destination folder above.'));
+          start.disabled = true;
+          return;
+        }
+
+        if (!request.SourcePath && !request.ItemIds.length) {
+          host.innerHTML = '';
+          host.appendChild(el('div', 'movLine note',
+            'Tick the files to move, or tick "Move the whole folder" after choosing a folder above.'));
+          start.disabled = true;
+          return;
+        }
+
+        api('POST', 'MediaOptimizer/Move/Preview', request).then(function (plan) {
+          lastPlan = plan;
+          host.innerHTML = '';
+
+          if (plan.MovableCount > 0) {
+            var line = plan.MovableCount + ' file' + (plan.MovableCount === 1 ? '' : 's') +
+              ' · ' + bytes(plan.TotalBytes) + ' → ' + plan.DestinationPath;
+            if (plan.FreeBytesAfter !== null && plan.FreeBytesAfter !== undefined) {
+              line += ' · ' + bytes(plan.FreeBytesAfter) + ' would be left free';
+            }
+            host.appendChild(el('div', 'movLine ok', line));
+          }
+
+          (plan.Blockers || []).forEach(function (b) {
+            host.appendChild(el('div', 'movLine blocker', b));
+          });
+          (plan.Notes || []).forEach(function (n) {
+            host.appendChild(el('div', 'movLine note', n));
+          });
+
+          var skipped = (plan.Items || []).filter(function (i) { return !i.CanMove; });
+          if (skipped.length) {
+            var box = el('div', 'movSkips');
+            box.appendChild(el('div', null, skipped.length + ' skipped:'));
+            skipped.slice(0, 20).forEach(function (i) {
+              box.appendChild(el('div', 'movSkip', (i.Name || i.SourcePath) + ' — ' + (i.SkippedReason || 'skipped')));
+            });
+            if (skipped.length > 20) {
+              box.appendChild(el('div', 'movSkip', 'and ' + (skipped.length - 20) + ' more.'));
+            }
+            host.appendChild(box);
+          }
+
+          start.disabled = !plan.IsRunnable;
+          start.textContent = plan.IsRunnable
+            ? 'Move ' + plan.MovableCount + ' file' + (plan.MovableCount === 1 ? '' : 's')
+            : 'Move files';
+        }).catch(function (e) {
+          host.innerHTML = '';
+          host.appendChild(el('div', 'movLine blocker',
+            'Could not work out what that move would do: ' + ((e && e.statusText) || e)));
+          start.disabled = true;
+        });
+      }
+
+      function startMove() {
+        if (!lastPlan || !lastPlan.IsRunnable) { return; }
+        var request = currentRequest();
+
+        Dashboard.confirm(
+          'Move ' + lastPlan.MovableCount + ' file(s), ' + bytes(lastPlan.TotalBytes) + ', to ' +
+          lastPlan.DestinationPath + '? Each file is copied and checked before the original is removed.',
+          'Move media')
+          .then(function () { return api('POST', 'MediaOptimizer/Move', request); })
+          .then(function (result) {
+            selection = {};
+            page.querySelector('#movWholeFolder').checked = false;
+            Dashboard.alert({
+              title: 'Moving',
+              message: result.QueuedCount + ' file(s) queued, ' + bytes(result.TotalBytes) +
+                '. Progress is shown below; you can leave this page.'
+            });
+            updateSelectionInfo();
+            return refresh();
+          })
+          .catch(function (e) {
+            if (!e) { return; }   // the confirmation was dismissed
+            Dashboard.alert({ title: 'Could not start the move', message: (e && e.statusText) || String(e) });
+          });
+      }
+
+      // ---- queue -----------------------------------------------------------------------
+      var LABELS = {
+        Queued: 'Waiting', Preflight: 'Checking', Copying: 'Copying', Verifying: 'Checking the copy',
+        Finalizing: 'Updating the library', Completed: 'Done', Failed: 'Failed',
+        Cancelled: 'Cancelled', Interrupted: 'Interrupted'
+      };
+
+      function renderJobs(jobs) {
+        var activeHost = page.querySelector('#movActive');
+        var historyHost = page.querySelector('#movHistory');
+        activeHost.innerHTML = '';
+        historyHost.innerHTML = '';
+
+        jobs = jobs || [];
+        var isActive = function (j) {
+          return ['Queued','Preflight','Copying','Verifying','Finalizing'].indexOf(j.Status) >= 0;
+        };
+        var active = jobs.filter(isActive);
+        var history = jobs.filter(function (j) { return !isActive(j); });
+
+        page.querySelector('#movHistoryHint').textContent = history.length
+          ? history.length + ' finished' : 'nothing yet';
+
+        if (!active.length) { activeHost.appendChild(el('div', 'movEmpty', 'No moves running or queued.')); }
+        if (!history.length) { historyHost.appendChild(el('div', 'movEmpty', 'No finished moves yet.')); }
+
+        jobs.forEach(function (j) {
+          var box = el('div', 'movJob');
+          var head = el('div', 'movJobHead');
+          head.appendChild(el('span', 'movJobName', j.ItemName || j.ItemId));
+          head.appendChild(el('span', 'movJobStatus', LABELS[j.Status] || j.Status));
+          box.appendChild(head);
+
+          var bits = [j.SourcePath + '  →  ' + j.DestinationPath];
+          if (j.SizeBytes) { bits.push(bytes(j.SizeBytes)); }
+          if (j.Status === 'Copying' && j.BytesPerSecond) {
+            bits.push(bytes(j.BytesPerSecond) + '/s');
+            if (j.EtaSeconds) { bits.push(duration(j.EtaSeconds) + ' remaining'); }
+          }
+          if (j.WasInstantRename) { bits.push('renamed on the same drive'); }
+          if (j.HashVerified === true) { bits.push('checked byte for byte'); }
+          if (j.CompanionFilesMoved > 0) { bits.push(j.CompanionFilesMoved + ' companion file(s) moved'); }
+          box.appendChild(el('div', 'movJobMeta', bits.join(' · ')));
+
+          if (j.Status === 'Copying' || j.Status === 'Verifying') {
+            var bar = el('div', 'movBar');
+            var fill = el('i');
+            fill.style.width = Math.round(j.ProgressPercent || 0) + '%';
+            bar.appendChild(fill);
+            box.appendChild(bar);
+          }
+          if (j.Error) { box.appendChild(el('div', 'movErr', j.Error)); }
+
+          var actions = el('div', 'movActions');
+          function action(label, run) {
+            actions.appendChild(button(label, function (e) {
+              e.target.disabled = true;
+              run().then(refresh).catch(function (err) {
+                e.target.disabled = false;
+                Dashboard.alert({ message: (err && err.statusText) || 'That did not work.' });
+              });
+            }));
+          }
+
+          if (isActive(j)) {
+            action('Cancel', function () { return api('DELETE', 'MediaOptimizer/Move/Jobs/' + j.Id); });
+          } else {
+            if (['Failed','Interrupted','Cancelled'].indexOf(j.Status) >= 0) {
+              action('Try again', function () { return api('POST', 'MediaOptimizer/Move/Jobs/' + j.Id + '/Requeue'); });
+            }
+            action('Remove from history', function () {
+              return api('DELETE', 'MediaOptimizer/Move/Jobs/' + j.Id + '/History');
+            });
+          }
+
+          if (actions.children.length) { box.appendChild(actions); }
+          (isActive(j) ? activeHost : historyHost).appendChild(box);
+        });
+      }
+
+      function refresh() {
+        return api('GET', 'MediaOptimizer/Move/Jobs').then(renderJobs).catch(function () {});
+      }
+
+      page.addEventListener('pageshow', function () {
+        loadLocations().then(runPreview);
+        search();
+        refresh();
+
+        page.querySelector('#movSearch').addEventListener('input', function () {
+          clearTimeout(searchTimer);
+          searchTimer = setTimeout(search, 300);
+        });
+        page.querySelector('#movSort').addEventListener('change', search);
+        page.querySelector('#movSource').addEventListener('change', function () {
+          search();
+          refreshPreview();
+        });
+
+        page.querySelector('#movDestination').addEventListener('change', function (e) {
+          page.querySelector('#movCustomWrap').style.display = e.target.value === '__custom' ? '' : 'none';
+          renderLocations();
+          refreshPreview();
+        });
+        page.querySelector('#movCustom').addEventListener('input', refreshPreview);
+        page.querySelector('#movWholeFolder').addEventListener('change', refreshPreview);
+
+        page.querySelector('#movSelectAll').addEventListener('change', function (e) {
+          shown.forEach(function (item) {
+            if (e.target.checked) { selection[item.Id] = item; } else { delete selection[item.Id]; }
+          });
+          renderResults(shown);
+        });
+
+        page.querySelector('#movStart').addEventListener('click', startMove);
+        page.querySelector('#movRefresh').addEventListener('click', function () {
+          loadLocations();
+          search();
+          refresh();
+        });
+
+        clearInterval(timer);
+        timer = setInterval(refresh, 2000);
+      });
+
+      page.addEventListener('pagehide', function () {
+        clearInterval(timer);
+        clearTimeout(searchTimer);
+        clearTimeout(previewTimer);
+      });
+    })();
+  </script>
+</div>
+</body>
+</html>

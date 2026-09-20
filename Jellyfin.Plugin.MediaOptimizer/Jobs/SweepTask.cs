@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
@@ -18,16 +19,23 @@ namespace Jellyfin.Plugin.MediaOptimizer.Jobs;
 public class SweepTask : IScheduledTask
 {
     private readonly IJobStore _store;
+    private readonly IMoveJobStore _moves;
     private readonly IOutputPolicyService _output;
     private readonly ILogger<SweepTask> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="SweepTask"/> class.</summary>
     /// <param name="store">Job store.</param>
+    /// <param name="moves">Move job store.</param>
     /// <param name="output">Output policy service, for the managed directories.</param>
     /// <param name="logger">Logger.</param>
-    public SweepTask(IJobStore store, IOutputPolicyService output, ILogger<SweepTask> logger)
+    public SweepTask(
+        IJobStore store,
+        IMoveJobStore moves,
+        IOutputPolicyService output,
+        ILogger<SweepTask> logger)
     {
         _store = store;
+        _moves = moves;
         _output = output;
         _logger = logger;
     }
@@ -40,7 +48,7 @@ public class SweepTask : IScheduledTask
 
     /// <inheritdoc />
     public string Description =>
-        "Deletes quarantined original files once their retention period has passed, and clears temporary files left behind by interrupted encodes.";
+        "Deletes quarantined original files once their retention period has passed, and clears temporary files left behind by interrupted encodes and moves.";
 
     /// <inheritdoc />
     public string Category => "Media Optimizer";
@@ -70,6 +78,9 @@ public class SweepTask : IScheduledTask
         progress.Report(85);
 
         CleanOrphanedWorkFiles(cancellationToken);
+        progress.Report(95);
+
+        SweepMoves(cancellationToken);
         progress.Report(100);
 
         return Task.CompletedTask;
@@ -195,6 +206,79 @@ public class SweepTask : IScheduledTask
                     _logger.LogWarning(ex, "[MediaOptimizer] Could not delete working file {Path}", file);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Tidies the move queue: drops finished moves once they age out, and deletes the partial
+    /// copies a hard crash can leave on a destination drive. Those carry a hidden name and an
+    /// extension Jellyfin ignores, so nothing finds them otherwise — they simply occupy the space
+    /// the move was trying to free.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private void SweepMoves(CancellationToken cancellationToken)
+    {
+        var all = _moves.GetAll();
+        var activeIds = all.Where(j => j.IsActive).Select(j => j.Id.ToString("N")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var cutoff = DateTime.UtcNow.AddHours(-6);
+        var removedFiles = 0;
+
+        foreach (var directory in all
+                     .Select(j => Path.GetDirectoryName(j.DestinationPath))
+                     .Where(d => !string.IsNullOrEmpty(d))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string[] leftovers;
+            try
+            {
+                leftovers = Directory.GetFiles(directory!, ".mo-move-*.momoving");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                continue;
+            }
+
+            foreach (var file in leftovers)
+            {
+                // ".mo-move-<jobid>.momoving"
+                var name = Path.GetFileNameWithoutExtension(file);
+                if (activeIds.Contains(name.Length > 9 ? name[9..] : string.Empty))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(file) < cutoff)
+                    {
+                        File.Delete(file);
+                        removedFiles++;
+                        _logger.LogInformation("[MediaOptimizer] Removed abandoned partial copy {Path}", file);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(ex, "[MediaOptimizer] Could not delete partial copy {Path}", file);
+                }
+            }
+        }
+
+        var days = Plugin.Instance?.Configuration.RemoveFinishedJobsAfterDays ?? 30;
+        if (days > 0)
+        {
+            var ageCutoff = DateTime.UtcNow.AddDays(-days);
+            foreach (var job in all.Where(j => !j.IsActive && (j.FinishedAt ?? j.QueuedAt) < ageCutoff))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _moves.Remove(job.Id);
+            }
+        }
+
+        if (removedFiles > 0)
+        {
+            _logger.LogInformation("[MediaOptimizer] Removed {Count} abandoned partial copies", removedFiles);
         }
     }
 

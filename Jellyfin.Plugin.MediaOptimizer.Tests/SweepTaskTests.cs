@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -28,6 +29,9 @@ public class SweepTaskTests : IDisposable
         Directory.CreateDirectory(_work);
         Directory.CreateDirectory(_store);
     }
+
+    private MoveJobStore NewMoveStore() =>
+        new MoveJobStore(_store, NullLogger<MoveJobStore>.Instance);
 
     public void Dispose()
     {
@@ -111,7 +115,7 @@ public class SweepTaskTests : IDisposable
         var keep = WriteStaleWorkFile(running.Id);
         var drop = WriteStaleWorkFile(finished.Id);
 
-        var task = new SweepTask(store, new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
+        var task = new SweepTask(store, NewMoveStore(), new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         Assert.True(File.Exists(keep), "The working file of a job that is still running was deleted.");
@@ -126,7 +130,7 @@ public class SweepTaskTests : IDisposable
         var recent = Path.Combine(_work, FormattableString.Invariant($".mo-{Guid.NewGuid():N}.mkv.motmp"));
         File.WriteAllText(recent, "partial");
 
-        var task = new SweepTask(store, new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
+        var task = new SweepTask(store, NewMoveStore(), new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         Assert.True(File.Exists(recent), "A file written minutes ago is not abandoned.");
@@ -154,7 +158,7 @@ public class SweepTaskTests : IDisposable
 
         var ours = WriteStaleWorkFile(Guid.NewGuid());
 
-        var task = new SweepTask(store, new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
+        var task = new SweepTask(store, NewMoveStore(), new WorkDirectory(_work), NullLogger<SweepTask>.Instance);
         await task.ExecuteAsync(new Progress<double>(), CancellationToken.None);
 
         Assert.True(File.Exists(stranger), "Housekeeping deleted a file the plugin did not write.");

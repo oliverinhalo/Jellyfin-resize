@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Configuration;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Jobs;
@@ -49,6 +50,7 @@ public class AutomationService : IAutomationService
     private readonly ISizeEstimator _estimator;
     private readonly ICapabilityService _capabilities;
     private readonly IJobStore _store;
+    private readonly IMoveJobStore _moves;
     private readonly ILogger<AutomationService> _logger;
 
     /// <summary>Initializes a new instance of the <see cref="AutomationService"/> class.</summary>
@@ -59,6 +61,7 @@ public class AutomationService : IAutomationService
     /// <param name="estimator">Size estimator.</param>
     /// <param name="capabilities">Capability service.</param>
     /// <param name="store">Job store.</param>
+    /// <param name="moves">Move queue, so a rule does not convert a file that is changing drive.</param>
     /// <param name="logger">Logger.</param>
     public AutomationService(
         IPluginConfigurationSource settings,
@@ -68,6 +71,7 @@ public class AutomationService : IAutomationService
         ISizeEstimator estimator,
         ICapabilityService capabilities,
         IJobStore store,
+        IMoveJobStore moves,
         ILogger<AutomationService> logger)
     {
         _settings = settings;
@@ -77,6 +81,7 @@ public class AutomationService : IAutomationService
         _estimator = estimator;
         _capabilities = capabilities;
         _store = store;
+        _moves = moves;
         _logger = logger;
     }
 
@@ -303,6 +308,13 @@ public class AutomationService : IAutomationService
         if (_store.HasActiveJobForItem(candidate.ItemId))
         {
             return Skip(rule, candidate, "Already queued or converting.");
+        }
+
+        // Same reasoning for a move: the file is about to be on another drive, and a rule that
+        // runs unattended at four in the morning is exactly where that race would go unnoticed.
+        if (_moves.HasActiveJobForItem(candidate.ItemId))
+        {
+            return Skip(rule, candidate, "Queued to move to another drive.");
         }
 
         var job = new EncodeJob

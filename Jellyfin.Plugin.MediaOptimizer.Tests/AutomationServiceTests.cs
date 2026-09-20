@@ -7,6 +7,7 @@ using Jellyfin.Plugin.MediaOptimizer.Configuration;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -114,6 +115,41 @@ public class AutomationServiceTests
         public Task<bool> HasEncoderAsync(string encoder, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
+    /// <summary>
+    /// A move queue with nothing in it. Rules skip a file that is being moved to another drive;
+    /// these tests are about which files the rules choose, so nothing here is ever moving.
+    /// </summary>
+    private sealed class Moves : IMoveJobStore
+    {
+        public HashSet<Guid> Moving { get; } = new HashSet<Guid>();
+
+        public void Add(MoveJob job)
+        {
+        }
+
+        public void Update(MoveJob job)
+        {
+        }
+
+        public void ReportProgress(MoveJob job)
+        {
+        }
+
+        public MoveJob? Get(Guid id) => null;
+
+        public IReadOnlyList<MoveJob> GetAll() => Array.Empty<MoveJob>();
+
+        public MoveJob? TakeNextQueued() => null;
+
+        public bool HasActiveJobForItem(Guid itemId) => Moving.Contains(itemId);
+
+        public bool IsDestinationClaimed(string path) => false;
+
+        public bool Remove(Guid id) => false;
+
+        public IReadOnlyList<MoveJob> ReconcileInterrupted() => Array.Empty<MoveJob>();
+    }
+
     private sealed class Store : IJobStore
     {
         public List<EncodeJob> Jobs { get; } = new List<EncodeJob>();
@@ -157,7 +193,7 @@ public class AutomationServiceTests
             DateCreated = DateTime.UtcNow.AddYears(-2)
         };
 
-    private static (AutomationService Service, Store Store, Settings Settings, Probe Probe) Build(
+    private static (AutomationService Service, Store Store, Settings Settings, Probe Probe, Moves Moves) Build(
         IReadOnlyList<RuleCandidate> items,
         params AutomationRule[] rules)
     {
@@ -166,6 +202,7 @@ public class AutomationServiceTests
 
         var settings = new Settings(configuration);
         var store = new Store();
+        var moves = new Moves();
         var probe = new Probe(items);
         var planner = new EncodePlanner(new Caps(), NullLogger<EncodePlanner>.Instance);
 
@@ -177,9 +214,10 @@ public class AutomationServiceTests
             new SizeEstimator(store),
             new Caps(),
             store,
+            moves,
             NullLogger<AutomationService>.Instance);
 
-        return (service, store, settings, probe);
+        return (service, store, settings, probe, moves);
     }
 
     private static AutomationRule Rule(string name = "Shrink the big ones") => new AutomationRule
@@ -197,7 +235,7 @@ public class AutomationServiceTests
     {
         var rule = Rule();
         rule.Enabled = false;
-        var (service, store, _, _) = Build([Item("Film", 40)], rule);
+        var (service, store, _, _, _) = Build([Item("Film", 40)], rule);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -216,7 +254,7 @@ public class AutomationServiceTests
         var rule = Rule();
         rule.MaxItemsPerRun = 3;
 
-        var (service, store, _, _) = Build(items, rule);
+        var (service, store, _, _, _) = Build(items, rule);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -238,7 +276,7 @@ public class AutomationServiceTests
         var rule = Rule();
         rule.MaxItemsPerRun = 2;
 
-        var (service, store, _, _) = Build(items, rule);
+        var (service, store, _, _, _) = Build(items, rule);
         await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
         Assert.Equal(["Huge", "Medium"], store.Jobs.Select(j => j.ItemName).ToArray());
@@ -250,7 +288,7 @@ public class AutomationServiceTests
         var items = new List<RuleCandidate> { Item("Film", 40) };
         var rule = Rule();
 
-        var (service, store, settings, _) = Build(items, rule);
+        var (service, store, settings, _, _) = Build(items, rule);
 
         var result = await service.RunAsync(dryRun: true, ruleId: rule.Id, CancellationToken.None);
 
@@ -272,7 +310,7 @@ public class AutomationServiceTests
     {
         var rule = Rule();
         rule.Enabled = false;
-        var (service, store, _, _) = Build([Item("Film", 40)], rule);
+        var (service, store, _, _, _) = Build([Item("Film", 40)], rule);
 
         var result = await service.RunAsync(dryRun: true, ruleId: rule.Id, CancellationToken.None);
 
@@ -289,7 +327,7 @@ public class AutomationServiceTests
     {
         var rule = Rule();
         rule.Enabled = false;
-        var (service, store, _, _) = Build([Item("Film", 40)], rule);
+        var (service, store, _, _, _) = Build([Item("Film", 40)], rule);
 
         var scheduled = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
         Assert.Equal(0, scheduled.Queued);
@@ -304,7 +342,7 @@ public class AutomationServiceTests
     public async Task A_real_run_records_when_it_ran_and_what_it_queued()
     {
         var rule = Rule();
-        var (service, _, settings, _) = Build([Item("Film", 40)], rule);
+        var (service, _, settings, _, _) = Build([Item("Film", 40)], rule);
 
         await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -317,7 +355,7 @@ public class AutomationServiceTests
     public async Task An_item_the_probe_refuses_is_skipped_with_its_reason()
     {
         var item = Item("Disc rip", 40);
-        var (service, store, _, probe) = Build([item], Rule());
+        var (service, store, _, probe, _) = Build([item], Rule());
         probe.Ineligible.Add(item.ItemId);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
@@ -341,7 +379,7 @@ public class AutomationServiceTests
         rule.Strategy = OptimizationStrategy.Standard;
         rule.MinSavingPercent = 20;
 
-        var (service, store, _, _) = Build([item], rule);
+        var (service, store, _, _, _) = Build([item], rule);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -358,7 +396,7 @@ public class AutomationServiceTests
         var first = Rule("First");
         var second = Rule("Second");
 
-        var (service, store, _, _) = Build(items, first, second);
+        var (service, store, _, _, _) = Build(items, first, second);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -381,7 +419,7 @@ public class AutomationServiceTests
         rule.MinSavingPercent = 90;   // nothing will ever clear this
         rule.MaxItemsPerRun = 1;      // so the examine limit is its floor of 25
 
-        var (service, store, _, probe) = Build(items, rule);
+        var (service, store, _, probe, _) = Build(items, rule);
 
         var result = await service.RunAsync(dryRun: true, ruleId: rule.Id, CancellationToken.None);
 
@@ -395,7 +433,7 @@ public class AutomationServiceTests
     public async Task The_rule_that_queued_a_job_is_recorded_against_it()
     {
         var rule = Rule("Weekend cleanup");
-        var (service, _, _, _) = Build([Item("Film", 40)], rule);
+        var (service, _, _, _, _) = Build([Item("Film", 40)], rule);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -418,7 +456,7 @@ public class AutomationServiceTests
         rule.OutputPolicy = OutputPolicy.Sidecar;
         rule.KeepAudioLanguages = "eng";
 
-        var (service, store, _, _) = Build([Item("Film", 40)], rule);
+        var (service, store, _, _, _) = Build([Item("Film", 40)], rule);
         await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
         var job = Assert.Single(store.Jobs);
@@ -438,7 +476,7 @@ public class AutomationServiceTests
         var rule = Rule();
         rule.KeepAudioLanguages = "jpn";
 
-        var (service, _, settings, _) = Build([Item("Film", 40)], rule);
+        var (service, _, settings, _, _) = Build([Item("Film", 40)], rule);
         settings.Configuration.KeepAudioLanguages = "eng";
 
         await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
@@ -454,7 +492,7 @@ public class AutomationServiceTests
     public async Task An_item_queued_by_hand_mid_run_is_not_queued_again()
     {
         var item = Item("Film", 40);
-        var (service, store, _, _) = Build([item], Rule());
+        var (service, store, _, _, _) = Build([item], Rule());
 
         // Exactly what a user clicking "Optimize…" during the run would leave behind.
         store.Add(new EncodeJob { ItemId = item.ItemId, ItemName = "Film", Status = JobStatus.Queued });
@@ -466,13 +504,32 @@ public class AutomationServiceTests
         Assert.Contains(result.Items, i => i.SkippedReason!.Contains("Already queued", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// A rule runs unattended in the middle of the night, which is exactly where a conversion
+    /// reading a file that is being moved to another drive would go unnoticed until the morning.
+    /// </summary>
+    [Fact]
+    public async Task An_item_on_its_way_to_another_drive_is_left_alone()
+    {
+        var item = Item("Film", 40);
+        var (service, store, _, _, moves) = Build([item], Rule());
+
+        moves.Moving.Add(item.ItemId);
+
+        var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
+
+        Assert.Equal(0, result.Queued);
+        Assert.Empty(store.Jobs);
+        Assert.Contains(result.Items, i => i.SkippedReason!.Contains("move to another drive", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task An_item_already_converted_by_this_plugin_is_reported_rather_than_silently_dropped()
     {
         var item = Item("Film", 40);
         item.PreviouslyOptimized = true;
 
-        var (service, store, _, _) = Build([item], Rule());
+        var (service, store, _, _, _) = Build([item], Rule());
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -496,7 +553,7 @@ public class AutomationServiceTests
         var second = Rule("Runs second");
         second.Strategy = OptimizationStrategy.HighReduction;
 
-        var (service, store, _, _) = Build([film], first, second);
+        var (service, store, _, _, _) = Build([film], first, second);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -523,7 +580,7 @@ public class AutomationServiceTests
         var rule = Rule("The anime library");
         rule.Tune = ContentTune.Animation;
 
-        var (service, store, _, _) = Build([Item("An episode", 8, height: 1080)], rule);
+        var (service, store, _, _, _) = Build([Item("An episode", 8, height: 1080)], rule);
 
         var result = await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 
@@ -534,7 +591,7 @@ public class AutomationServiceTests
     [Fact]
     public async Task A_rule_that_says_nothing_about_content_leaves_the_encoders_default_alone()
     {
-        var (service, store, _, _) = Build([Item("A film", 40)], Rule());
+        var (service, store, _, _, _) = Build([Item("A film", 40)], Rule());
 
         await service.RunAsync(dryRun: false, ruleId: null, CancellationToken.None);
 

@@ -228,6 +228,52 @@
         </div>
 
         <div class="verticalSection">
+          <h2 class="sectionTitle">Moving media between drives</h2>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Settings for the <strong>Move Media</strong> page, which relocates files from one drive
+            to another. Nothing is re-encoded there; it only changes where the bytes live.
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="AdditionalMoveTargets">Extra destination folders</label>
+            <textarea is="emby-textarea" id="AdditionalMoveTargets" name="AdditionalMoveTargets" rows="3"
+                      class="emby-textarea" placeholder="E:\media\movies&#10;/mnt/disk2/movies"></textarea>
+            <div class="fieldDescription">
+              One per line. Every library folder is already offered as a destination; this is for a
+              drive that has space but is not part of a library yet.
+            </div>
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="VerifyMovesWithHash" name="VerifyMovesWithHash" />
+            <span>Check the copy against the original byte for byte before deleting it</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Recommended. The original is hashed for free while it is being read, so the extra cost
+            is one pass over the new copy. The size check runs either way, and the original is
+            never deleted until the copy has passed.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="RemoveEmptyFoldersAfterMove" name="RemoveEmptyFoldersAfterMove" />
+            <span>Delete the folder a file came out of when the move empties it</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            A film in its own folder otherwise leaves an empty one behind on the old drive. Library
+            folders themselves are never removed.
+          </div>
+
+          <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="MaxConcurrentMoves">Concurrent moves</label>
+            <input is="emby-input" type="number" id="MaxConcurrentMoves" name="MaxConcurrentMoves" min="1" max="8" />
+            <div class="fieldDescription">
+              One at a time is almost always fastest: two copies competing for the same disk finish
+              later than the same two run in sequence.
+            </div>
+          </div>
+        </div>
+
+        <div class="verticalSection">
           <h2 class="sectionTitle">Safety</h2>
           <label class="checkboxContainer">
             <input is="emby-checkbox" type="checkbox" id="DeepVerifyBeforeReplace" name="DeepVerifyBeforeReplace" />
@@ -349,12 +395,13 @@
         'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
         'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit',
         'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed', 'RemoveFinishedJobsAfterDays',
-        'RefuseBelowQuality'];
+        'RefuseBelowQuality', 'AdditionalMoveTargets', 'MaxConcurrentMoves'];
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
         'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
         'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace',
         'KeepOriginalsBesideMedia', 'EncodeBesideMedia', 'NotifyOnCompletion', 'NotifyOnFailure',
-        'MeasureQualityWhenSampling', 'MeasureQualityAfterEncoding'];
+        'MeasureQualityWhenSampling', 'MeasureQualityAfterEncoding',
+        'VerifyMovesWithHash', 'RemoveEmptyFoldersAfterMove'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
         Dashboard.showLoadingMsg();
