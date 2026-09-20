@@ -220,6 +220,15 @@ public class FileAnalysis
     public bool HasActiveJob { get; set; }
 
     /// <summary>
+    /// Gets or sets the job already queued or running for this item, when there is one.
+    /// <para>
+    /// So that opening the dialog on a file that is already converting can show the conversion
+    /// instead of a form the server would refuse.
+    /// </para>
+    /// </summary>
+    public Guid? ActiveJobId { get; set; }
+
+    /// <summary>
     /// Gets or sets the strategy that actually helps this file, so the dialog does not open on
     /// an option that would save nothing.
     /// </summary>

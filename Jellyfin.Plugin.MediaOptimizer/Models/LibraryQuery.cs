@@ -19,7 +19,10 @@ public enum LibrarySort
     DateAdded = 4,
 
     /// <summary>Highest bitrate first.</summary>
-    BitrateDescending = 5
+    BitrateDescending = 5,
+
+    /// <summary>Most to gain from a conversion first. The one worth opening the page on.</summary>
+    SavingDescending = 6
 }
 
 /// <summary>Which items the dashboard's file list includes.</summary>

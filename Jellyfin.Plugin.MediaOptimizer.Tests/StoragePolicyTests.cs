@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using Xunit;
 
@@ -79,6 +80,28 @@ public class StoragePolicyTests : IDisposable
         Assert.Equal("existing", File.ReadAllText(destination));
     }
 
+    /// <summary>
+    /// A rename that fails because the destination is taken is a different problem from one that
+    /// fails because the destination is on another disk, and both arrive as IOException. Copying
+    /// several gigabytes and then failing the rename anyway is a slow way to learn which it was —
+    /// and on a replace, the source is the user's only copy while that happens.
+    /// </summary>
+    [Fact]
+    public void A_rename_blocked_by_an_existing_file_is_refused_without_copying_anything()
+    {
+        var source = Path.Combine(_dir, "source.mkv");
+        var destination = Path.Combine(_dir, "taken.mkv");
+        File.WriteAllText(source, "payload");
+        File.WriteAllText(destination, "already here");
+
+        Assert.Throws<IOException>(() =>
+            OutputPolicyService.MoveAcrossVolumes(source, destination, overwrite: false));
+
+        Assert.Equal("payload", File.ReadAllText(source));
+        Assert.Equal("already here", File.ReadAllText(destination));
+        Assert.Empty(Directory.GetFiles(_dir, SweepTask.WorkFilePattern));
+    }
+
     [Fact]
     public void A_partial_copy_is_never_left_behind_under_the_destination_name()
     {
@@ -89,7 +112,7 @@ public class StoragePolicyTests : IDisposable
         OutputPolicyService.MoveAcrossVolumes(source, destination, overwrite: false);
 
         Assert.True(File.Exists(destination));
-        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(destination)!, "*.mopt-partial"));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(destination)!, SweepTask.WorkFilePattern));
     }
 
     [Fact]
@@ -114,5 +137,58 @@ public class StoragePolicyTests : IDisposable
         Assert.StartsWith(".", name, StringComparison.Ordinal);
         Assert.EndsWith(".motmp", name, StringComparison.Ordinal);
         Assert.NotEqual(".mkv", Path.GetExtension(name));
+    }
+
+    /// <summary>
+    /// A cross-volume move copies the whole file to a staging name first, and a power cut in the
+    /// middle of that leaves the copy behind. It lands in the library folder, so it has to obey
+    /// the same two rules as every other working file: invisible to Jellyfin's scanner, and
+    /// removable by housekeeping. The old name — the destination with ".mopt-partial" glued on —
+    /// was neither, so a 60 GB half-copy would have sat next to the film forever.
+    /// </summary>
+    [Fact]
+    public void An_interrupted_copy_leaves_something_housekeeping_can_clean_up()
+    {
+        var staging = OutputPolicyService.StagingPathFor(Path.Combine(_dir, "Arrival (2016).mkv"));
+        var name = Path.GetFileName(staging);
+
+        Assert.Equal(_dir, Path.GetDirectoryName(staging));
+        Assert.StartsWith(".mo-", name, StringComparison.Ordinal);
+        Assert.EndsWith(".motmp", name, StringComparison.Ordinal);
+
+        // Two moves to the same destination must not share a staging file.
+        Assert.NotEqual(staging, OutputPolicyService.StagingPathFor(Path.Combine(_dir, "Arrival (2016).mkv")));
+
+        // And the name is one the sweep actually matches, which is the part that makes it true.
+        File.WriteAllText(staging, "half a film");
+        Assert.Contains(staging, Directory.GetFiles(_dir, SweepTask.WorkFilePattern));
+    }
+
+    /// <summary>
+    /// A replacement keeps the file's name and only changes its extension, which is what keeps
+    /// everything Jellyfin finds by name — .nfo metadata, artwork, external subtitles — pointing
+    /// at the right film afterwards. All of those are matched on the name without its extension,
+    /// so the name is the thing that must not move.
+    /// </summary>
+    [Theory]
+    [InlineData("/media/Arrival (2016).mkv", ".mp4", "/media/Arrival (2016).mp4")]
+    [InlineData("/media/Movie.2016.1080p.BluRay.x264.mkv", ".mp4", "/media/Movie.2016.1080p.BluRay.x264.mp4")]
+    [InlineData("/media/Arrival (2016).mkv", ".MKV", "/media/Arrival (2016).mkv")]
+    public void A_replacement_keeps_the_name_and_changes_only_the_extension(
+        string source,
+        string extension,
+        string expected)
+    {
+        Assert.Equal(
+            expected,
+            OutputPolicyService.ReplacementPathFor(source, extension).Replace('\\', '/'));
+    }
+
+    /// <summary>An unchanged container replaces the file in place, byte-for-byte the same path.</summary>
+    [Fact]
+    public void An_unchanged_container_replaces_the_file_itself()
+    {
+        const string path = "/media/Film.mkv";
+        Assert.Same(path, OutputPolicyService.ReplacementPathFor(path, ".mkv"));
     }
 }

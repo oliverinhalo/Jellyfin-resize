@@ -154,6 +154,48 @@ public class DurabilityTests : IDisposable
         Assert.Contains("quarantine", recovered[0].Error!, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Resuming automatically is right up to the point where the job is what stopped the server.
+    /// A file or a setting that kills the machine mid-encode would otherwise be requeued on every
+    /// boot, take the server down again, and be requeued again — the plugin turning one bad file
+    /// into a reboot loop nobody can see the cause of.
+    /// </summary>
+    [Fact]
+    public void A_job_that_keeps_taking_the_server_down_stops_being_resumed()
+    {
+        var store = NewStore();
+        var job = Job("Kills the box", JobStatus.Encoding);
+        job.ResumeCount = JobStore.MaxAutomaticResumes;
+        store.Add(job);
+
+        var recovered = NewStore().ReconcileInterrupted();
+
+        Assert.Single(recovered);
+        Assert.Equal(JobStatus.Interrupted, recovered[0].Status);
+        Assert.Contains(
+            JobStore.MaxAutomaticResumes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            recovered[0].Error!,
+            StringComparison.Ordinal);
+
+        // And it is still there to retry by hand, because the person deciding is the whole point.
+        Assert.Equal(JobStore.MaxAutomaticResumes, recovered[0].ResumeCount);
+    }
+
+    /// <summary>One interruption short of the limit is still resumed.</summary>
+    [Fact]
+    public void A_job_that_has_been_interrupted_once_is_still_resumed()
+    {
+        var store = NewStore();
+        var job = Job("Unlucky", JobStatus.Encoding);
+        job.ResumeCount = JobStore.MaxAutomaticResumes - 1;
+        store.Add(job);
+
+        var recovered = NewStore().ReconcileInterrupted();
+
+        Assert.Equal(JobStatus.Queued, recovered[0].Status);
+        Assert.Equal(JobStore.MaxAutomaticResumes, recovered[0].ResumeCount);
+    }
+
     [Fact]
     public void Finished_jobs_are_left_alone_by_recovery()
     {
@@ -193,7 +235,6 @@ public class DurabilityTests : IDisposable
     [Fact]
     public void Higher_priority_jobs_are_claimed_first()
     {
-        JobStore.IsPaused = false;
         var store = NewStore();
 
         var normal = Job("Normal");
@@ -211,17 +252,111 @@ public class DurabilityTests : IDisposable
         var store = NewStore();
         store.Add(Job("Waiting"));
 
-        JobStore.IsPaused = true;
+        store.IsPaused = true;
         try
         {
             Assert.Null(store.TakeNextQueued());
         }
         finally
         {
-            JobStore.IsPaused = false;
+            store.IsPaused = false;
         }
 
         Assert.NotNull(store.TakeNextQueued());
+    }
+
+    /// <summary>
+    /// Pausing is how an administrator stops the server encoding during the day. It used to live
+    /// in a static field, so a restart silently resumed the queue -- and a restart is exactly what
+    /// follows an upgrade, which is when someone is most likely to have paused it.
+    /// </summary>
+    [Fact]
+    public void A_paused_queue_is_still_paused_after_a_restart()
+    {
+        var store = NewStore();
+        store.Add(Job("Waiting"));
+        store.IsPaused = true;
+
+        var reopened = NewStore();
+
+        Assert.True(reopened.IsPaused);
+        Assert.Null(reopened.TakeNextQueued());
+
+        reopened.IsPaused = false;
+        Assert.False(NewStore().IsPaused);
+    }
+
+    /// <summary>
+    /// Cancelling something that has not started needs no worker at all, and must not leave a job
+    /// sitting in the queue to be picked up a second later.
+    /// </summary>
+    [Fact]
+    public void Cancelling_a_job_that_has_not_started_finishes_it_immediately()
+    {
+        var store = NewStore();
+        var job = Job("Waiting");
+        store.Add(job);
+
+        Assert.True(store.RequestCancel(job.Id));
+
+        Assert.Equal(JobStatus.Cancelled, store.Get(job.Id)!.Status);
+        Assert.Null(store.TakeNextQueued());
+        Assert.Contains("not modified", store.Get(job.Id)!.Error!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// There is a moment between the worker claiming a job and registering its cancellation token
+    /// in which there is no token to cancel. A cancellation arriving then used to be swallowed and
+    /// the job ran anyway; the flag is what the worker checks the instant its token exists.
+    /// </summary>
+    [Fact]
+    public void Cancelling_a_job_the_worker_has_just_claimed_is_recorded_rather_than_lost()
+    {
+        var store = NewStore();
+        var job = Job("Claimed");
+        store.Add(job);
+
+        var claimed = store.TakeNextQueued();
+        Assert.NotNull(claimed);
+        Assert.Equal(JobStatus.Preflight, claimed!.Status);
+
+        Assert.True(store.RequestCancel(job.Id));
+
+        // Still the worker's to stop -- it may have an ffmpeg process and a temporary file -- but
+        // the request is now on the job where the worker will see it.
+        Assert.True(store.Get(job.Id)!.CancellationRequested);
+        Assert.Equal(JobStatus.Preflight, store.Get(job.Id)!.Status);
+    }
+
+    [Fact]
+    public void Cancelling_a_job_that_has_already_finished_changes_nothing()
+    {
+        var store = NewStore();
+        var job = Job("Done");
+        job.Status = JobStatus.Completed;
+        job.FinishedAt = DateTime.UtcNow;
+        store.Add(job);
+
+        Assert.False(store.RequestCancel(job.Id));
+        Assert.False(store.RequestCancel(Guid.NewGuid()));
+        Assert.Equal(JobStatus.Completed, store.Get(job.Id)!.Status);
+    }
+
+    /// <summary>A job requeued after a restart must not carry a cancellation from its last life.</summary>
+    [Fact]
+    public void A_resumed_job_does_not_carry_a_stale_cancellation()
+    {
+        var store = NewStore();
+        var job = Job("Interrupted");
+        job.Status = JobStatus.Encoding;
+        job.CancellationRequested = true;
+        store.Add(job);
+
+        NewStore().ReconcileInterrupted();
+
+        var reopened = NewStore().Get(job.Id)!;
+        Assert.Equal(JobStatus.Queued, reopened.Status);
+        Assert.False(reopened.CancellationRequested);
     }
 
     [Fact]

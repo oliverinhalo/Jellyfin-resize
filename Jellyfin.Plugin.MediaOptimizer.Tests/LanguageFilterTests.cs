@@ -178,12 +178,16 @@ public class LanguageFilterTests
 
         public System.Collections.Generic.IReadOnlyList<EncodeJob> GetActive() => Array.Empty<EncodeJob>();
 
-        public EncodeJob? TakeNextQueued() => null;
+        public EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null) => null;
 
         public bool HasActiveJobForItem(Guid itemId) => false;
+
+        public bool RequestCancel(Guid id) => false;
 
         public bool Remove(Guid id) => false;
 
         public System.Collections.Generic.IReadOnlyList<EncodeJob> ReconcileInterrupted() => Array.Empty<EncodeJob>();
+
+        public bool IsPaused { get; set; }
     }
 }

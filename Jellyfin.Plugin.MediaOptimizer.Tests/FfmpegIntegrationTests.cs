@@ -163,6 +163,54 @@ public class FfmpegIntegrationTests : IDisposable
     }
 
     /// <summary>
+    /// Builds a clip long enough to sample: the sampler refuses anything under 45 seconds, on the
+    /// grounds that such a file is quicker to convert than to measure.
+    /// </summary>
+    /// <returns>The path of the generated file.</returns>
+    private async Task<string> CreateLongSourceAsync()
+    {
+        var path = Path.Combine(_dir, "long.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=60",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=60",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "96k",
+            path
+        ];
+
+        var result = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(result.Success, "Could not build the long test source: " + result.StandardError);
+        return path;
+    }
+
+    /// <summary>
+    /// Builds a clip whose first audio track is lossy and whose second is lossless, which is how a
+    /// remux with a commentary track in front of the main audio is laid out.
+    /// </summary>
+    /// <returns>The path of the generated file.</returns>
+    private async Task<string> CreateTwoAudioSourceAsync()
+    {
+        var path = Path.Combine(_dir, "twoaudio.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=4",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
+            "-c:a:0", "aac", "-c:a:1", "flac",
+            path
+        ];
+
+        var result = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(result.Success, "Could not build the two-audio test source: " + result.StandardError);
+        return path;
+    }
+
+    /// <summary>
     /// Builds a clip that looks like a Blu-ray remux to the muxer: a text subtitle track that MP4
     /// cannot store as-is.
     /// </summary>
@@ -293,7 +341,7 @@ public class FfmpegIntegrationTests : IDisposable
 
         Assert.True(plan.IsRunnable, "Plan was blocked: " + string.Join("; ", plan.Warnings.Select(w => w.Message)));
         Assert.True(plan.IsLossless, "Copying video and re-encoding lossless audio to FLAC must count as lossless.");
-        Assert.Contains(1, plan.LosslessAudioIndexes);
+        Assert.Contains(plan.LosslessAudioChecks, c => c.SourceStreamIndex == 1 && c.OutputAudioIndex == 0);
 
         var samples = new List<EncodeProgress>();
         var result = await Runner.RunEncodeAsync(
@@ -305,10 +353,66 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, analysis.DurationSeconds, deepScan: true, plan.LosslessAudioIndexes, CancellationToken.None);
+            source, output, analysis.DurationSeconds, deepScan: true, plan.LosslessAudioChecks,
+            ExpectedStreams.From(plan), CancellationToken.None);
 
         Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
         Assert.True(verification.LosslessVerified, "The audio should have hashed identically.");
+    }
+
+    /// <summary>
+    /// A file whose first audio track is copied and whose second is the lossless one. The
+    /// bit-exactness check compares each source track against a position in the output, and
+    /// assuming the Nth lossless track is the Nth output track is only true when no copied track
+    /// sits in front of it. It did here, so the FLAC track was compared against the copied AAC
+    /// one, the hashes differed, and a job that was genuinely bit-exact was failed and thrown away.
+    /// </summary>
+    [SkippableFact]
+    public async Task Lossless_track_behind_a_copied_track_still_verifies()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateTwoAudioSourceAsync();
+        var output = Path.Combine(_dir, "mixed.mkv");
+
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Audio =
+        [
+            new AudioTrackInfo { Index = 1, TypeIndex = 0, Codec = "aac", Channels = 1, SampleRate = 48000, IsLossless = false },
+            new AudioTrackInfo { Index = 2, TypeIndex = 1, Codec = "flac", Channels = 1, SampleRate = 48000, IsLossless = true }
+        ];
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Strategy = OptimizationStrategy.LosslessOnly,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks =
+            [
+                new AudioTrackRequest { Index = 1, Action = AudioAction.Copy },
+                new AudioTrackRequest { Index = 2, Action = AudioAction.Encode, Codec = "flac" }
+            ]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        // The lossless track is the second audio stream of the output, not the first.
+        var check = Assert.Single(plan.LosslessAudioChecks);
+        Assert.Equal(2, check.SourceStreamIndex);
+        Assert.Equal(1, check.OutputAudioIndex);
+
+        var result = await Runner.RunEncodeAsync(plan.Arguments, 4d, null, false, CancellationToken.None);
+        Assert.True(result.Success, "ffmpeg failed: " + result.StandardError);
+
+        var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
+        var verification = await verifier.VerifyAsync(
+            source, output, 4d, deepScan: false, plan.LosslessAudioChecks,
+            ExpectedStreams.From(plan), CancellationToken.None);
+
+        Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
+        Assert.True(verification.LosslessVerified, "The FLAC track is bit-exact and must verify as such.");
     }
 
     [SkippableFact]
@@ -328,11 +432,91 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, 4d, deepScan: false, [1], CancellationToken.None);
+            source, output, 4d, deepScan: false, [new LosslessAudioCheck(1, 0)], null, CancellationToken.None);
 
         Assert.False(verification.Passed);
         Assert.False(verification.LosslessVerified);
         Assert.Contains("bit-identically", verification.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The sampled estimate is the only number this plugin offers that is a measurement rather
+    /// than a model, so the thing worth proving is that it actually predicts the full encode. This
+    /// samples the file, then encodes the whole thing, and compares.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_sampled_estimate_predicts_the_full_encode()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateLongSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.DurationSeconds = 60d;
+        analysis.SizeBytes = new FileInfo(source).Length;
+
+        var output = Path.Combine(_dir, "full.mkv");
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            Quality = 30,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "aac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, 0, CancellationToken.None);
+
+        Assert.True(measurement.Succeeded, measurement.FailureReason);
+        Assert.Equal(3, measurement.Samples);
+
+        // Nothing may be left behind in the working directory.
+        Assert.Empty(Directory.GetFiles(_dir, ".mo-sample-*"));
+
+        var full = await Runner.RunEncodeAsync(plan.Arguments, 60d, null, false, CancellationToken.None);
+        Assert.True(full.Success, "ffmpeg failed: " + full.StandardError);
+
+        var actual = new FileInfo(output).Length;
+        var predicted = (long)(measurement.BytesPerSecond * 60d);
+
+        // Within 35%: three eight-second samples of a synthetic clip will not be exact, and
+        // claiming they would be is precisely the overclaiming this replaces. What matters is
+        // that it is in the right place -- a model that was out by 3x would pass no test worth
+        // having.
+        Assert.InRange(predicted, (long)(actual * 0.65d), (long)(actual * 1.35d));
+    }
+
+    /// <summary>A file shorter than the samples is refused with a reason rather than measured badly.</summary>
+    [SkippableFact]
+    public async Task A_file_too_short_to_sample_says_so()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateSourceAsync("flac");
+        var analysis = AnalysisFor(source, "flac", audioLossless: true);
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(
+            analysis, request, Path.Combine(_dir, "short.mkv"), CancellationToken.None);
+
+        var sampler = new SampleEncoder(Runner, NullLogger<SampleEncoder>.Instance);
+        var measurement = await sampler.MeasureAsync(analysis, plan, _dir, null, 0, CancellationToken.None);
+
+        Assert.False(measurement.Succeeded);
+        Assert.Contains("too short", measurement.FailureReason!, StringComparison.OrdinalIgnoreCase);
     }
 
     [SkippableFact]
@@ -351,7 +535,7 @@ public class FfmpegIntegrationTests : IDisposable
 
         var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
         var verification = await verifier.VerifyAsync(
-            source, output, 4d, deepScan: false, [], CancellationToken.None);
+            source, output, 4d, deepScan: false, [], null, CancellationToken.None);
 
         Assert.False(verification.Passed);
         Assert.Contains("Duration mismatch", verification.FailureReason!, StringComparison.Ordinal);
@@ -493,5 +677,221 @@ public class FfmpegIntegrationTests : IDisposable
 
         Assert.True(result.Success, result.StandardError);
         return result.StandardOutput.Trim();
+    }
+
+    /// <summary>
+    /// The quality search, end to end against a real encoder and a real comparison. What is worth
+    /// proving is not a particular CRF — that depends entirely on the footage — but that the
+    /// search comes back with a setting inside the range it says it searches, that the setting it
+    /// chose actually measures at or above the target it was given, and that it leaves nothing
+    /// behind. A search that reported a target it had not reached would be the one failure this
+    /// feature cannot have.
+    /// </summary>
+    [SkippableFact]
+    public async Task The_quality_search_finds_a_setting_that_really_measures_up()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateLongSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.DurationSeconds = 60d;
+        analysis.SizeBytes = new FileInfo(source).Length;
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var sampler = new SampleEncoder(
+            Runner,
+            new QualityProbe(Runner, NullLogger<QualityProbe>.Instance),
+            NullLogger<SampleEncoder>.Instance);
+
+        var search = new QualitySearch(
+            Planner("libx264", "aac"),
+            sampler,
+            new SizeEstimator(new StrategyAndEstimateTests.InMemoryJobStore()),
+            NullLogger<QualitySearch>.Instance);
+
+        // SSIM rather than VMAF: every build of ffmpeg has it, and it is the metric most
+        // jellyfin-ffmpeg builds would actually use.
+        var result = await search.SearchAsync(
+            analysis,
+            request,
+            QualityTarget.SlightlySofter,
+            QualityProbe.Ssim,
+            _dir,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded, result.FailureReason);
+
+        var (low, high) = QualitySearch.RangeFor("libx264");
+        Assert.InRange(result.Quality!.Value, low, high);
+
+        // The claim it makes about itself has to be true of the number it measured.
+        var threshold = QualitySearch.ThresholdFor(QualityProbe.Ssim, QualityTarget.SlightlySofter);
+        Assert.True(
+            result.WorstScore >= threshold,
+            FormattableString.Invariant($"Reported {result.WorstScore} against a target of {threshold}."));
+
+        Assert.Equal(QualityProbe.Describe(QualityProbe.Ssim, result.WorstScore!.Value), result.Verdict);
+        Assert.True(result.Probes >= 4, "A search over twenty settings cannot be one encode.");
+        Assert.True(result.EstimatedSizeBytes > 0);
+
+        // Every sample it wrote is a throwaway, and none of them may be left in a media folder.
+        Assert.Empty(Directory.GetFiles(_dir, ".mo-sample-*"));
+    }
+
+    /// <summary>
+    /// A tuning name this plugin passes through has to be one the real encoder accepts. There is
+    /// no list to check it against at runtime — ffmpeg simply refuses to start — so the check is
+    /// to start it.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(ContentTune.Grain)]
+    [InlineData(ContentTune.Animation)]
+    [InlineData(ContentTune.Film)]
+    public async Task A_content_tune_is_a_name_the_real_encoder_accepts(ContentTune tune)
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateSourceAsync("aac");
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+
+        var output = Path.Combine(_dir, FormattableString.Invariant($"tuned-{tune}.mkv"));
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Encode,
+            VideoCodec = "libx264",
+            Preset = "ultrafast",
+            RateControl = RateControlMode.ConstantQuality,
+            Quality = 30,
+            Tune = tune,
+            AudioTracks = [new AudioTrackRequest { Index = 1, Action = AudioAction.Copy }]
+        };
+
+        var plan = await Planner("libx264", "aac").PlanAsync(analysis, request, output, CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+
+        var run = await Runner.RunEncodeAsync(plan.Arguments, 4d, null, false, CancellationToken.None);
+
+        Assert.True(run.Success, "ffmpeg rejected the tuning: " + run.StandardError);
+        Assert.True(new FileInfo(output).Length > 0);
+    }
+
+    /// <summary>
+    /// The failure the duration check cannot see. An encoder or a muxer that drops a track it
+    /// could not write and still exits zero produces a file that parses, runs for exactly the
+    /// right length, and is missing an audio track — and the next step after verification
+    /// replaces the user's only copy with it. Verification now checks the output against what the
+    /// plan said it would map.
+    /// </summary>
+    [SkippableFact]
+    public async Task Verification_rejects_an_output_that_lost_a_track_the_plan_mapped()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateTwoAudioSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Audio =
+        [
+            new AudioTrackInfo { Index = 1, TypeIndex = 0, Codec = "aac", Channels = 1, SampleRate = 48000 },
+            new AudioTrackInfo { Index = 2, TypeIndex = 1, Codec = "flac", Channels = 1, SampleRate = 48000, IsLossless = true }
+        ];
+
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks =
+            [
+                new AudioTrackRequest { Index = 1, Action = AudioAction.Copy },
+                new AudioTrackRequest { Index = 2, Action = AudioAction.Copy }
+            ]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(
+            analysis, request, Path.Combine(_dir, "both.mkv"), CancellationToken.None);
+
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+        Assert.Equal(2, plan.MappedAudioStreams);
+        Assert.Equal(1, plan.MappedVideoStreams);
+
+        // An output built the way a dropped track actually looks: everything else intact, right
+        // duration, one audio track short.
+        var truncated = Path.Combine(_dir, "one-track-short.mkv");
+        string[] args =
+        [
+            "-nostdin", "-v", "error", "-y",
+            "-i", source,
+            "-map", "0:v:0", "-map", "0:1",
+            "-c", "copy",
+            truncated
+        ];
+
+        var built = await Runner.RunAsync(_ffmpeg!, args, CancellationToken.None);
+        Assert.True(built.Success, "Could not build the short output: " + built.StandardError);
+
+        var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
+
+        // Without the check it passes: this is what the plugin used to do.
+        var blind = await verifier.VerifyAsync(
+            source, truncated, null, deepScan: false, [], null, CancellationToken.None);
+        Assert.True(blind.Passed, "The old checks cannot see a missing track: " + blind.FailureReason);
+
+        var verification = await verifier.VerifyAsync(
+            source, truncated, null, deepScan: false, [], ExpectedStreams.From(plan), CancellationToken.None);
+
+        Assert.False(verification.Passed, "A conversion that lost an audio track must never be applied.");
+        Assert.Contains("audio track", verification.FailureReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("original has not been touched", verification.FailureReason!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>And a real, complete encode is not failed by that check.</summary>
+    [SkippableFact]
+    public async Task Verification_accepts_an_output_with_everything_the_plan_mapped()
+    {
+        Skip.IfNot(HasFfmpeg, "ffmpeg is not installed.");
+
+        var source = await CreateTwoAudioSourceAsync();
+        var analysis = AnalysisFor(source, "aac", audioLossless: false);
+        analysis.Audio =
+        [
+            new AudioTrackInfo { Index = 1, TypeIndex = 0, Codec = "aac", Channels = 1, SampleRate = 48000 },
+            new AudioTrackInfo { Index = 2, TypeIndex = 1, Codec = "flac", Channels = 1, SampleRate = 48000, IsLossless = true }
+        ];
+
+        var output = Path.Combine(_dir, "complete.mkv");
+        var request = new EncodeRequest
+        {
+            ItemId = analysis.ItemId,
+            Container = "mkv",
+            Video = VideoAction.Copy,
+            AudioTracks =
+            [
+                new AudioTrackRequest { Index = 1, Action = AudioAction.Copy },
+                new AudioTrackRequest { Index = 2, Action = AudioAction.Copy }
+            ]
+        };
+
+        var plan = await Planner("libx264", "flac").PlanAsync(analysis, request, output, CancellationToken.None);
+        var run = await Runner.RunEncodeAsync(plan.Arguments, 4d, null, false, CancellationToken.None);
+        Assert.True(run.Success, "ffmpeg failed: " + run.StandardError);
+
+        var verifier = new VerificationService(Runner, NullLogger<VerificationService>.Instance);
+        var verification = await verifier.VerifyAsync(
+            source, output, 4d, deepScan: false, plan.LosslessAudioChecks,
+            ExpectedStreams.From(plan), CancellationToken.None);
+
+        Assert.True(verification.Passed, "Verification failed: " + verification.FailureReason);
     }
 }
