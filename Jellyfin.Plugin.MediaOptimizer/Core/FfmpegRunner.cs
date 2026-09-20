@@ -99,31 +99,21 @@ public class FfmpegRunner : IFfmpegRunner
         }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                stdout.AppendLine(e.Data);
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                stderr.AppendLine(e.Data);
-            }
-        };
 
         process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+
+        // Read both pipes to the end and wait for those reads, not only for the process. Waiting
+        // for exit alone loses whatever was still in flight -- which is the last line, the one
+        // ffmpeg prints its answer on. It cost about one run in twenty-five here: a lossless hash
+        // that came back empty, a quality score that did not arrive, a failure whose reason was
+        // cut off mid-sentence.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
         try
         {
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -134,8 +124,8 @@ public class FfmpegRunner : IFfmpegRunner
         return new ProcessResult
         {
             ExitCode = process.ExitCode,
-            StandardOutput = stdout.ToString(),
-            StandardError = stderr.ToString()
+            StandardOutput = await stdoutTask.ConfigureAwait(false),
+            StandardError = await stderrTask.ConfigureAwait(false)
         };
     }
 
@@ -174,29 +164,81 @@ public class FfmpegRunner : IFfmpegRunner
         var startedAt = DateTime.UtcNow;
         var current = new EncodeProgress();
 
-        process.ErrorDataReceived += (_, e) =>
+        process.Start();
+
+        if (lowPriority)
         {
-            if (e.Data is not null)
-            {
-                // Keep the tail only; a failing encode can emit a great deal of output.
-                stderr.AppendLine(e.Data);
-                if (stderr.Length > 64_000)
-                {
-                    stderr.Remove(0, stderr.Length - 48_000);
-                }
-            }
+            TrySetLowPriority(process);
+        }
+
+        // Both pipes are read to the end by their own loop, and both loops are awaited. Waiting on
+        // the process alone drops whatever is still in flight, and with ffmpeg that is the last
+        // line -- the one carrying the error, the hash or the score.
+        var stderrTask = ReadStderrAsync(process, stderr, cancellationToken);
+        var stdoutTask = ReadProgressAsync(process, totalDurationSeconds, onProgress, current, startedAt, cancellationToken);
+
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            KillQuietly(process);
+            throw;
+        }
+
+        return new ProcessResult
+        {
+            ExitCode = process.ExitCode,
+            StandardOutput = string.Empty,
+            StandardError = stderr.ToString()
         };
+    }
 
-        process.OutputDataReceived += (_, e) =>
+    /// <summary>Collects stderr, keeping the tail when a failing encode floods it.</summary>
+    /// <param name="process">The running process.</param>
+    /// <param name="stderr">Where to accumulate.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes at end of stream.</returns>
+    private static async Task ReadStderrAsync(
+        Process process,
+        StringBuilder stderr,
+        CancellationToken cancellationToken)
+    {
+        while (await process.StandardError.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
-            if (e.Data is null || onProgress is null)
-            {
-                return;
-            }
+            stderr.AppendLine(line);
 
-            if (!TryApplyProgressLine(e.Data, current))
+            // A failing encode can emit a great deal; keep the tail, which is where the reason is.
+            if (stderr.Length > 64_000)
             {
-                return;
+                stderr.Remove(0, stderr.Length - 48_000);
+            }
+        }
+    }
+
+    /// <summary>Parses ffmpeg's -progress output and reports samples as they complete.</summary>
+    /// <param name="process">The running process.</param>
+    /// <param name="totalDurationSeconds">Source duration, for the percentage.</param>
+    /// <param name="onProgress">Progress callback, or null.</param>
+    /// <param name="current">The sample being accumulated.</param>
+    /// <param name="startedAt">When the encode started, for the rate.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task that completes at end of stream.</returns>
+    private static async Task ReadProgressAsync(
+        Process process,
+        double? totalDurationSeconds,
+        Action<EncodeProgress>? onProgress,
+        EncodeProgress current,
+        DateTime startedAt,
+        CancellationToken cancellationToken)
+    {
+        while (await process.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
+        {
+            if (onProgress is null || !TryApplyProgressLine(line, current))
+            {
+                continue;
             }
 
             if (totalDurationSeconds is > 0)
@@ -217,33 +259,7 @@ public class FfmpegRunner : IFfmpegRunner
             }
 
             onProgress(current);
-        };
-
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        if (lowPriority)
-        {
-            TrySetLowPriority(process);
         }
-
-        try
-        {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            KillQuietly(process);
-            throw;
-        }
-
-        return new ProcessResult
-        {
-            ExitCode = process.ExitCode,
-            StandardOutput = string.Empty,
-            StandardError = stderr.ToString()
-        };
     }
 
     /// <summary>Applies one "key=value" progress line. Returns true when a sample is complete.</summary>

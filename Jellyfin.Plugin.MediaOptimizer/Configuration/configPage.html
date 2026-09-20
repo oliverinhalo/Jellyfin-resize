@@ -179,7 +179,12 @@
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="MaxConcurrentJobs">Concurrent conversions</label>
             <input is="emby-input" type="number" id="MaxConcurrentJobs" name="MaxConcurrentJobs" min="1" max="8" />
-            <div class="fieldDescription">Keep this at 1 unless the server does nothing else. Encoding competes with live transcoding.</div>
+            <div class="fieldDescription">
+              Counted in ordinary conversions: a 4K job counts as two, so 2 allows either two
+              ordinary encodes or one 4K one. Keep this at 1 unless the server does nothing else —
+              encoding competes with live transcoding. One job always starts on an idle server,
+              whatever it weighs.
+            </div>
           </div>
 
           <label class="checkboxContainer">
@@ -279,6 +284,46 @@
             and is the difference between "probably fine" and "checked".
           </div>
 
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="MeasureQualityWhenSampling" name="MeasureQualityWhenSampling" />
+            <span>Measure picture quality when measuring size</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            "Measure it" and "Find the setting" compare the samples against the source frame by frame
+            and report how much worse it looks, as a VMAF or SSIM score. Switch this off to measure
+            size alone, which is a little quicker. It does nothing unless your FFmpeg has the libvmaf
+            or ssim filter; the status panel says which.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="MeasureQualityAfterEncoding" name="MeasureQualityAfterEncoding" />
+            <span>Measure the finished conversion against the original</span>
+          </label>
+          <div class="fieldDescription" style="margin-bottom:1.5em">
+            Everything else here measures a conversion before it happens, from short samples. This
+            compares the finished file with the original at three points and records what it found,
+            so the job history says what the conversion actually cost you rather than what was
+            predicted. Three short comparisons against a file that took hours to make.
+          </div>
+
+          <div class="selectContainer">
+            <label class="selectLabel" for="RefuseBelowQuality">Refuse a conversion that measures worse than</label>
+            <select is="emby-select" id="RefuseBelowQuality" name="RefuseBelowQuality" class="emby-select-withcolor emby-select">
+              <option value="Off">Nothing — measure and record, never refuse</option>
+              <option value="NoticeablySofter">Noticeably softer on detailed scenes</option>
+              <option value="SlightlySofter">Slightly softer; visible only side by side</option>
+              <option value="VeryClose">Very hard to tell apart from the source</option>
+            </select>
+            <div class="fieldDescription">
+              A conversion that measures worse than this is refused: the job fails, says what it
+              measured, and your original is left exactly as it was. Setting a floor measures every
+              conversion whether or not the box above is ticked, because a floor cannot be honoured
+              without measuring — and a conversion that cannot be measured at all is refused too,
+              for the same reason. A conversion that copies the video, or one verified bit-exact by
+              hash, clears every floor without being measured.
+            </div>
+          </div>
+
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="FileStabilitySeconds">File must be unchanged for (seconds)</label>
             <input is="emby-input" type="number" id="FileStabilitySeconds" name="FileStabilitySeconds" min="0" max="3600" />
@@ -295,7 +340,28 @@
             <input is="emby-checkbox" type="checkbox" id="AllowNonAdminAnalysis" name="AllowNonAdminAnalysis" />
             <span>Let non-admin users open the read-only file information view</span>
           </label>
-          <div class="fieldDescription">Starting, cancelling and reverting conversions always requires an administrator.</div>
+          <div class="fieldDescription">
+            Starting, cancelling and reverting conversions always requires an administrator, and so
+            does anything that reveals where files live on the server.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="NotifyOnCompletion" name="NotifyOnCompletion" />
+            <span>Record finished conversions in Jellyfin's activity feed</span>
+          </label>
+          <div class="fieldDescription">
+            Dashboard → Activity. The entry says what the file went from and to, how much was
+            freed, and until when the original can be put back.
+          </div>
+
+          <label class="checkboxContainer">
+            <input is="emby-checkbox" type="checkbox" id="NotifyOnFailure" name="NotifyOnFailure" />
+            <span>Record failed conversions in the activity feed</span>
+          </label>
+          <div class="fieldDescription">
+            A failed conversion never modifies the original, but it is worth knowing about — the
+            usual causes are a full disk or an FFmpeg build missing a codec.
+          </div>
 
           <div class="inputContainer">
             <label class="inputLabel inputLabelUnfocused" for="JobHistoryLimit">Jobs kept in history</label>
@@ -329,11 +395,12 @@
         'QuarantineDirectory', 'QuarantineRetentionDays', 'MaxConcurrentJobs', 'EncodingThreadCount',
         'FileStabilitySeconds', 'FreeSpaceSafetyFactor', 'JobHistoryLimit',
         'KeepAudioLanguages', 'KeepSubtitleLanguages', 'Speed', 'RemoveFinishedJobsAfterDays',
-        'AdditionalMoveTargets', 'MaxConcurrentMoves'];
+        'RefuseBelowQuality', 'AdditionalMoveTargets', 'MaxConcurrentMoves'];
       var checkboxes = ['PauseWhilePlaybackActive', 'LowProcessPriority', 'DeepVerifyBeforeReplace',
         'AllowNonAdminAnalysis', 'KeepUntaggedTracks', 'DropCommentaryTracks', 'PreferHardwareEncoding',
         'ResumeJobsAfterRestart', 'RegenerateTrickplayAfterReplace',
-        'KeepOriginalsBesideMedia', 'EncodeBesideMedia',
+        'KeepOriginalsBesideMedia', 'EncodeBesideMedia', 'NotifyOnCompletion', 'NotifyOnFailure',
+        'MeasureQualityWhenSampling', 'MeasureQualityAfterEncoding',
         'VerifyMovesWithHash', 'RemoveEmptyFoldersAfterMove'];
 
       document.querySelector('#MediaOptimizerConfigPage').addEventListener('pageshow', function () {
@@ -349,6 +416,17 @@
             if (input) { input.checked = !!config[name]; }
           });
           Dashboard.hideLoadingMsg();
+        }).catch(function (e) {
+          // Without this the spinner never stops and the form shows its defaults, which reads as
+          // "every setting is back to how it shipped" rather than "these could not be read".
+          Dashboard.hideLoadingMsg();
+          Dashboard.alert({
+            title: 'Could not read the settings',
+            message: 'The saved settings could not be loaded'
+              + ((e && e.statusText) ? ': ' + e.statusText : '')
+              + '. What is shown below is the defaults, so do not save this page — reload it '
+              + 'instead, or the settings you cannot see will be overwritten.'
+          });
         });
       });
 
@@ -360,14 +438,33 @@
           fields.forEach(function (name) {
             var input = page.querySelector('#' + name);
             if (!input) { return; }
+
+            // A cleared number box means "I did not mean to change this", not zero. Number('')
+            // is 0, and 0 is a real setting for several of these — none of which anybody picks by
+            // emptying the field. The same mistake in the rule editor posted null and got a raw
+            // model-binding error back.
+            if (input.type === 'number' && String(input.value).trim() === '') { return; }
+
             config[name] = input.type === 'number' ? Number(input.value) : input.value;
           });
           checkboxes.forEach(function (name) {
             var input = page.querySelector('#' + name);
             if (input) { config[name] = input.checked; }
           });
-          ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+          return ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
             Dashboard.processPluginConfigurationUpdateResult(result);
+          });
+        }).catch(function (e) {
+          // A save that fails silently is the worst of these: the spinner stops eventually, the
+          // page looks exactly as it does after a successful save, and the settings are the old
+          // ones. Whether the read or the write failed, nothing was changed.
+          Dashboard.hideLoadingMsg();
+          Dashboard.alert({
+            title: 'Nothing was saved',
+            message: 'The settings could not be saved'
+              + ((e && e.statusText) ? ': ' + e.statusText : '')
+              + '. They are unchanged — try again, and if it keeps failing look at the status '
+              + 'panel on the Conversions page.'
           });
         });
         return false;

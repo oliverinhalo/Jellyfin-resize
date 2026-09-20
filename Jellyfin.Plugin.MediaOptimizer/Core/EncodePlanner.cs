@@ -53,10 +53,20 @@ public class EncodePlanner : IEncodePlanner
             return new PlanResult { Warnings = warnings };
         }
 
+        // Sanity-check the numbers before they are turned into arguments. The request comes from
+        // an HTTP body, so it is whatever the caller sent; a quality of 500 or a height of -1
+        // would otherwise reach ffmpeg and come back as an error about an argument the user never
+        // typed, hours later if the dry run happened not to catch it.
+        ValidateRequest(request, warnings);
+        if (warnings.Any(w => w.Level == WarningLevel.Blocker))
+        {
+            return new PlanResult { Warnings = warnings };
+        }
+
         args.Add("-i");
         args.Add(analysis.Path);
 
-        var losslessAudioIndexes = new List<int>();
+        var losslessAudioChecks = new List<LosslessAudioCheck>();
         var everythingBitExact = true;
 
         // ---- video ----
@@ -141,7 +151,7 @@ public class EncodePlanner : IEncodePlanner
             }
             else
             {
-                PlanAudioEncode(track, req, audioOutIndex, args, warnings, losslessAudioIndexes, ref everythingBitExact);
+                PlanAudioEncode(track, req, audioOutIndex, args, warnings, losslessAudioChecks, ref everythingBitExact);
             }
 
             audioOutIndex++;
@@ -173,7 +183,7 @@ public class EncodePlanner : IEncodePlanner
         }
 
         // ---- subtitles, attachments, chapters ----
-        PlanPassthrough(analysis, request, args, warnings, ref everythingBitExact);
+        var mappedSubtitles = PlanPassthrough(analysis, request, args, warnings, ref everythingBitExact);
 
         // ---- container ----
         var extension = NormaliseContainer(request.Container);
@@ -182,6 +192,14 @@ public class EncodePlanner : IEncodePlanner
             args.Add("-movflags");
             args.Add("+faststart");
         }
+
+        // The muxer buffers packets from every stream until it can interleave them. The default
+        // ceiling is small enough that a file whose audio and video timestamps drift apart -- a
+        // long silent lead-in, a stream that starts late -- dies with "Too many packets buffered
+        // for output stream" after however long it took to reach that point. This is the same
+        // headroom Jellyfin gives its own transcodes.
+        args.Add("-max_muxing_queue_size");
+        args.Add("2048");
 
         var threads = Plugin.Instance?.Configuration.EncodingThreadCount ?? 0;
         if (threads > 0)
@@ -224,8 +242,87 @@ public class EncodePlanner : IEncodePlanner
             Warnings = warnings,
             OutputExtension = extension,
             IsLossless = isLossless,
-            LosslessAudioIndexes = losslessAudioIndexes
+            VideoIsCopied = videoAction == VideoAction.Copy,
+            VideoIsAbsent = videoAction == VideoAction.Drop || video is null,
+            MappedVideoStreams = videoAction == VideoAction.Drop || video is null ? 0 : 1,
+            MappedAudioStreams = keptAudio,
+            MappedSubtitleStreams = mappedSubtitles,
+            LosslessAudioChecks = losslessAudioChecks
         };
+    }
+
+    /// <summary>
+    /// Rejects values that cannot produce a working encode, with a message naming the setting.
+    /// </summary>
+    /// <param name="request">The request as submitted.</param>
+    /// <param name="warnings">Planner messages to add to.</param>
+    internal static void ValidateRequest(EncodeRequest request, List<PlanWarning> warnings)
+    {
+        // 0-63 covers every encoder this plugin offers: x264 and x265 stop at 51, AV1 and VP9
+        // go to 63. A value outside the union is a mistake whichever encoder is chosen.
+        if (request.Quality is not null && (request.Quality < 0 || request.Quality > 63))
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "QUALITY_RANGE",
+                FormattableString.Invariant($"Quality must be between 0 and 63; {request.Quality.Value} is outside what any encoder accepts.")));
+        }
+
+        if (request.TargetHeight is not null && (request.TargetHeight < 64 || request.TargetHeight > 4320))
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "HEIGHT_RANGE",
+                FormattableString.Invariant($"A target height of {request.TargetHeight.Value} is not a real resolution. Choose something between 64 and 4320.")));
+        }
+
+        if (request.TargetWidth is not null && (request.TargetWidth < 64 || request.TargetWidth > 8192))
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "WIDTH_RANGE",
+                FormattableString.Invariant($"A target width of {request.TargetWidth.Value} is not a real resolution. Leave it unset to keep the aspect ratio.")));
+        }
+
+        if (request.BitDepth is not null and not 8 and not 10 and not 12)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "BIT_DEPTH_RANGE",
+                FormattableString.Invariant($"{request.BitDepth.Value}-bit video is not a thing. Choose 8 or 10.")));
+        }
+
+        if (request.VideoBitrateBps is not null && request.VideoBitrateBps < 50_000)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Blocker,
+                "BITRATE_RANGE",
+                "A video bitrate below 50 kb/s would not produce a watchable picture."));
+        }
+
+        foreach (var track in request.AudioTracks)
+        {
+            if (track.Action != AudioAction.Encode)
+            {
+                continue;
+            }
+
+            if (track.BitrateBps is not null && (track.BitrateBps < 8_000 || track.BitrateBps > 5_000_000))
+            {
+                warnings.Add(new PlanWarning(
+                    WarningLevel.Blocker,
+                    "AUDIO_BITRATE_RANGE",
+                    FormattableString.Invariant($"An audio bitrate of {track.BitrateBps.Value / 1000} kb/s is outside anything an encoder will accept. Use between 8 and 5000 kb/s.")));
+            }
+
+            if (track.Channels is not null && (track.Channels < 1 || track.Channels > 8))
+            {
+                warnings.Add(new PlanWarning(
+                    WarningLevel.Blocker,
+                    "AUDIO_CHANNEL_RANGE",
+                    FormattableString.Invariant($"{track.Channels.Value} audio channels is not a layout any of these encoders can write. Use between 1 and 8.")));
+            }
+        }
     }
 
     /// <summary>
@@ -423,15 +520,39 @@ public class EncodePlanner : IEncodePlanner
         args.Add("-fps_mode");
         args.Add("passthrough");
 
-        PlanRateControl(request, option, ComputeTargetVideoBitrate(analysis, request), args, warnings);
+        // x265 takes all of its own options through one -x265-params, and ffmpeg keeps only the
+        // last occurrence of an option. Passing it twice -- which a lossless HDR encode did, once
+        // for lossless=1 and once for hdr10=1 -- silently threw the first away. Collected here
+        // and emitted once instead.
+        var x265Params = new List<string>();
+        var explicitPreset = !string.IsNullOrEmpty(request.Preset) && option.Presets.Count > 0
+            ? request.Preset
+            : null;
 
-        if (!string.IsNullOrEmpty(request.Preset) && option.Presets.Count > 0)
+        PlanRateControl(
+            request,
+            option,
+            ComputeTargetVideoBitrate(analysis, request),
+            args,
+            warnings,
+            x265Params,
+            explicitPreset is not null);
+
+        if (explicitPreset is not null)
         {
             args.Add("-preset");
-            args.Add(request.Preset);
+            args.Add(explicitPreset);
         }
 
-        PlanHdr(video, option, args, warnings);
+        AddContentTune(request.Tune, option, args, warnings);
+
+        PlanHdr(video, option, args, warnings, x265Params);
+
+        if (x265Params.Count > 0)
+        {
+            args.Add("-x265-params");
+            args.Add(string.Join(':', x265Params));
+        }
 
         if (video.IsVariableFrameRate)
         {
@@ -475,7 +596,9 @@ public class EncodePlanner : IEncodePlanner
         EncoderOption option,
         long? targetVideoBitrate,
         List<string> args,
-        List<PlanWarning> warnings)
+        List<PlanWarning> warnings,
+        List<string> x265Params,
+        bool presetAlreadyChosen)
     {
         switch (request.RateControl)
         {
@@ -483,7 +606,7 @@ public class EncodePlanner : IEncodePlanner
                 var quality = request.Quality ?? DefaultQualityFor(option.Codec);
                 if (option.IsHardware)
                 {
-                    AddHardwareQualityArgs(option, quality, args, warnings);
+                    AddHardwareQualityArgs(option, quality, args, warnings, presetAlreadyChosen);
                 }
                 else
                 {
@@ -525,8 +648,7 @@ public class EncodePlanner : IEncodePlanner
             case RateControlMode.Lossless:
                 if (option.Name == "libx265")
                 {
-                    args.Add("-x265-params");
-                    args.Add("lossless=1");
+                    x265Params.Add("lossless=1");
                 }
                 else if (option.Name == "libx264")
                 {
@@ -560,11 +682,17 @@ public class EncodePlanner : IEncodePlanner
     /// <param name="quality">The requested constant-quality value.</param>
     /// <param name="args">Argument list being built.</param>
     /// <param name="warnings">Planner messages.</param>
+    /// <param name="presetAlreadyChosen">
+    /// Whether the caller will pass the user's own preset. When it will, no preset is added here:
+    /// two -preset arguments left ffmpeg silently using whichever came last, so the quality
+    /// preset below was either redundant or quietly overrode the user's choice.
+    /// </param>
     private static void AddHardwareQualityArgs(
         EncoderOption option,
         int quality,
         List<string> args,
-        List<PlanWarning> warnings)
+        List<PlanWarning> warnings,
+        bool presetAlreadyChosen)
     {
         var q = quality.ToString(CultureInfo.InvariantCulture);
 
@@ -576,9 +704,13 @@ public class EncodePlanner : IEncodePlanner
             args.Add(q);
             args.Add("-b:v");
             args.Add("0");
-            // p7 is NVENC's slowest, highest-quality preset and is still far quicker than x265.
-            args.Add("-preset");
-            args.Add("p7");
+            if (!presetAlreadyChosen)
+            {
+                // p7 is NVENC's slowest, highest-quality preset and is still far quicker than x265.
+                args.Add("-preset");
+                args.Add("p7");
+            }
+
             args.Add("-tune");
             args.Add("hq");
             args.Add("-multipass");
@@ -600,8 +732,12 @@ public class EncodePlanner : IEncodePlanner
         {
             args.Add("-global_quality");
             args.Add(q);
-            args.Add("-preset");
-            args.Add("veryslow");
+            if (!presetAlreadyChosen)
+            {
+                args.Add("-preset");
+                args.Add("veryslow");
+            }
+
             args.Add("-look_ahead");
             args.Add("1");
             args.Add("-look_ahead_depth");
@@ -657,7 +793,8 @@ public class EncodePlanner : IEncodePlanner
         VideoTrackInfo video,
         EncoderOption option,
         List<string> args,
-        List<PlanWarning> warnings)
+        List<PlanWarning> warnings,
+        List<string> x265Params)
     {
         var isHdr = video.Range.StartsWith("HDR", StringComparison.OrdinalIgnoreCase)
             || video.Range.StartsWith("Dolby", StringComparison.OrdinalIgnoreCase);
@@ -688,8 +825,8 @@ public class EncodePlanner : IEncodePlanner
 
         if (option.Name == "libx265")
         {
-            args.Add("-x265-params");
-            args.Add("hdr10=1:repeat-headers=1");
+            x265Params.Add("hdr10=1");
+            x265Params.Add("repeat-headers=1");
         }
         else if (option.Codec == "av1" || option.IsHardware)
         {
@@ -714,7 +851,7 @@ public class EncodePlanner : IEncodePlanner
         int outIndex,
         List<string> args,
         List<PlanWarning> warnings,
-        List<int> losslessAudioIndexes,
+        List<LosslessAudioCheck> losslessAudioChecks,
         ref bool everythingBitExact)
     {
         var codec = req.Codec ?? "libopus";
@@ -726,7 +863,9 @@ public class EncodePlanner : IEncodePlanner
 
         if (bitExact)
         {
-            losslessAudioIndexes.Add(track.Index);
+            // Paired with the output position, because the check compares the source stream
+            // against the output's Nth audio stream and N is not the source index.
+            losslessAudioChecks.Add(new LosslessAudioCheck(track.Index, outIndex));
 
             if (track.HasObjectAudio && !string.IsNullOrEmpty(track.Profile))
             {
@@ -774,7 +913,13 @@ public class EncodePlanner : IEncodePlanner
         }
     }
 
-    private static void PlanPassthrough(
+    /// <summary>
+    /// Maps the streams that are carried rather than encoded, and reports how many subtitle
+    /// tracks made it into the plan — which is one of the numbers verification checks the output
+    /// against afterwards.
+    /// </summary>
+    /// <returns>How many subtitle streams were mapped.</returns>
+    private static int PlanPassthrough(
         FileAnalysis analysis,
         EncodeRequest request,
         List<string> args,
@@ -882,6 +1027,8 @@ public class EncodePlanner : IEncodePlanner
             args.Add("-map_chapters");
             args.Add("-1");
         }
+
+        return subOutIndex;
     }
 
     /// <summary>
@@ -910,6 +1057,79 @@ public class EncodePlanner : IEncodePlanner
         var bitrate = (long)(videoBits / analysis.DurationSeconds.Value);
         return bitrate > 1000 ? bitrate : null;
     }
+
+    /// <summary>
+    /// Passes the content type through to the encoder's own tuning, where that encoder has one
+    /// that means what the user was asked.
+    /// <para>
+    /// The names are not interchangeable between encoders and there is no table to guess from:
+    /// x264 has film, animation and grain; x265 has animation and grain but no film, because its
+    /// default already targets live action; the hardware encoders use <c>-tune</c> for something
+    /// else entirely (NVENC's is hq/ll/lossless, and this plugin already sets it), so passing a
+    /// content tune there would overwrite a setting that matters with one that does not apply.
+    /// Nothing is emitted where the meaning is not exact, and the plan says so.
+    /// </para>
+    /// </summary>
+    /// <param name="tune">What the user said the footage is.</param>
+    /// <param name="option">The chosen encoder.</param>
+    /// <param name="args">The argument vector being built.</param>
+    /// <param name="warnings">Warnings to add to.</param>
+    internal static void AddContentTune(
+        ContentTune tune,
+        EncoderOption option,
+        List<string> args,
+        List<PlanWarning> warnings)
+    {
+        ArgumentNullException.ThrowIfNull(option);
+        ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(warnings);
+
+        if (tune == ContentTune.Auto)
+        {
+            return;
+        }
+
+        var isX264 = string.Equals(option.Name, "libx264", StringComparison.OrdinalIgnoreCase);
+        var isX265 = string.Equals(option.Name, "libx265", StringComparison.OrdinalIgnoreCase);
+
+        if (!isX264 && !isX265)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Info,
+                "TUNE_UNSUPPORTED",
+                FormattableString.Invariant(
+                    $"{option.DisplayName} has no content tuning, so \"{Describe(tune)}\" is not applied. Only the x264 and x265 software encoders take it.")));
+            return;
+        }
+
+        if (isX265 && tune == ContentTune.Film)
+        {
+            warnings.Add(new PlanWarning(
+                WarningLevel.Info,
+                "TUNE_FILM_X265",
+                "x265 has no separate film tuning: its defaults already target live action, so nothing is changed."));
+            return;
+        }
+
+        args.Add("-tune");
+        args.Add(tune switch
+        {
+            ContentTune.Animation => "animation",
+            ContentTune.Grain => "grain",
+            _ => "film"
+        });
+    }
+
+    /// <summary>Names a content tune the way it is named in the dialog.</summary>
+    /// <param name="tune">The tune.</param>
+    /// <returns>Its label.</returns>
+    internal static string Describe(ContentTune tune) => tune switch
+    {
+        ContentTune.Film => "live action",
+        ContentTune.Animation => "animation",
+        ContentTune.Grain => "film grain",
+        _ => "automatic"
+    };
 
     private static int DefaultQualityFor(string codec) => codec switch
     {

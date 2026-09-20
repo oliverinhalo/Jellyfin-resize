@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Configuration;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Tests;
@@ -243,8 +246,51 @@ public class StrategyAndEstimateTests
         Assert.Contains(high.AudioTracks, t => t.Action == AudioAction.Encode);
     }
 
+    /// <summary>
+    /// Real files probe as 9, 12 and 16 bit, and the pixel format now reveals that rather than
+    /// leaving it unknown. The encoders here write 8-bit and 10-bit, so a source depth is carried
+    /// to the nearest one that can actually be written — otherwise the request would name a depth
+    /// the planner refuses as impossible, and every preset on that file would be blocked.
+    /// </summary>
+    [Theory]
+    [InlineData(8, 8)]
+    [InlineData(9, 8)]
+    [InlineData(10, 10)]
+    [InlineData(12, 10)]
+    [InlineData(16, 10)]
+    [InlineData(null, 8)]
+    public async Task An_unusual_source_bit_depth_resolves_to_one_that_can_be_written(int? sourceDepth, int expected)
+    {
+        var analysis = Coco();
+        analysis.Video!.BitDepth = sourceDepth;
+
+        var request = StrategyResolver.Resolve(
+            analysis,
+            OptimizationStrategy.Standard,
+            Caps(),
+            new PluginConfiguration());
+
+        Assert.Equal(expected, request.BitDepth);
+
+        // And the plan that follows from it must actually run.
+        var planner = new EncodePlanner(new StubCaps(Caps()), NullLogger<EncodePlanner>.Instance);
+        var plan = await planner.PlanAsync(analysis, request, "/tmp/out.mkv", CancellationToken.None);
+        Assert.True(plan.IsRunnable, string.Join("; ", plan.Warnings.Select(w => w.Message)));
+    }
+
+    private sealed class StubCaps : ICapabilityService
+    {
+        private readonly Capabilities _caps;
+
+        public StubCaps(Capabilities caps) => _caps = caps;
+
+        public Task<Capabilities> GetAsync(CancellationToken cancellationToken) => Task.FromResult(_caps);
+
+        public Task<bool> HasEncoderAsync(string encoder, CancellationToken cancellationToken) => Task.FromResult(true);
+    }
+
     /// <summary>A job store that keeps everything in memory, for tests.</summary>
-    private sealed class InMemoryJobStore : IJobStore
+    internal sealed class InMemoryJobStore : IJobStore
     {
         private readonly List<EncodeJob> _jobs = new List<EncodeJob>();
 
@@ -260,12 +306,16 @@ public class StrategyAndEstimateTests
 
         public IReadOnlyList<EncodeJob> GetActive() => _jobs.Where(j => j.IsActive).ToList();
 
-        public EncodeJob? TakeNextQueued() => null;
+        public EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null) => null;
 
         public bool HasActiveJobForItem(Guid itemId) => false;
+
+        public bool RequestCancel(Guid id) => false;
 
         public bool Remove(Guid id) => false;
 
         public IReadOnlyList<EncodeJob> ReconcileInterrupted() => Array.Empty<EncodeJob>();
+
+        public bool IsPaused { get; set; }
     }
 }

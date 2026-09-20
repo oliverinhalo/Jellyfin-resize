@@ -1,10 +1,11 @@
 # Media Optimizer for Jellyfin
 
 Inspect any file in your library from inside Jellyfin and convert it with FFmpeg — resolution,
-codec, bit depth, bitrate, audio tracks — one film at a time or hundreds at once.
+codec, bit depth, bitrate, audio tracks — one film at a time, hundreds at once, or by a rule that
+runs itself overnight.
 
-Nothing is deleted until the new file has been checked, and every claim the interface makes about
-size, speed or quality is measured rather than guessed.
+Nothing is deleted until the new file has been checked, and every number the interface shows says
+what kind of number it is: measured, estimated, or a guess it cannot do better than.
 
 It also **moves media between drives** — pick a destination from the list of your library folders
 and the files are copied, checked and only then removed from the old drive, with the library entry
@@ -72,9 +73,10 @@ Optimizer**, which has its own library search and opens the identical conversion
 
 | Where | What |
 |---|---|
-| **Dashboard → Media Optimizer** | Status, library search, bulk selection, the queue and its history |
+| **Dashboard → Media Optimizer** | Status, library search, bulk selection, automatic rules, the queue and its history |
 | **Dashboard → Move Media** | Which drive everything is on, and moving files between drives |
 | **Dashboard → Plugins → Media Optimizer** | Settings: languages, speed, output policy, moves, safety |
+| **Dashboard → Scheduled Tasks** | *Media Optimizer: automatic rules* nightly, and *housekeeping* |
 | **In the web client** | "Optimize file…" and "Move to another drive…" in any 3-dot menu, and a tune icon in the player |
 
 ---
@@ -105,10 +107,138 @@ resolution change and says why rather than offering a preset that would save not
 
 ### In bulk
 
+The dashboard opens on **most to gain first**, which is not the same as largest first: the biggest
+file in most libraries is a remux that is already efficiently encoded and has nothing to give up.
+Each row says roughly what a conversion would reclaim and where it would come from — "≈ 12 GiB to
+gain · HEVC instead of H.264" — worked out from size, resolution and codec without reading the
+files, so a whole library can be ranked in one page load. It is marked as an approximation because
+it is one; the dialog's estimate reads the file's real stream bitrates.
+
 Search or filter your library — by size, resolution, bitrate, watched state, container or codec —
 tick the files you want, and apply one preset to all of them. Each file is still analysed
 individually, so the preset adapts to what it actually is, and anything unconvertible is listed as
 skipped with the reason.
+
+### On a schedule
+
+A rule converts matching files by itself, once a night, so a library keeps itself in order without
+anyone picking files by hand. A rule says what it takes — films or episodes, one library or all of
+them, a minimum resolution or size, a container, a codec, whether anyone has watched it, how long
+it has been in the library —
+and what to do with it, and the rest is the ordinary conversion path: jobs in the same queue, one
+at a time, paused while anyone is streaming, and no original touched until the result verifies.
+
+The defaults are deliberately timid, because the failure mode of an automatic rule is not "it did
+nothing":
+
+- **A ceiling per run.** Three files a night by default. A rule cannot queue the library.
+- **A minimum saving.** 15% by default; below that it leaves the file alone. Spending four hours
+  of CPU and a generation of quality to reclaim 3% is not optimising anything.
+- **A grace period.** 30 days by default, so nothing is replaced the evening it arrives — before
+  anyone has watched it once, or noticed that the download was bad.
+- **Never twice.** A file this plugin has already converted is never taken again.
+- **Nothing a person would have been asked about.** Anything the dialog would block is skipped with
+  the same reason. Dolby Vision is the clearest case: accepting the loss of it is a decision for a
+  person, not for a rule running at four in the morning.
+- **Off until you say otherwise.** A new rule is saved switched off, and **Preview** shows exactly
+  what it would take — and why it passed over the rest — without queueing anything.
+
+**Preview tonight's run** answers the question that matters the evening before rules first run:
+what would *all* of them take, and which rule gets which file. Previewing one rule answers only
+what that rule does.
+
+Rules are applied top to bottom and the first one to take a file keeps it, so with two rules that
+overlap, the one above wins — "keep the 4K films as they are, shrink everything else" is only that
+sentence if the keeping rule is first. **Move up** and **Move down** on the dashboard decide it, and
+every job a rule queues says which rule queued it.
+
+Rules live on the dashboard page, and run as the scheduled task *Media Optimizer: automatic rules*,
+so you can move them, run them by hand, or switch them off from Jellyfin's own scheduled task page.
+
+Opening the dialog on a file that is already converting shows that conversion — its progress, and a
+button to stop it — rather than a form whose "Start conversion" the server would refuse.
+
+### Measuring instead of predicting
+
+Every number the dialog shows before a conversion is modelled — anchored on the file's own bitrate
+rather than a generic table, which is why it does not claim a lean HEVC file will shrink, but still
+a prediction. **Measure it** in the dialog encodes three eight-second stretches of the real file
+with the real settings and reports what they produced: a measured size, a measured range, and a
+time estimate taken from how fast those samples actually ran on this machine.
+
+It also answers the question nobody could answer before: **how much worse will it look?** Each
+sample is compared with the source frame by frame — VMAF where your FFmpeg has it, SSIM otherwise —
+and the result is reported as a score *and* in words: "VMAF 96.4 — indistinguishable from the
+source", or "VMAF 81.2 — noticeably softer on detailed scenes". A conversion that keeps the video
+stream untouched is not compared at all; there is nothing to compare.
+
+It costs about a minute, which is why it is a button rather than something that happens as you
+type. It runs on the server rather than inside the request that asked for it — a minute is longer
+than most reverse proxies will hold a connection open — so the dialog asks how it is going, and
+closing the dialog stops it rather than leaving the server encoding for nobody. The spread between the samples is shown rather than averaged away, because three samples
+cannot know about the twenty minutes of dark, grainy footage at the end of the film, and the
+quality score is reported with the name of the metric that produced it, because SSIM 0.98 and
+VMAF 98 are not the same claim.
+
+### Telling it what it is looking at
+
+Grain and animation want opposite decisions from an encoder, and it is the one thing about a file
+a person can see instantly that no probe can tell reliably. **Content** in the dialog — *live
+action*, *animation*, *film grain* — is passed straight through to the encoder's own tuning: line
+art stops being smoothed, and grain is kept rather than smeared into blotches, at the cost of a
+bigger file.
+
+It is only offered for the x264 and x265 software encoders, because they are the only ones with a
+setting that means this. The hardware encoders use the same flag for something else entirely, so
+nothing is sent there, and if a preset was chosen for an encoder that cannot take it the plan says
+so rather than changing nothing silently. A rule can carry it too, which is where it fits best: a
+rule already narrows a library down, so "the anime library, tuned for animation" is true of every
+file that rule takes.
+
+### Letting it choose the setting
+
+Once the difference can be measured, the question can be turned round. **Find the setting…** asks
+how close to the source the result has to look — *indistinguishable*, *very hard to tell apart*, or
+*slightly softer* — and then finds the smallest file that still meets it, on this file, by
+encoding short stretches at different settings and comparing each with the source.
+
+This is the one thing no preset can do. Every "use CRF 22" is a number that suited somebody else's
+files; a grainy 1970s film and a flat animated series want settings four or five apart, and no
+table knows which one it is looking at. The search covers about twenty settings in five short
+encodes by halving the range, then confirms its answer at three points across the film — and it is
+the *worst* of those three that has to meet the target, because an average is exactly how one bad
+dark scene hides. The setting it finds is applied to the form, with the score, the verdict in
+words, and how many seconds of the film it was confirmed on.
+
+It takes a few minutes of real encoding, and it says so before it starts. If the source cannot
+reach the target at any setting — already heavily compressed, or damaged — it says that instead of
+quietly returning the best of a bad set.
+
+### Checking what actually came out
+
+Everything above measures a conversion *before* it happens, and says honestly that it is sampling:
+three eight-second stretches cannot know about the twenty minutes of dark, grainy footage at the
+end of the film. The setting they choose is then applied to the whole film — so the last step is to
+go back and look at what came out.
+
+Before anything is done with the finished file, three stretches of it are compared with the same
+moments of the original, and the **worst** of them is recorded on the job, shown on the dashboard
+and written into Jellyfin's activity feed: "measured SSIM 0.9831 at its worst across 3 points of
+the finished file: very hard to tell apart from the source". The worst rather than the average,
+because an average hides the one scene that fell apart, which is the only thing you wanted to know.
+
+And because it happens while your original is still untouched, it can be a condition rather than a
+report. **Refuse a conversion that measures worse than…** — noticeably softer, slightly softer, or
+very hard to tell apart — fails the job instead of replacing your file, tells you what it measured
+and what you asked for, and leaves the original exactly as it was. It is off by default: turning a
+disappointing conversion into a failed job is the right outcome, but only for somebody who asked
+for it. With a floor set, a conversion that *cannot* be measured is refused too — "we could not
+tell" does not keep the promise the setting makes — and the message says how to fix that or turn
+it off.
+
+A conversion that copied the video stream, or one already verified bit-exact by hash, is not
+measured. It cannot have changed the picture, and comparing a file with itself is a minute spent
+proving arithmetic.
 
 ---
 
@@ -208,7 +338,9 @@ whole-file copy, and putting it back equally instant.
 | **Keep the original** | Writes a new file alongside, or adds it as another version. |
 
 Every replacement is appended to `replacements.log` in the plugin data folder, so there is a
-readable trail independent of the plugin's own history.
+readable trail independent of the plugin's own history, and each finished or failed conversion
+writes a line to **Dashboard → Activity** — what the file went from and to, how much was freed, and
+until when the original can be put back. Both can be switched off in the settings.
 
 ---
 
@@ -294,7 +426,12 @@ The original is not touched until a verified replacement exists on disk.
   Companion files (`.nfo`, artwork, external subtitles) are renamed alongside, and stale scrub
   previews are rebuilt.
 
-Every endpoint that starts, cancels or reverses a conversion requires administrator rights.
+Every endpoint that starts, cancels or reverses a conversion requires administrator rights, and so
+does everything that would reveal where files live on the server, list the queue, or make the
+server read a whole media file. Exactly one endpoint answers without a signed-in user: the client
+script itself, because the `<script>` tag the browser adds carries no credentials. A test asserts
+that surface by reflection, so an endpoint cannot lose its authorisation in a refactor without the
+build failing.
 
 ---
 
@@ -316,7 +453,13 @@ These are properties of Jellyfin and of video compression, not bugs.
   the *decoded pixels*, which carry far more entropy than the bitstream they came from — the result
   is typically 3–20× larger. The plugin refuses this rather than letting you discover it.
 - **Encoding competes with playback.** Jellyfin gives plugins no resource governor. The queue runs
-  one job at a time and pauses while anyone is streaming.
+  one job at a time by default and pauses while anyone is streaming. Raising the limit counts in
+  ordinary jobs rather than in job slots — a 4K encode counts as two, because two of them at once
+  is not twice the work, it is a server that stops answering.
+- **A rule's predicted saving is a model, not a measurement.** It is anchored on the file's own
+  bitrate rather than a generic table, which is why it does not claim that re-encoding a lean HEVC
+  file will shrink it — but it is still a prediction, and that is why a rule's minimum-saving floor
+  exists and why Preview is worth running before switching one on.
 - **It has not been verified inside a live Jellyfin server.** Everything here is built and tested
   against the real 10.11 packages, but plugin loading and the File Transformation handshake are
   verified structurally, not observed running. The status panel is what tells you the truth on
@@ -371,6 +514,15 @@ dotnet publish -c Release
 Copy `Jellyfin.Plugin.MediaOptimizer/bin/Release/net9.0/Jellyfin.Plugin.MediaOptimizer.dll` into a
 `plugins/MediaOptimizer` folder inside your Jellyfin **data** directory (not the install
 directory), then restart.
+
+## How it is reviewed
+
+Each release carries a written self-review: what was checked, what was found, and what was not
+verified. [`docs/self-review-1.5.0.md`](docs/self-review-1.5.0.md) is the current one — four passes
+over the code, including the eight defects the review found in this same release's own new code and
+the three a security pass found in code older than it.
+
+---
 
 ## Development
 

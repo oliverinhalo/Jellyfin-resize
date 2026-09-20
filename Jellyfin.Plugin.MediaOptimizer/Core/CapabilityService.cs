@@ -80,46 +80,85 @@ public partial class CapabilityService : ICapabilityService
     private static readonly TimeSpan FailedProbeRetryAfter = TimeSpan.FromSeconds(30);
 
     private readonly IFfmpegRunner _runner;
-    private readonly IMediaEncoder _mediaEncoder;
-    private readonly IServerConfigurationManager _config;
+    private readonly IServerEncodingContext _server;
     private readonly ILogger<CapabilityService> _logger;
     private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
 
+    /// <summary>
+    /// How long a successful probe is trusted. An ffmpeg replaced in place, at the same path, is
+    /// otherwise invisible until the server restarts -- and the probe is a handful of processes,
+    /// so asking again twice an hour costs nothing worth counting.
+    /// </summary>
+    internal static readonly TimeSpan SuccessfulProbeLifetime = TimeSpan.FromMinutes(30);
+
     private Capabilities? _cached;
+    private DateTime _cachedAt;
     private Capabilities? _lastFailed;
     private DateTime _lastFailedAt;
 
     /// <summary>Initializes a new instance of the <see cref="CapabilityService"/> class.</summary>
     /// <param name="runner">FFmpeg runner.</param>
-    /// <param name="mediaEncoder">Jellyfin media encoder, for its own capability checks.</param>
-    /// <param name="config">Server configuration, for encoding options.</param>
+    /// <param name="server">The server around this plugin: its ffmpeg and its settings.</param>
     /// <param name="logger">Logger.</param>
     public CapabilityService(
         IFfmpegRunner runner,
-        IMediaEncoder mediaEncoder,
-        IServerConfigurationManager config,
+        IServerEncodingContext server,
         ILogger<CapabilityService> logger)
     {
         _runner = runner;
-        _mediaEncoder = mediaEncoder;
-        _config = config;
+        _server = server;
         _logger = logger;
     }
 
     /// <inheritdoc />
     public async Task<Capabilities> GetAsync(CancellationToken cancellationToken)
     {
-        if (_cached is not null)
+        var probed = await ProbedAsync(cancellationToken).ConfigureAwait(false);
+
+        // Every caller gets its own copy. One of them writes to it -- the API stamps "may this
+        // user convert?" onto the answer it is about to send -- and handing the cached instance
+        // out would let one request's answer change another's, which is the same class of bug as
+        // the paused flag that used to be static.
+        var snapshot = probed.Clone();
+
+        // The server's own settings are read here rather than cached with the probe: an
+        // administrator turning HEVC encoding on should not have to restart Jellyfin before this
+        // plugin stops warning that it is off.
+        var settings = _server.GetSettings();
+        snapshot.HardwareAcceleration = settings.HardwareAcceleration;
+        snapshot.VaapiDevice = settings.VaapiDevice;
+        snapshot.AllowHevcEncoding = settings.AllowHevcEncoding;
+        snapshot.AllowAv1Encoding = settings.AllowAv1Encoding;
+
+        return snapshot;
+    }
+
+    /// <summary>
+    /// The cached answer to "what can this ffmpeg do?".
+    /// <para>
+    /// Cached because it costs several processes to work out, and re-probed when the binary it
+    /// describes is not the one Jellyfin is pointing at any more — the case where an
+    /// administrator fixes the path, or an upgrade moves it. An upgrade that replaces the binary
+    /// at the same path is picked up when the cache ages out.
+    /// </para>
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The probe result.</returns>
+    private async Task<Capabilities> ProbedAsync(CancellationToken cancellationToken)
+    {
+        var cached = _cached;
+        if (cached is not null && IsStillCurrent(cached))
         {
-            return _cached;
+            return cached;
         }
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_cached is not null)
+            cached = _cached;
+            if (cached is not null && IsStillCurrent(cached))
             {
-                return _cached;
+                return cached;
             }
 
             if (_lastFailed is not null && DateTime.UtcNow - _lastFailedAt < FailedProbeRetryAfter)
@@ -135,6 +174,7 @@ public partial class CapabilityService : ICapabilityService
             if (probed.VideoEncoders.Count > 0)
             {
                 _cached = probed;
+                _cachedAt = DateTime.UtcNow;
                 _lastFailed = null;
                 return probed;
             }
@@ -147,6 +187,31 @@ public partial class CapabilityService : ICapabilityService
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>Whether a cached probe still describes the ffmpeg this server is using.</summary>
+    /// <param name="cached">The cached probe.</param>
+    /// <returns>Whether it may be reused.</returns>
+    private bool IsStillCurrent(Capabilities cached)
+    {
+        if (DateTime.UtcNow - _cachedAt > SuccessfulProbeLifetime)
+        {
+            return false;
+        }
+
+        string? current;
+        try
+        {
+            current = _runner.FfmpegPath;
+        }
+#pragma warning disable CA1031 // An unreadable path is a reason to re-probe, not to throw.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return false;
+        }
+
+        return string.Equals(cached.FfmpegPath, current, StringComparison.Ordinal);
     }
 
     /// <inheritdoc />
@@ -219,7 +284,7 @@ public partial class CapabilityService : ICapabilityService
 
         try
         {
-            caps.FfmpegVersion = _mediaEncoder.EncoderVersion?.ToString();
+            caps.FfmpegVersion = _server.EncoderVersion;
         }
         catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
         {
@@ -311,29 +376,11 @@ public partial class CapabilityService : ICapabilityService
         caps.VideoEncoders = video;
         caps.AudioEncoders = audio;
         caps.Containers = ["mkv", "mp4"];
+        caps.QualityMetric = await DetectQualityMetricAsync(ffmpegPath, cancellationToken).ConfigureAwait(false);
         caps.ProbeError = video.Count == 0
             ? probeError ?? FormattableString.Invariant(
                 $"FFmpeg at {ffmpegPath} was reachable but reported none of the encoders this plugin can use.")
             : null;
-
-        try
-        {
-            var encoding = _config.GetEncodingOptions();
-            caps.HardwareAcceleration = encoding.HardwareAccelerationType.ToString();
-            caps.VaapiDevice = encoding.VaapiDevice;
-            caps.AllowHevcEncoding = encoding.AllowHevcEncoding;
-            caps.AllowAv1Encoding = encoding.AllowAv1Encoding;
-        }
-#pragma warning disable CA1031 // Server settings we cannot read must not take the codec list with them.
-        catch (Exception ex)
-#pragma warning restore CA1031
-        {
-            // A server whose encoding options moved or could not be read still has a usable
-            // ffmpeg. Assume the codecs are permitted rather than hiding them all.
-            _logger.LogWarning(ex, "[MediaOptimizer] Could not read the server's encoding options");
-            caps.AllowHevcEncoding = true;
-            caps.AllowAv1Encoding = true;
-        }
 
         _logger.LogInformation(
             "[MediaOptimizer] ffmpeg at {Path}: {VideoCount} video encoders, {AudioCount} audio encoders",
@@ -342,6 +389,49 @@ public partial class CapabilityService : ICapabilityService
             audio.Count);
 
         return caps;
+    }
+
+    /// <summary>
+    /// Finds the best quality metric this build can measure. VMAF is a model trained on what
+    /// people actually said about video, which is the question being asked; SSIM is a structural
+    /// comparison that correlates less well but is present in every build.
+    /// </summary>
+    /// <param name="ffmpegPath">Path to the ffmpeg binary.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>"VMAF", "SSIM", or null.</returns>
+    private async Task<string?> DetectQualityMetricAsync(string? ffmpegPath, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ffmpegPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await _runner
+                .RunAsync(ffmpegPath, ["-hide_banner", "-filters"], cancellationToken)
+                .ConfigureAwait(false);
+
+            var text = result.StandardOutput + "\n" + result.StandardError;
+
+            if (text.Contains(" libvmaf ", StringComparison.Ordinal))
+            {
+                return QualityProbe.Vmaf;
+            }
+
+            return text.Contains(" ssim ", StringComparison.Ordinal) ? QualityProbe.Ssim : null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // Not knowing simply means no quality number is offered.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogDebug(ex, "[MediaOptimizer] Could not list ffmpeg filters");
+            return null;
+        }
     }
 
     private List<EncoderOption> BuildVideoOptions(HashSet<string> available)
@@ -453,16 +543,5 @@ public partial class CapabilityService : ICapabilityService
         return Array.Empty<string>();
     }
 
-    private bool SupportsViaJellyfin(string encoder)
-    {
-        try
-        {
-            return _mediaEncoder.SupportsEncoder(encoder);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
-        {
-            _logger.LogDebug(ex, "[MediaOptimizer] SupportsEncoder({Encoder}) failed", encoder);
-            return false;
-        }
-    }
+    private bool SupportsViaJellyfin(string encoder) => _server.SupportsEncoder(encoder);
 }

@@ -70,7 +70,7 @@ const check = (cond, msg) => {
 
 const browser = await launchChromium();
 
-async function open(analysis, width) {
+async function open(analysis, width, estimateOverride) {
   const context = await browser.newContext({ viewport: { width, height: 900 } });
   const page = await context.newPage();
   const errors = [];
@@ -97,7 +97,7 @@ async function open(analysis, width) {
         return Promise.resolve('{}');
       }
     };
-  }, { analysis, caps: CAPS, estimate: ESTIMATE });
+  }, { analysis, caps: CAPS, estimate: estimateOverride || ESTIMATE });
 
   await page.addScriptTag({ content: bundle });
   await page.waitForFunction(() => window.MediaOptimizer && window.MediaOptimizer.ready, { timeout: 5000 });
@@ -132,7 +132,10 @@ async function open(analysis, width) {
       startDisabled: start ? start.disabled : null,
       clipped,
       overflows: dialog ? dialog.scrollWidth > dialog.clientWidth + 1 : false,
-      kv: Array.from(root.querySelectorAll('.mopt-kv dd')).map(d => d.textContent)
+      kv: Array.from(root.querySelectorAll('.mopt-kv dd')).map(d => d.textContent),
+      estimateSub: (root.querySelector('.mopt-estimate-sub') || {}).textContent,
+      paneText: (root.querySelectorAll('.mopt-pane')[1] || {}).textContent,
+      buttons: Array.from(root.querySelectorAll('.mopt-foot button')).map(b => b.textContent).join(' | ')
     };
   });
   result.pageErrors = errors;
@@ -166,6 +169,188 @@ for (const width of [412, 360]) {
   check(r.clipped.length === 0,
     `${width}px: no dropdown truncates its own label${r.clipped.length ? ' (got: ' + r.clipped.join(', ') + ')' : ''}`);
   check(r.overflows === false, `${width}px: the dialog does not scroll sideways`);
+}
+
+// --- a file that is already converting --------------------------------------------------------
+// Opening the dialog on one used to show the form, offer "Start conversion", and have the server
+// refuse it. The job that is running right now is a better answer than that.
+console.log('\n=== a file that is already converting ===');
+{
+  const converting = JSON.parse(JSON.stringify(RECOVERED));
+  converting.HasActiveJob = true;
+  converting.ActiveJobId = 'job-1';
+
+  const r = await open(converting, 1280);
+
+  check(r.pageErrors.length === 0, `no page errors${r.pageErrors.length ? ': ' + r.pageErrors[0] : ''}`);
+  check(/Conversion queued|Encoding/.test(r.paneText || ''),
+    `the dialog shows the conversion rather than the form (${(r.paneText || '').slice(0, 60)})`);
+  check(!r.hasStart, 'and does not offer to start a second one');
+  check(/Cancel conversion/.test(r.buttons || ''), 'it offers to cancel the one that is running');
+}
+
+// --- every number says what kind of number it is ----------------------------------------------
+// A figure with no label reads as a fact. The weakest estimate here is a guess made without the
+// file's own bitrate, and the dialog used to show it exactly as confidently as a measurement.
+console.log('\n=== a weak estimate says so ===');
+{
+  const rough = await open(RECOVERED, 1280, {
+    CurrentSizeBytes: 24374173696, EstimatedSizeBytes: 12000000000,
+    EstimatedSizeLowBytes: 9000000000, EstimatedSizeHighBytes: 15000000000,
+    SavingFraction: 0.5, Method: 'heuristic', Confidence: 'Low',
+    EstimatedSeconds: null, TimeBasis: 'unmeasured', IsLossless: false, SavingNote: null, Warnings: []
+  });
+
+  check(rough.pageErrors.length === 0,
+    `no page errors${rough.pageErrors.length ? ': ' + rough.pageErrors[0] : ''}`);
+  check(/rough guess/.test(rough.estimateSub || ''),
+    `a guess is labelled a guess (got: ${rough.estimateSub})`);
+  check(!/estimate \d/.test(rough.estimateSub || ''),
+    'and it does not also claim a range it cannot support');
+
+  const none = await open(RECOVERED, 1280, {
+    CurrentSizeBytes: 0, EstimatedSizeBytes: 0, EstimatedSizeLowBytes: 0, EstimatedSizeHighBytes: 0,
+    SavingFraction: 0, Method: 'heuristic', Confidence: 'Unknown',
+    EstimatedSeconds: null, TimeBasis: 'unmeasured', IsLossless: false, SavingNote: null, Warnings: []
+  });
+
+  check(/no estimate/.test(none.estimateSub || ''),
+    `a file nothing can be predicted from says that too (got: ${none.estimateSub})`);
+}
+
+// --- the progress view when the server stops answering ----------------------------------------
+// A bar that has stopped moving reads as an encode that is still going, and a Cancel button that
+// goes grey reads as a cancel that worked. Both were silent.
+console.log('\n=== the progress view when the server stops answering ===');
+{
+  const converting = JSON.parse(JSON.stringify(RECOVERED));
+  converting.HasActiveJob = true;
+  converting.ActiveJobId = 'job-1';
+
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.setContent('<!doctype html><html><head></head><body></body></html>');
+
+  await page.evaluate(({ analysis, caps }) => {
+    window.__failPoll = false;
+    window.__failCancel = false;
+    window.ApiClient = {
+      getUrl: p => '/' + p, deviceId: () => 'dev', serverInfo: () => ({ Id: 's' }),
+      ajax: opts => {
+        const u = opts.url;
+        if (u.includes('Analyze')) { return Promise.resolve(JSON.stringify(analysis)); }
+        if (u.includes('Capabilities')) { return Promise.resolve(JSON.stringify(caps)); }
+        if (u.includes('Jobs/job-1')) {
+          if (opts.type === 'DELETE') {
+            return window.__failCancel
+              ? Promise.reject({ status: 409, statusText: 'Conflict' })
+              : Promise.resolve('{}');
+          }
+
+          if (window.__failPoll) {
+            return Promise.reject({ status: 502, statusText: 'Bad Gateway' });
+          }
+
+          return Promise.resolve(JSON.stringify(window.__finished
+            ? {
+              Id: 'job-1', ItemName: 'Kung Fu Panda 4', Status: 'Completed',
+              ProgressPercent: 100, SourceSizeBytes: 24374173696, OutputSizeBytes: 9000000000,
+              QualityMetric: 'SSIM', QualityScore: 0.9831,
+              QualityNote: 'measured SSIM 0.9831 at its worst across 3 point(s) of the finished '
+                + 'file: very hard to tell apart from the source'
+            }
+            : {
+              Id: 'job-1', ItemName: 'Kung Fu Panda 4', Status: 'Encoding',
+              ProgressPercent: 43, Speed: 1.8, EtaSeconds: 1800
+            }));
+        }
+
+        return Promise.resolve('{}');
+      }
+    };
+  }, { analysis: converting, caps: CAPS });
+
+  await page.addScriptTag({ content: bundle });
+  await page.waitForFunction(() => window.MediaOptimizer && window.MediaOptimizer.ready, { timeout: 5000 });
+  await page.evaluate(id => window.MediaOptimizer.open(id), ITEM);
+  await page.waitForTimeout(900);
+
+  const running = await page.evaluate(() => {
+    const root = window.MediaOptimizer.shadowRoot();
+    const bar = root.querySelector('.mopt-bar i') || root.querySelector('.mopt-bar > *');
+    const shown = Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+      .filter(n => n.style.display !== 'none');
+    return {
+      progress: bar ? bar.style.width : null,
+      blockers: shown.map(n => n.textContent)
+    };
+  });
+
+  check(/43/.test(running.progress || ''), `the bar shows the progress it was given (${running.progress})`);
+  check(running.blockers.length === 0, 'and says nothing is wrong while the polls are answered');
+
+  // Four ticks at 1.5s, so three consecutive failures have certainly happened.
+  const lost = await page.evaluate(async () => {
+    window.__failPoll = true;
+    await new Promise(r => setTimeout(r, 5200));
+    const root = window.MediaOptimizer.shadowRoot();
+    return Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+      .filter(n => n.style.display !== 'none').map(n => n.textContent).join(' ');
+  });
+
+  check(/cannot reach the server/.test(lost),
+    `a progress view that has lost contact says so (${lost.slice(0, 70)})`);
+  check(/unaffected/.test(lost), 'and says the conversion itself is unaffected');
+  check(/Bad Gateway/.test(lost), 'and quotes what went wrong');
+
+  // And it goes away again when the server comes back, rather than becoming furniture.
+  const recovered = await page.evaluate(async () => {
+    window.__failPoll = false;
+    await new Promise(r => setTimeout(r, 2000));
+    const root = window.MediaOptimizer.shadowRoot();
+    return Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+      .filter(n => n.style.display !== 'none').length;
+  });
+
+  check(recovered === 0, `and takes it back when the server answers again (${recovered} left)`);
+
+  const refused = await page.evaluate(async () => {
+    window.__failCancel = true;
+    const root = window.MediaOptimizer.shadowRoot();
+    const button = Array.from(root.querySelectorAll('.mopt-foot button'))
+      .find(b => /Cancel conversion/.test(b.textContent));
+    button.click();
+    await new Promise(r => setTimeout(r, 400));
+    return {
+      disabled: button.disabled,
+      text: Array.from(root.querySelectorAll('.mopt-warn-blocker'))
+        .filter(n => n.style.display !== 'none').map(n => n.textContent).join(' ')
+    };
+  });
+
+  check(/Could not cancel/.test(refused.text),
+    `a cancel the server refuses says so (${refused.text.slice(0, 70)})`);
+  check(/still running/.test(refused.text), 'and that the conversion is still running');
+  check(refused.disabled === false, 'and the button can be pressed again');
+  check(errors.length === 0, `no page errors${errors.length ? ': ' + errors[0] : ''}`);
+
+  // And when it finishes: what it came out looking like, measured against the original rather
+  // than predicted from samples — the only figure in this dialog that is not a forecast.
+  const finished = await page.evaluate(async () => {
+    window.__finished = true;
+    await new Promise(r => setTimeout(r, 2000));
+    const root = window.MediaOptimizer.shadowRoot();
+    return Array.from(root.querySelectorAll('.mopt-sub'))
+      .map(n => n.textContent).join(' | ');
+  });
+
+  check(/SSIM 0\.9831/.test(finished),
+    `a finished conversion reports its measured quality (${finished.slice(-90)})`);
+  check(/very hard to tell apart/.test(finished), 'and says what the number means');
+
+  await context.close();
 }
 
 await browser.close();

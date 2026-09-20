@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Jobs;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Enums;
@@ -36,7 +37,11 @@ public class MediaOptimizerController : ControllerBase
     private readonly ICapabilityService _capabilities;
     private readonly IEncodePlanner _planner;
     private readonly ISizeEstimator _estimator;
+    private readonly ISampleEncoder _sampler;
+    private readonly IQualitySearch _qualitySearch;
+    private readonly IOperationRegistry _operations;
     private readonly IJobStore _store;
+    private readonly IMoveJobStore _moves;
     private readonly IJobQueueService _queue;
     private readonly IOutputPolicyService _output;
     private readonly ILibraryManager _libraryManager;
@@ -50,7 +55,11 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="capabilities">Capability service.</param>
     /// <param name="planner">Encode planner.</param>
     /// <param name="estimator">Size estimator.</param>
+    /// <param name="sampler">Sample encoder, for a measured estimate.</param>
+    /// <param name="qualitySearch">Quality search, for finding a setting by measuring.</param>
+    /// <param name="operations">Registry of work that outlives the request that started it.</param>
     /// <param name="store">Job store.</param>
+    /// <param name="moves">Move queue, so a file about to change drive is not converted first.</param>
     /// <param name="queue">Job queue.</param>
     /// <param name="output">Output policy service.</param>
     /// <param name="libraryManager">Library manager.</param>
@@ -63,7 +72,11 @@ public class MediaOptimizerController : ControllerBase
         ICapabilityService capabilities,
         IEncodePlanner planner,
         ISizeEstimator estimator,
+        ISampleEncoder sampler,
+        IQualitySearch qualitySearch,
+        IOperationRegistry operations,
         IJobStore store,
+        IMoveJobStore moves,
         IJobQueueService queue,
         IOutputPolicyService output,
         ILibraryManager libraryManager,
@@ -76,7 +89,11 @@ public class MediaOptimizerController : ControllerBase
         _capabilities = capabilities;
         _planner = planner;
         _estimator = estimator;
+        _sampler = sampler;
+        _qualitySearch = qualitySearch;
+        _operations = operations;
         _store = store;
+        _moves = moves;
         _queue = queue;
         _output = output;
         _libraryManager = libraryManager;
@@ -87,6 +104,14 @@ public class MediaOptimizerController : ControllerBase
     }
 
     private bool IsAdmin => User.IsInRole("Administrator");
+
+    /// <summary>
+    /// Whether the caller may inspect files. Every endpoint that probes a file honours this, not
+    /// just the one named "Analyze": resolving a strategy and estimating a conversion both run
+    /// ffprobe over the same file and return the same information about it, so gating one and not
+    /// the others was a setting that did not do what it said.
+    /// </summary>
+    private bool MayAnalyze => IsAdmin || (Plugin.Instance?.Configuration.AllowNonAdminAnalysis ?? true);
 
     /// <summary>
     /// Lists convertible library items with sorting and filtering, so a conversion can be started
@@ -104,6 +129,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Matching items.</returns>
     [HttpGet("Library/Search")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<LibraryItemSummary>>> SearchLibrary(
         [FromQuery] string? query,
@@ -196,6 +222,7 @@ public class MediaOptimizerController : ControllerBase
             LibrarySort.ResolutionDescending => results.OrderByDescending(r => r.Height ?? 0).ThenByDescending(r => r.SizeBytes ?? 0),
             LibrarySort.DateAdded => results,
             LibrarySort.BitrateDescending => results.OrderByDescending(r => r.BitrateBps ?? 0),
+            LibrarySort.SavingDescending => results.OrderByDescending(r => r.PotentialSavingBytes ?? 0),
             _ => results.OrderByDescending(r => r.SizeBytes ?? 0)
         };
 
@@ -208,6 +235,7 @@ public class MediaOptimizerController : ControllerBase
     /// </summary>
     /// <returns>Available filter values.</returns>
     [HttpGet("Library/Facets")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<object> GetFacets()
     {
@@ -243,7 +271,30 @@ public class MediaOptimizerController : ControllerBase
             }
         }
 
-        return Ok(new { containers = containers.ToList(), codecs = codecs.ToList() });
+        // The libraries come from the server rather than from the items, so a rule can be confined
+        // to one that happens to be empty today.
+        var libraries = new List<string>();
+        try
+        {
+            libraries = _libraryManager.GetVirtualFolders()
+                .Select(f => f.Name)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+#pragma warning disable CA1031 // A filter list is not worth failing the page over.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not list the server's libraries");
+        }
+
+        return Ok(new
+        {
+            containers = containers.ToList(),
+            codecs = codecs.ToList(),
+            libraries
+        });
     }
 
     /// <summary>
@@ -262,6 +313,11 @@ public class MediaOptimizerController : ControllerBase
         [FromQuery] OptimizationStrategy strategy,
         CancellationToken cancellationToken)
     {
+        if (!MayAnalyze)
+        {
+            return Forbid();
+        }
+
         var analysis = await _probe.AnalyzeAsync(itemId, cancellationToken).ConfigureAwait(false);
         if (analysis is null)
         {
@@ -322,6 +378,13 @@ public class MediaOptimizerController : ControllerBase
                 continue;
             }
 
+            if (_moves.HasActiveJobForItem(itemId))
+            {
+                outcome.SkippedReason = "Queued to move to another drive.";
+                items.Add(outcome);
+                continue;
+            }
+
             // A batch-level language choice overrides the plugin default for this run only.
             var effectiveConfig = config;
             if (request.KeepAudioLanguages is not null || request.KeepSubtitleLanguages is not null)
@@ -373,6 +436,7 @@ public class MediaOptimizerController : ControllerBase
                 ItemName = analysis.Name,
                 SourcePath = analysis.Path,
                 SourceSizeBytes = analysis.SizeBytes,
+                SourceHeight = analysis.Video?.Height,
                 Request = encodeRequest,
                 OutputPolicy = encodeRequest.OutputPolicy,
                 Warnings = plan.Warnings,
@@ -416,33 +480,10 @@ public class MediaOptimizerController : ControllerBase
         string? audio,
         string? subtitles)
     {
-        return new Configuration.PluginConfiguration
-        {
-            Injection = source.Injection,
-            DefaultOutputPolicy = source.DefaultOutputPolicy,
-            DefaultContainer = source.DefaultContainer,
-            SidecarDirectory = source.SidecarDirectory,
-            TempDirectory = source.TempDirectory,
-            QuarantineDirectory = source.QuarantineDirectory,
-            QuarantineRetentionDays = source.QuarantineRetentionDays,
-            MaxConcurrentJobs = source.MaxConcurrentJobs,
-            PauseWhilePlaybackActive = source.PauseWhilePlaybackActive,
-            LowProcessPriority = source.LowProcessPriority,
-            EncodingThreadCount = source.EncodingThreadCount,
-            FileStabilitySeconds = source.FileStabilitySeconds,
-            DeepVerifyBeforeReplace = source.DeepVerifyBeforeReplace,
-            FreeSpaceSafetyFactor = source.FreeSpaceSafetyFactor,
-            AllowNonAdminAnalysis = source.AllowNonAdminAnalysis,
-            JobHistoryLimit = source.JobHistoryLimit,
-            KeepAudioLanguages = audio ?? source.KeepAudioLanguages,
-            KeepSubtitleLanguages = subtitles ?? source.KeepSubtitleLanguages,
-            KeepUntaggedTracks = source.KeepUntaggedTracks,
-            DropCommentaryTracks = source.DropCommentaryTracks,
-            Speed = source.Speed,
-            PreferHardwareEncoding = source.PreferHardwareEncoding,
-            ResumeJobsAfterRestart = source.ResumeJobsAfterRestart,
-            RegenerateTrickplayAfterReplace = source.RegenerateTrickplayAfterReplace
-        };
+        var copy = source.Clone();
+        copy.KeepAudioLanguages = audio ?? source.KeepAudioLanguages;
+        copy.KeepSubtitleLanguages = subtitles ?? source.KeepSubtitleLanguages;
+        return copy;
     }
 
     private async Task<Jellyfin.Database.Implementations.Entities.User?> GetCallingUserAsync()
@@ -482,6 +523,9 @@ public class MediaOptimizerController : ControllerBase
             }
         }
 
+        var size = TryGetSize(item.Path);
+        var forecast = SavingForecast.For(size, video?.Height, video?.Codec);
+
         return new LibraryItemSummary
         {
             Id = item.Id,
@@ -489,14 +533,16 @@ public class MediaOptimizerController : ControllerBase
             Type = item.GetType().Name,
             Path = item.Path,
             Container = System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant(),
-            SizeBytes = TryGetSize(item.Path),
+            SizeBytes = size,
             RunTimeTicks = item.RunTimeTicks,
             Width = video?.Width,
             Height = video?.Height,
             VideoCodec = video?.Codec,
             BitrateBps = video?.BitRate,
             IsWatched = watched,
-            HasActiveJob = _store.HasActiveJobForItem(item.Id)
+            HasActiveJob = _store.HasActiveJobForItem(item.Id),
+            PotentialSavingBytes = forecast.SavingBytes,
+            SavingBasis = forecast.SavingBytes is null ? null : forecast.Basis
         };
     }
 
@@ -554,7 +600,7 @@ public class MediaOptimizerController : ControllerBase
         [FromRoute] Guid itemId,
         CancellationToken cancellationToken)
     {
-        if (!IsAdmin && !(Plugin.Instance?.Configuration.AllowNonAdminAnalysis ?? true))
+        if (!MayAnalyze)
         {
             return Forbid();
         }
@@ -566,6 +612,7 @@ public class MediaOptimizerController : ControllerBase
         }
 
         analysis.HasActiveJob = _store.HasActiveJobForItem(itemId);
+        analysis.ActiveJobId = _store.GetActive().FirstOrDefault(j => j.ItemId == itemId)?.Id;
 
         var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
         analysis.RecommendedStrategy = StrategyResolver.Recommend(analysis, caps).ToString();
@@ -578,7 +625,56 @@ public class MediaOptimizerController : ControllerBase
                 $"This item was already optimised by this plugin on {previous.FinishedAt:yyyy-MM-dd}. Re-encoding an encode compounds quality loss.");
         }
 
+        if (!IsAdmin)
+        {
+            RedactServerPaths(analysis);
+        }
+
         return Ok(analysis);
+    }
+
+    /// <summary>
+    /// Strips the server's filesystem out of an analysis, leaving the file name.
+    /// <para>
+    /// This is the one thing a non-administrator can open, and every other read on this controller
+    /// is administrator-only precisely so that being able to browse a library does not become
+    /// being able to enumerate where every file lives. The dialog only ever displays the path, and
+    /// the name is the part of it that means anything to someone who cannot reach the disk. The
+    /// two error fields are scrubbed as well, because ffprobe quotes the path it was given.
+    /// </para>
+    /// </summary>
+    /// <param name="analysis">The analysis, edited in place.</param>
+    internal static void RedactServerPaths(FileAnalysis analysis)
+    {
+        ArgumentNullException.ThrowIfNull(analysis);
+
+        var full = analysis.Path;
+        if (string.IsNullOrEmpty(full))
+        {
+            return;
+        }
+
+        var name = System.IO.Path.GetFileName(full);
+        var directory = System.IO.Path.GetDirectoryName(full);
+
+        analysis.Path = name;
+        analysis.IneligibleReason = Scrub(analysis.IneligibleReason);
+        analysis.StreamInfoError = Scrub(analysis.StreamInfoError);
+
+        string? Scrub(string? text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            // The full path first: replacing the directory alone would leave a bare file name
+            // glued to whatever followed it.
+            var cleaned = text.Replace(full, name, StringComparison.Ordinal);
+            return string.IsNullOrEmpty(directory)
+                ? cleaned
+                : cleaned.Replace(directory, "\u2026", StringComparison.Ordinal);
+        }
     }
 
     /// <summary>Reports what this server's ffmpeg can actually do.</summary>
@@ -604,6 +700,11 @@ public class MediaOptimizerController : ControllerBase
         [FromBody] EncodeRequest request,
         CancellationToken cancellationToken)
     {
+        if (!MayAnalyze)
+        {
+            return Forbid();
+        }
+
         var analysis = await _probe.AnalyzeAsync(request.ItemId, cancellationToken).ConfigureAwait(false);
         if (analysis is null)
         {
@@ -618,11 +719,175 @@ public class MediaOptimizerController : ControllerBase
         return Ok(_estimator.Estimate(analysis, request, plan));
     }
 
+    /// <summary>
+    /// Measures the outcome by actually encoding a few short stretches of the file with these
+    /// settings, rather than modelling it.
+    /// <para>
+    /// This costs a minute or so of real encoding, which is why it is a separate request the user
+    /// asks for. It is the only number this plugin can offer that is a measurement rather than a
+    /// prediction, so the answer it gives is labelled as such — including how far apart the
+    /// samples were, which is the part a single averaged number would hide.
+    /// </para>
+    /// </summary>
+    /// <para>
+    /// It answers with an id rather than the measurement: a minute of encoding is longer than the
+    /// sixty-second read timeout in front of most Jellyfin servers, and a request that dies in a
+    /// proxy looks exactly like a broken feature. Ask
+    /// <see cref="GetOperation"/> how it is going.
+    /// </para>
+    /// <param name="request">The proposed settings.</param>
+    /// <param name="cancellationToken">Cancellation token for starting it, not for the work.</param>
+    /// <returns>The id of the measurement now running.</returns>
+    [HttpPost("Estimate/Sample")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<OperationHandle>> SampleEstimate(
+        [FromBody] EncodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var analysis = await _probe.AnalyzeAsync(request.ItemId, cancellationToken).ConfigureAwait(false);
+        if (analysis is null)
+        {
+            return NotFound();
+        }
+
+        var id = _operations.Start("measure", token => MeasureAsync(analysis, request, token));
+        return Accepted(new OperationHandle { Id = id });
+    }
+
+    /// <summary>Does the measuring, once the request that asked for it has already answered.</summary>
+    /// <param name="analysis">The source analysis.</param>
+    /// <param name="request">The proposed settings.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The measured estimate, or the modelled one when nothing could be sampled.</returns>
+    private async Task<object> MeasureAsync(
+        FileAnalysis analysis,
+        EncodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var workDirectory = _output.GetWorkDirectoryFor(analysis.Path);
+
+        // The samples are written with the same naming rules as a real working file -- leading
+        // dot, .motmp suffix -- so the library scanner never sees one even if a delete is missed.
+        var plan = await _planner
+            .PlanAsync(analysis, request, System.IO.Path.Combine(workDirectory, "sample.motmp"), cancellationToken)
+            .ConfigureAwait(false);
+
+        var modelled = _estimator.Estimate(analysis, request, plan);
+        if (!plan.IsRunnable)
+        {
+            return modelled;
+        }
+
+        // The comparison rides along with the sample encodes that are happening anyway, so the
+        // quality number costs a fraction of what it would to measure on its own.
+        var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+        var metric = (Plugin.Instance?.Configuration.MeasureQualityWhenSampling ?? true)
+            ? caps.QualityMetric
+            : null;
+
+        var measurement = await _sampler
+            .MeasureAsync(analysis, plan, workDirectory, metric, 0, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!measurement.Succeeded)
+        {
+            modelled.MeasurementNote = measurement.FailureReason;
+            return modelled;
+        }
+
+        return SizeEstimator.FromMeasurement(analysis, measurement, modelled);
+    }
+
+    /// <summary>
+    /// Finds the smallest file that still looks as close to the source as asked for.
+    /// <para>
+    /// The one question this plugin could never answer was "what quality number should I use?", and
+    /// the honest answer was always "it depends on the file". It still does — but the file can now
+    /// be measured, so the question can be turned round: say how close to the source it has to
+    /// look, and the server encodes short stretches at several settings until it finds the smallest
+    /// one that holds. It costs real encoding time, which is why it is a button rather than
+    /// something that happens on its own.
+    /// </para>
+    /// </summary>
+    /// <para>
+    /// Like the measurement, it answers with an id and gets on with it: this one runs for several
+    /// minutes, which no HTTP request between a browser and a Jellyfin server should be asked to
+    /// survive.
+    /// </para>
+    /// <param name="request">The settings to search within. Its quality is what moves.</param>
+    /// <param name="target">How close to the source the result has to look.</param>
+    /// <param name="cancellationToken">Cancellation token for starting it, not for the work.</param>
+    /// <returns>The id of the search now running.</returns>
+    [HttpPost("Estimate/FindQuality")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<OperationHandle>> FindQuality(
+        [FromBody] EncodeRequest request,
+        [FromQuery] QualityTarget target,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var analysis = await _probe.AnalyzeAsync(request.ItemId, cancellationToken).ConfigureAwait(false);
+        if (analysis is null)
+        {
+            return NotFound();
+        }
+
+        var caps = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+        var workDirectory = _output.GetWorkDirectoryFor(analysis.Path);
+
+        var id = _operations.Start("search", async token => await _qualitySearch
+            .SearchAsync(analysis, request, target, caps.QualityMetric, workDirectory, token)
+            .ConfigureAwait(false));
+
+        return Accepted(new OperationHandle { Id = id });
+    }
+
+    /// <summary>
+    /// Reports how a measurement or a search is going, and hands over its answer when it has one.
+    /// </summary>
+    /// <param name="id">The operation id.</param>
+    /// <returns>Its state, or 404 once it has been forgotten.</returns>
+    [HttpGet("Operations/{id}")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public ActionResult<OperationState> GetOperation([FromRoute] Guid id)
+    {
+        var state = _operations.Get(id);
+        return state is null ? NotFound() : Ok(state);
+    }
+
+    /// <summary>
+    /// Stops a measurement or a search.
+    /// <para>
+    /// This is what closing the dialog does. Without it, walking away from a five-minute search
+    /// would leave the server encoding for five minutes with nobody left to tell.
+    /// </para>
+    /// </summary>
+    /// <param name="id">The operation id.</param>
+    /// <returns>No content, whether or not there was anything still running.</returns>
+    [HttpDelete("Operations/{id}")]
+    [Authorize(Policy = "RequiresElevation")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public ActionResult CancelOperation([FromRoute] Guid id)
+    {
+        _operations.Cancel(id);
+        return NoContent();
+    }
+
     /// <summary>Measures a stream's exact bitrate. Reads the whole file, so it is opt-in.</summary>
     /// <param name="itemId">The library item.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The measured video bitrate.</returns>
     [HttpGet("MeasureBitrate/{itemId}")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<BitrateInfo>> MeasureBitrate(
@@ -649,6 +914,7 @@ public class MediaOptimizerController : ControllerBase
     /// <summary>Lists the queue and recent history.</summary>
     /// <returns>All known jobs, newest first.</returns>
     [HttpGet("Jobs")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public ActionResult<IReadOnlyList<EncodeJob>> GetJobs() => Ok(_store.GetAll());
 
@@ -656,6 +922,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="id">Job id.</param>
     /// <returns>The job.</returns>
     [HttpGet("Jobs/{id}")]
+    [Authorize(Policy = "RequiresElevation")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public ActionResult<EncodeJob> GetJob([FromRoute] Guid id)
@@ -693,6 +960,11 @@ public class MediaOptimizerController : ControllerBase
             return BadRequest(new { error = "This item already has a conversion queued or running." });
         }
 
+        if (_moves.HasActiveJobForItem(request.ItemId))
+        {
+            return BadRequest(new { error = "This file is queued to move to another drive. Convert it once the move has finished." });
+        }
+
         // Validate before queueing so blockers surface immediately rather than on a worker
         // thread minutes later.
         var plan = await _planner
@@ -711,6 +983,7 @@ public class MediaOptimizerController : ControllerBase
             ItemName = analysis.Name,
             SourcePath = analysis.Path,
             SourceSizeBytes = analysis.SizeBytes,
+            SourceHeight = analysis.Video?.Height,
             Request = request,
             OutputPolicy = request.OutputPolicy,
             Warnings = plan.Warnings,
@@ -824,11 +1097,18 @@ public class MediaOptimizerController : ControllerBase
             return BadRequest(new { error = "This item already has a conversion queued or running." });
         }
 
+        if (_moves.HasActiveJobForItem(original.ItemId))
+        {
+            return BadRequest(new { error = "This file is queued to move to another drive. Convert it once the move has finished." });
+        }
+
         var job = new EncodeJob
         {
             ItemId = original.ItemId,
             ItemName = original.ItemName,
             SourcePath = original.SourcePath,
+            SourceSizeBytes = original.SourceSizeBytes,
+            SourceHeight = original.SourceHeight,
             Request = original.Request,
             OutputPolicy = original.OutputPolicy
         };

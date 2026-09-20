@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.MediaOptimizer.Configuration;
 using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Models;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Jellyfin.Plugin.MediaOptimizer.Output;
 using MediaBrowser.Controller.Session;
 using Microsoft.Extensions.Hosting;
@@ -31,12 +32,16 @@ public class JobQueueService : BackgroundService, IJobQueueService
     private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(5);
 
     private readonly IJobStore _store;
+    private readonly IMoveJobStore _moves;
     private readonly IMediaProbeService _probe;
     private readonly IEncodePlanner _planner;
     private readonly ISizeEstimator _estimator;
     private readonly IFfmpegRunner _runner;
     private readonly IVerificationService _verifier;
+    private readonly IOutputQualityService _quality;
+    private readonly ICapabilityService _capabilities;
     private readonly IOutputPolicyService _output;
+    private readonly IJobNotifier _notifier;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<JobQueueService> _logger;
 
@@ -44,32 +49,44 @@ public class JobQueueService : BackgroundService, IJobQueueService
 
     /// <summary>Initializes a new instance of the <see cref="JobQueueService"/> class.</summary>
     /// <param name="store">Job store.</param>
+    /// <param name="moves">Move queue, so a file about to change drive is not encoded first.</param>
     /// <param name="probe">Probe service.</param>
     /// <param name="planner">Encode planner.</param>
     /// <param name="estimator">Size estimator.</param>
     /// <param name="runner">FFmpeg runner.</param>
     /// <param name="verifier">Verification service.</param>
+    /// <param name="quality">Measures the finished file against the original.</param>
+    /// <param name="capabilities">Capability service, for which quality metric this FFmpeg has.</param>
     /// <param name="output">Output policy service.</param>
+    /// <param name="notifier">Writes finished jobs to Jellyfin's activity feed.</param>
     /// <param name="sessionManager">Session manager, for playback-aware pausing.</param>
     /// <param name="logger">Logger.</param>
     public JobQueueService(
         IJobStore store,
+        IMoveJobStore moves,
         IMediaProbeService probe,
         IEncodePlanner planner,
         ISizeEstimator estimator,
         IFfmpegRunner runner,
         IVerificationService verifier,
+        IOutputQualityService quality,
+        ICapabilityService capabilities,
         IOutputPolicyService output,
+        IJobNotifier notifier,
         ISessionManager sessionManager,
         ILogger<JobQueueService> logger)
     {
         _store = store;
+        _moves = moves;
         _probe = probe;
         _planner = planner;
         _estimator = estimator;
         _runner = runner;
         _verifier = verifier;
+        _quality = quality;
+        _capabilities = capabilities;
         _output = output;
+        _notifier = notifier;
         _sessionManager = sessionManager;
         _logger = logger;
     }
@@ -80,22 +97,18 @@ public class JobQueueService : BackgroundService, IJobQueueService
     /// <inheritdoc />
     public bool Cancel(Guid id)
     {
+        // The flag is recorded first, so that a job the worker is in the middle of claiming --
+        // taken from the queue, but with no cancellation token registered yet -- still stops. The
+        // worker checks the flag the moment its token exists, so one of the two always catches it.
+        var known = _store.RequestCancel(id);
+
         if (_running.TryGetValue(id, out var cts))
         {
             cts.Cancel();
             return true;
         }
 
-        var job = _store.Get(id);
-        if (job is null || !job.IsActive)
-        {
-            return false;
-        }
-
-        job.Status = JobStatus.Cancelled;
-        job.FinishedAt = DateTime.UtcNow;
-        _store.Update(job);
-        return true;
+        return known;
     }
 
     /// <inheritdoc />
@@ -109,19 +122,22 @@ public class JobQueueService : BackgroundService, IJobQueueService
         {
             try
             {
-                if (_running.Count >= Math.Max(1, Config.MaxConcurrentJobs))
-                {
-                    await Task.Delay(IdleDelay, stoppingToken).ConfigureAwait(false);
-                    continue;
-                }
-
                 if (Config.PauseWhilePlaybackActive && IsPlaybackActive())
                 {
                     await Task.Delay(IdleDelay, stoppingToken).ConfigureAwait(false);
                     continue;
                 }
 
-                var job = _store.TakeNextQueued();
+                // Concurrency is measured in 1080p-equivalents rather than in jobs, so a limit of
+                // two means two ordinary encodes or one 4K one. The heights come from the jobs
+                // themselves, recorded when they were queued.
+                var limit = Config.MaxConcurrentJobs;
+                var runningHeights = _running.Keys
+                    .Select(id => _store.Get(id)?.SourceHeight)
+                    .ToList();
+
+                var job = _store.TakeNextQueued(
+                    candidate => ConcurrencyPolicy.CanStart(runningHeights, candidate.SourceHeight, limit));
                 if (job is null)
                 {
                     await Task.Delay(IdleDelay, stoppingToken).ConfigureAwait(false);
@@ -130,6 +146,13 @@ public class JobQueueService : BackgroundService, IJobQueueService
 
                 var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 _running[job.Id] = cts;
+
+                // Closes the window described on Cancel: anything that arrived while this job was
+                // being claimed is applied now that there is a token to apply it to.
+                if (job.CancellationRequested)
+                {
+                    cts.Cancel();
+                }
 
                 _ = Task.Run(
                     async () =>
@@ -162,7 +185,34 @@ public class JobQueueService : BackgroundService, IJobQueueService
         _logger.LogInformation("[MediaOptimizer] Job queue worker stopped");
     }
 
+    /// <summary>
+    /// Runs one job and then reports how it ended, exactly once and whichever way it ended. The
+    /// reporting lives out here rather than at each of the half-dozen places a job can stop,
+    /// because a path that forgets to report is a conversion that silently rewrote a file.
+    /// </summary>
+    /// <param name="job">The job.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task.</returns>
     private async Task RunJobAsync(EncodeJob job, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RunJobCoreAsync(job, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (job.Status == JobStatus.Completed)
+            {
+                await _notifier.NotifyCompletedAsync(job, CancellationToken.None).ConfigureAwait(false);
+            }
+            else if (job.Status == JobStatus.Failed)
+            {
+                await _notifier.NotifyFailedAsync(job, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task RunJobCoreAsync(EncodeJob job, CancellationToken cancellationToken)
     {
         var tempPath = string.Empty;
 
@@ -229,6 +279,18 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 plan = await _planner
                     .PlanAsync(analysis, job.Request, tempPath, cancellationToken)
                     .ConfigureAwait(false);
+
+                // The second plan is the one that will run, so it is the one the job has to
+                // describe. Keeping the first plan's warnings would have the dashboard explaining
+                // a conversion that is not the one happening.
+                job.Warnings = plan.Warnings;
+                job.IsLossless = plan.IsLossless;
+
+                if (!plan.IsRunnable)
+                {
+                    Fail(job, plan.Warnings.First(w => w.Level == WarningLevel.Blocker).Message);
+                    return;
+                }
             }
 
             var estimate = _estimator.Estimate(analysis, job.Request, plan);
@@ -303,7 +365,8 @@ public class JobQueueService : BackgroundService, IJobQueueService
                 tempPath,
                 analysis.DurationSeconds,
                 deepScan,
-                plan.LosslessAudioIndexes,
+                plan.LosslessAudioChecks,
+                ExpectedStreams.From(plan),
                 cancellationToken).ConfigureAwait(false);
 
             job.LosslessVerified = verification.LosslessVerified;
@@ -311,6 +374,21 @@ public class JobQueueService : BackgroundService, IJobQueueService
             if (!verification.Passed)
             {
                 Fail(job, verification.FailureReason ?? "The produced file failed verification.");
+                TryDelete(tempPath);
+                return;
+            }
+
+            // Everything up to here measured this conversion before it existed. This is the only
+            // step that looks at what actually came out, and it happens while the output is still
+            // a working file and the original is still untouched — the last moment at which a
+            // conversion that came out worse than asked for can simply be refused.
+            var quality = await MeasureOutputQualityAsync(analysis, plan, job, tempPath, cancellationToken)
+                .ConfigureAwait(false);
+
+            var refusal = OutputQualityService.Refuse(quality, Config.RefuseBelowQuality);
+            if (refusal is not null)
+            {
+                Fail(job, refusal);
                 TryDelete(tempPath);
                 return;
             }
@@ -351,11 +429,97 @@ public class JobQueueService : BackgroundService, IJobQueueService
     }
 
     /// <summary>
-    /// Checks everything that must be true before a single frame is encoded.
+    /// Compares the finished file against the original at a few points, when there is any point
+    /// in doing so.
+    /// <para>
+    /// A conversion that copied the video stream is the same pictures, and one verified bit-exact
+    /// by hash is the same file: both are recorded as identical rather than measured, because
+    /// three comparisons of a file against itself is a minute spent proving arithmetic. A quality
+    /// floor treats them as clearing any floor, which they do.
+    /// </para>
     /// </summary>
-    /// <param name="job">The job.</param>
-    /// <param name="analysis">Fresh analysis of the source.</param>
-    /// <returns>An error message, or null when the job may proceed.</returns>
+    /// <param name="analysis">The source.</param>
+    /// <param name="plan">The plan that ran, for what it did to the video.</param>
+    /// <param name="job">The job, which carries the result.</param>
+    /// <param name="outputPath">The finished working file.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>What was measured, or why nothing was.</returns>
+    private async Task<OutputQuality> MeasureOutputQualityAsync(
+        FileAnalysis analysis,
+        PlanResult plan,
+        EncodeJob job,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        var identical = job.LosslessVerified == true
+            || job.Request.Video == VideoAction.Copy;
+
+        if (identical)
+        {
+            var quality = new OutputQuality
+            {
+                IdenticalByConstruction = true,
+                FailureReason = job.LosslessVerified == true
+                    ? "bit-exact, verified by hash — identical to the source"
+                    : "the video was copied rather than re-encoded — the same pictures"
+            };
+
+            job.QualityNote = quality.FailureReason;
+            _store.Update(job);
+            return quality;
+        }
+
+        // Switched off means switched off — but a floor cannot be honoured without measuring, so
+        // setting one turns the measurement back on rather than passing everything silently.
+        if (!Config.MeasureQualityAfterEncoding && Config.RefuseBelowQuality == QualityFloor.Off)
+        {
+            return new OutputQuality();
+        }
+
+        string? metric;
+        try
+        {
+            var capabilities = await _capabilities.GetAsync(cancellationToken).ConfigureAwait(false);
+            metric = capabilities.QualityMetric;
+        }
+#pragma warning disable CA1031 // A missing measurement must not fail a conversion on its own.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            _logger.LogWarning(ex, "[MediaOptimizer] Could not work out which quality metric this FFmpeg has");
+            metric = null;
+        }
+
+        if (string.IsNullOrEmpty(metric))
+        {
+            var unavailable = new OutputQuality
+            {
+                FailureReason = "this FFmpeg build has neither the VMAF nor the SSIM filter, so "
+                    + "the result could not be compared with the original"
+            };
+
+            job.QualityNote = unavailable.FailureReason;
+            _store.Update(job);
+            return unavailable;
+        }
+
+        var measured = await _quality
+            .MeasureAsync(analysis, outputPath, metric!, cancellationToken)
+            .ConfigureAwait(false);
+
+        job.QualityMetric = measured.Succeeded ? measured.Metric : null;
+        job.QualityScore = measured.WorstScore;
+        job.QualityNote = OutputQualityService.Summarise(measured);
+        _store.Update(job);
+
+        _logger.LogInformation(
+            "[MediaOptimizer] Job {JobId} quality: {Note}",
+            job.Id,
+            job.QualityNote);
+
+        return measured;
+    }
+
     /// <summary>
     /// Runs the planned arguments against half a second of the source, into a throwaway file.
     /// <para>
@@ -488,6 +652,10 @@ public class JobQueueService : BackgroundService, IJobQueueService
         return line.Length > 300 ? line[..300] + "…" : line;
     }
 
+    /// <summary>Checks everything that must be true before a single frame is encoded.</summary>
+    /// <param name="job">The job.</param>
+    /// <param name="analysis">Fresh analysis of the source.</param>
+    /// <returns>An error message, or null when the job may proceed.</returns>
     private string? Preflight(EncodeJob job, FileAnalysis analysis)
     {
         if (!analysis.IsEligible)
@@ -498,6 +666,14 @@ public class JobQueueService : BackgroundService, IJobQueueService
         if (string.IsNullOrEmpty(analysis.Path) || !File.Exists(analysis.Path))
         {
             return "The source file no longer exists on disk.";
+        }
+
+        // A move queued after this job was is the race the queue-time checks cannot see: the file
+        // is about to be on another drive, and an encode reading it there would be reading a path
+        // that stops existing halfway through.
+        if (_moves.HasActiveJobForItem(job.ItemId))
+        {
+            return "This file is queued to move to another drive. Convert it once the move has finished.";
         }
 
         var stability = Config.FileStabilitySeconds;

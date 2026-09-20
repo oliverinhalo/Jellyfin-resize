@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,29 +23,11 @@ public interface ILibraryReconciler
     /// <returns>A task.</returns>
     Task RepointAsync(Guid itemId, string newPath, CancellationToken cancellationToken);
 
-    /// <summary>Moves companion files (.nfo, artwork, external subtitles) alongside a renamed media file.</summary>
-    /// <param name="oldPath">The previous media path.</param>
-    /// <param name="newPath">The new media path.</param>
-    /// <returns>The companion files that were moved.</returns>
-    IReadOnlyList<string> MoveCompanionFiles(string oldPath, string newPath);
 }
 
 /// <inheritdoc />
 public class LibraryReconciler : ILibraryReconciler
 {
-    // Sidecars Jellyfin looks up by basename. If the extension changes and these are left
-    // behind, the item silently loses its metadata, artwork and external subtitles.
-    private static readonly string[] CompanionExtensions =
-    [
-        ".nfo", ".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup"
-    ];
-
-    private static readonly string[] CompanionSuffixes =
-    [
-        "-poster.jpg", "-poster.png", "-fanart.jpg", "-fanart.png",
-        "-thumb.jpg", "-thumb.png", "-banner.jpg", "-logo.png"
-    ];
-
     private readonly ILibraryManager _libraryManager;
     private readonly ILibraryMonitor _libraryMonitor;
     private readonly IProviderManager _providerManager;
@@ -141,52 +122,6 @@ public class LibraryReconciler : ILibraryReconciler
         }
     }
 
-    /// <inheritdoc />
-    public IReadOnlyList<string> MoveCompanionFiles(string oldPath, string newPath)
-    {
-        var moved = new List<string>();
-
-        var oldDir = Path.GetDirectoryName(oldPath);
-        var newDir = Path.GetDirectoryName(newPath);
-        var oldBase = Path.GetFileNameWithoutExtension(oldPath);
-        var newBase = Path.GetFileNameWithoutExtension(newPath);
-
-        // Nothing to do only when the companions would end up exactly where they already are.
-        // A relocation to another drive keeps the name and changes the folder, which is just as
-        // much a move as a rename in place.
-        if (string.IsNullOrEmpty(oldDir)
-            || string.IsNullOrEmpty(newDir)
-            || (oldBase == newBase && string.Equals(oldDir, newDir, StringComparison.Ordinal)))
-        {
-            return moved;
-        }
-
-        foreach (var candidate in EnumerateCompanions(oldDir, oldBase))
-        {
-            var fileName = Path.GetFileName(candidate);
-            var newName = newBase + fileName[oldBase.Length..];
-            var destination = Path.Combine(newDir, newName);
-
-            if (File.Exists(destination))
-            {
-                continue;
-            }
-
-            try
-            {
-                // The destination may be on another drive, where a rename is not possible.
-                OutputPolicyService.MoveAcrossVolumes(candidate, destination, overwrite: false);
-                moved.Add(destination);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogWarning(ex, "[MediaOptimizer] Could not move companion file {Path}", candidate);
-            }
-        }
-
-        return moved;
-    }
-
     /// <summary>Suspends the library watcher around a file swap.</summary>
     /// <param name="path">Directory or file being changed.</param>
     public void ReportChangeBegin(string path)
@@ -213,43 +148,6 @@ public class LibraryReconciler : ILibraryReconciler
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
         {
             _logger.LogDebug(ex, "[MediaOptimizer] ReportFileSystemChangeComplete failed for {Path}", path);
-        }
-    }
-
-    private static IEnumerable<string> EnumerateCompanions(string directory, string baseName)
-    {
-        foreach (var ext in CompanionExtensions)
-        {
-            var exact = Path.Combine(directory, baseName + ext);
-            if (File.Exists(exact))
-            {
-                yield return exact;
-            }
-
-            // Language-tagged subtitles: Movie.en.srt, Movie.en.forced.srt
-            string[] matches;
-            try
-            {
-                matches = Directory.GetFiles(directory, baseName + ".*" + ext);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            foreach (var m in matches)
-            {
-                yield return m;
-            }
-        }
-
-        foreach (var suffix in CompanionSuffixes)
-        {
-            var candidate = Path.Combine(directory, baseName + suffix);
-            if (File.Exists(candidate))
-            {
-                yield return candidate;
-            }
         }
     }
 }

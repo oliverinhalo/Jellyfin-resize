@@ -30,6 +30,7 @@
           <div class="moptFilter">
             <label for="moptSort">Sort by</label>
             <select is="emby-select" id="moptSort" class="emby-select">
+              <option value="SavingDescending">Most to gain first</option>
               <option value="SizeDescending">Largest first</option>
               <option value="SizeAscending">Smallest first</option>
               <option value="ResolutionDescending">Highest resolution</option>
@@ -92,6 +93,32 @@
         </div>
       </details>
 
+      <details class="moptPanel" id="moptRulesPanel">
+        <summary class="moptSummary">
+          <strong>Automatic rules</strong>
+          <span class="moptSummaryHint" id="moptRulesHint">none</span>
+        </summary>
+        <div class="moptPanelBody">
+          <div class="moptStatNote">
+            Rules run once a night, as the "Media Optimizer: automatic rules" scheduled task, and
+            queue ordinary jobs — so everything else still applies: one conversion at a time, paused
+            while anyone is streaming, and the original untouched until the result passes
+            verification. Each rule takes the largest matching files first and stops at its own
+            per-run limit. Preview a rule before switching it on; a preview queues nothing.
+            Rules are applied top to bottom and the first one to take a file keeps it, so use
+            "Move up" and "Move down" to decide which of two overlapping rules wins.
+          </div>
+          <div id="moptRules"></div>
+          <div class="moptQueueBar">
+            <button is="emby-button" type="button" id="moptAddRule" class="raised emby-button">Add a rule</button>
+            <button is="emby-button" type="button" id="moptPreviewRules" class="raised emby-button">Preview tonight's run</button>
+            <button is="emby-button" type="button" id="moptRunRules" class="raised emby-button">Run all enabled rules now</button>
+          </div>
+          <div id="moptRuleEditor"></div>
+          <div id="moptRulePreview"></div>
+        </div>
+      </details>
+
       <div class="verticalSection">
         <h2 class="sectionTitle">Queue</h2>
         <div id="moptStats" class="moptStats"></div>
@@ -151,6 +178,7 @@
     .moptJobName{font-weight:600}
     .moptJobStatus{font-size:12px;text-transform:uppercase;letter-spacing:.07em;opacity:.75}
     .moptJobMeta{font-size:13px;opacity:.7;margin-top:5px}
+    .moptJobQuality{font-size:13px;opacity:.85;margin-top:4px}
     .moptBar{height:5px;border-radius:3px;background:rgba(128,128,128,.3);overflow:hidden;margin-top:8px}
     .moptBar i{display:block;height:100%;background:#00a4dc;transition:width .3s ease}
     .moptActions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
@@ -172,6 +200,18 @@
     .moptSummaryHint{opacity:.6;font-size:12.5px}
     .moptPanelBody{padding:2px 13px 13px}
     .moptErr{color:#e05a50;margin-top:5px;font-size:13px}
+    .moptRule{border:1px solid rgba(128,128,128,.32);border-radius:5px;padding:11px 13px;margin-bottom:9px}
+    .moptRule.off{opacity:.62}
+    .moptRuleHead{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+    .moptRuleName{font-weight:600}
+    .moptRuleWhen{font-size:13px;opacity:.75;margin-top:4px}
+    .moptRuleStats{font-size:12.5px;opacity:.6;margin-top:3px}
+    .moptForm{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+    .moptForm .moptFilter{flex:1 1 170px}
+    .moptPreviewRow{display:flex;gap:10px;justify-content:space-between;font-size:13px;
+      padding:5px 0;border-bottom:1px solid rgba(128,128,128,.18)}
+    .moptPreviewRow:last-child{border-bottom:0}
+    .moptPreviewRow span:last-child{opacity:.65;text-align:right;min-width:0}
   </style>
 
   <script type="text/javascript">
@@ -195,6 +235,22 @@
         return ApiClient.ajax(opts).then(function (r) {
           return typeof r === 'string' ? (r.length ? JSON.parse(r) : null) : r;
         });
+      }
+
+      // These buttons all sit behind a confirmation, and Dashboard.confirm rejects when the user
+      // says no — into the same catch as a request that failed. So a declined confirmation and a
+      // server that refused the request looked identical: both silent. Saying no must stay
+      // silent; a failure must not, because "run every rule now" and "delete every original held
+      // for undo" both look exactly like they worked when nothing is said.
+      function failed(sentence) {
+        return function (e) {
+          if (!e || !(e.status || e.statusText || e.message)) { return; }
+
+          Dashboard.alert({
+            title: 'That did not work',
+            message: sentence + ' ' + (e.statusText || e.message || 'The server did not answer.')
+          });
+        };
       }
 
       function el(tag, cls, text) {
@@ -286,6 +342,13 @@
             item.VideoCodec ? item.VideoCodec.toUpperCase() : null,
             item.Container ? item.Container.toUpperCase() : null
           ].filter(Boolean).join(' · ')));
+
+          // Marked as approximate on purpose: this is worked out from size, resolution and codec
+          // to order the list, not from the file's real bitrates the way the dialog's estimate is.
+          if (item.PotentialSavingBytes) {
+            body.appendChild(el('div', 'moptItemMeta',
+              '≈ ' + bytes(item.PotentialSavingBytes) + ' to gain · ' + (item.SavingBasis || '')));
+          }
           row.appendChild(body);
 
           var button = document.createElement('button');
@@ -293,11 +356,10 @@
           button.type = 'button';
           button.className = 'raised emby-button';
           button.style.flex = '0 0 auto';
-          button.textContent = item.HasActiveJob ? 'Queued' : 'Optimize…';
-          button.disabled = !!item.HasActiveJob;
-          if (!item.HasActiveJob) {
-            button.addEventListener('click', function () { openFor(item.Id); });
-          }
+          // A file that is already converting opens on its progress rather than on the form, so
+          // the button is worth pressing instead of being greyed out with "Queued" on it.
+          button.textContent = item.HasActiveJob ? 'Show progress' : 'Optimize…';
+          button.addEventListener('click', function () { openFor(item.Id); });
           row.appendChild(button);
           host.appendChild(row);
         });
@@ -326,8 +388,10 @@
         });
       }
 
+      var facetsLoaded = null;
+
       function loadFacets() {
-        api('GET', 'MediaOptimizer/Library/Facets').then(function (f) {
+        facetsLoaded = api('GET', 'MediaOptimizer/Library/Facets').then(function (f) {
           function fill(id, values) {
             var select = page.querySelector(id);
             (values || []).forEach(function (v) {
@@ -338,7 +402,10 @@
           }
           fill('#moptContainer', f.containers);
           fill('#moptCodec', f.codecs);
+          libraries = f.libraries || [];
         }).catch(function () { /* filters simply stay at "Any" */ });
+
+        return facetsLoaded;
       }
 
       // The dialog lives in the injected client bundle, so the dashboard and the in-app buttons
@@ -376,6 +443,341 @@
         withClient().then(function (c) { c.openBatch(items); }).catch(function (e) {
           Dashboard.alert({ title: 'Could not open the optimizer', message: e.message });
         });
+      }
+
+      // ---- automatic rules ---------------------------------------------------------------
+      var rules = [];
+      var libraries = [];
+
+      // Describes a rule in the words the user would use, so what it will do is legible without
+      // reading seven fields back individually.
+      function describeRule(r) {
+        var when = [];
+        if (r.Kinds === 'MoviesOnly') { when.push('films'); }
+        else if (r.Kinds === 'EpisodesOnly') { when.push('episodes'); }
+        else { when.push('anything'); }
+        if (r.MinHeight) { when.push(r.MinHeight + 'p and up'); }
+        if (r.MinSizeMb) { when.push('over ' + (r.MinSizeMb >= 1024
+          ? (r.MinSizeMb / 1024).toFixed(r.MinSizeMb % 1024 ? 1 : 0) + ' GB' : r.MinSizeMb + ' MB')); }
+        if (r.LibraryName) { when.push('in ' + r.LibraryName); }
+        if (r.Container) { when.push(String(r.Container).toUpperCase()); }
+        if (r.VideoCodec) { when.push(String(r.VideoCodec).toUpperCase()); }
+        if (r.Watched === 'Watched') { when.push('watched by someone'); }
+        if (r.Watched === 'Unwatched') { when.push('not watched by anyone'); }
+        if (r.AddedMoreThanDaysAgo) { when.push('added over ' + r.AddedMoreThanDaysAgo + ' days ago'); }
+
+        var then = [{ Standard: 'a more efficient codec, same resolution',
+                      Medium: 'one step down in resolution',
+                      HighReduction: 'one step down and a lower bitrate',
+                      LosslessOnly: 'bit-exact changes only' }[r.Strategy] || r.Strategy];
+        if (r.TargetHeight) { then.push('forced to ' + r.TargetHeight + 'p'); }
+        if (r.OutputContainer) { then.push(String(r.OutputContainer).toUpperCase()); }
+        if (r.KeepAudioLanguages) { then.push('keeping ' + r.KeepAudioLanguages + ' audio'); }
+        if (r.Tune && r.Tune !== 'Auto') {
+          then.push({ Film: 'tuned for live action', Animation: 'tuned for animation',
+                      Grain: 'tuned to keep grain' }[r.Tune] || r.Tune);
+        }
+        if (r.UseHardware) { then.push('on the graphics card'); }
+
+        return 'Takes ' + when.join(', ') + ' → ' + then.join(', ') +
+          '. At most ' + r.MaxItemsPerRun + ' per run, and only when it saves at least ' +
+          r.MinSavingPercent + '%.';
+      }
+
+      function renderRules() {
+        var host = page.querySelector('#moptRules');
+        host.innerHTML = '';
+        var on = rules.filter(function (r) { return r.Enabled; }).length;
+        page.querySelector('#moptRulesHint').textContent = rules.length
+          ? rules.length + ' saved, ' + on + ' on' : 'none';
+
+        if (!rules.length) {
+          host.appendChild(el('div', 'moptEmpty',
+            'No rules yet. A rule converts matching files on a schedule, so the library keeps ' +
+            'itself in order without anyone picking files by hand.'));
+          return;
+        }
+
+        rules.forEach(function (r) {
+          var box = el('div', 'moptRule' + (r.Enabled ? '' : ' off'));
+          var head = el('div', 'moptRuleHead');
+          head.appendChild(el('span', 'moptRuleName', r.Name));
+          head.appendChild(el('span', 'moptTag', r.Enabled ? 'on' : 'off'));
+          box.appendChild(head);
+          box.appendChild(el('div', 'moptRuleWhen', describeRule(r)));
+
+          var stats = [];
+          if (r.LastRunAt) { stats.push('last ran ' + new Date(r.LastRunAt).toLocaleString()); }
+          else { stats.push('has never run'); }
+          stats.push(r.TotalQueued + ' job(s) queued so far');
+          box.appendChild(el('div', 'moptRuleStats', stats.join(' · ')));
+
+          var actions = el('div', 'moptActions');
+          function button(label, handler) {
+            var b = document.createElement('button');
+            b.setAttribute('is', 'emby-button');
+            b.type = 'button';
+            b.className = 'raised emby-button';
+            b.textContent = label;
+            b.addEventListener('click', function () {
+              b.disabled = true;
+              Promise.resolve(handler()).catch(function (e) {
+                Dashboard.alert({ message: (e && e.statusText) || 'That did not work.' });
+              }).then(function () { b.disabled = false; });
+            });
+            actions.appendChild(b);
+          }
+
+          // The order is which rule gets to convert a file, not a display preference, so it is
+          // changed from the same place the rules are read.
+          if (rules.length > 1) {
+            var position = rules.indexOf(r);
+            if (position > 0) {
+              button('Move up', function () { return moveRule(r, 'up'); });
+            }
+
+            if (position < rules.length - 1) {
+              button('Move down', function () { return moveRule(r, 'down'); });
+            }
+          }
+
+          button('Preview', function () { return previewRule(r); });
+          button(r.Enabled ? 'Switch off' : 'Switch on', function () {
+            var copy = JSON.parse(JSON.stringify(r));
+            copy.Enabled = !r.Enabled;
+            return saveRule(copy);
+          });
+          button('Edit', function () { openRuleEditor(r); });
+          button('Run now', function () {
+            return Dashboard.confirm('Run "' + r.Name + '" now? It will queue up to ' +
+              r.MaxItemsPerRun + ' conversion(s)' +
+              (r.Enabled ? '.' : ', even though this rule is switched off.'), 'Run rule')
+              .then(function () { return api('POST', 'MediaOptimizer/Rules/Run?id=' + r.Id); })
+              .then(function (result) { showRuleResult(result, false); return loadRules(); });
+          });
+          button('Delete', function () {
+            return Dashboard.confirm('Delete "' + r.Name + '"? Jobs it already queued are unaffected.', 'Delete rule')
+              .then(function () { return api('DELETE', 'MediaOptimizer/Rules/' + r.Id); })
+              .then(loadRules);
+          });
+
+          box.appendChild(actions);
+          host.appendChild(box);
+        });
+      }
+
+      function moveRule(rule, direction) {
+        return api('POST', 'MediaOptimizer/Rules/' + rule.Id + '/Move?direction=' + direction)
+          .then(function (updated) { rules = updated || rules; renderRules(); });
+      }
+
+      function loadRules() {
+        return api('GET', 'MediaOptimizer/Rules').then(function (r) {
+          rules = r || [];
+          renderRules();
+        }).catch(function () {
+          page.querySelector('#moptRules').textContent = 'Could not load the rules.';
+        });
+      }
+
+      function saveRule(rule) {
+        return api('POST', 'MediaOptimizer/Rules', rule)
+          .then(loadRules)
+          .catch(function (e) {
+            Dashboard.alert({
+              title: 'The rule was not saved',
+              message: (e && e.responseText) || (e && e.statusText) || 'Check the values and try again.'
+            });
+          });
+      }
+
+      function previewRule(rule) {
+        var host = page.querySelector('#moptRulePreview');
+        host.innerHTML = '';
+        host.appendChild(el('div', 'moptStatNote', 'Working out what "' + rule.Name + '" would take…'));
+        return api('POST', 'MediaOptimizer/Rules/' + rule.Id + '/Preview')
+          .then(function (result) { showRuleResult(result, true); })
+          .catch(function (e) {
+            host.innerHTML = '';
+            host.appendChild(el('div', 'moptErr', 'Preview failed: ' + ((e && e.statusText) || e)));
+          });
+      }
+
+      function showRuleResult(result, isPreview) {
+        var host = page.querySelector('#moptRulePreview');
+        host.innerHTML = '';
+
+        var taken = (result.Items || []).filter(function (i) { return i.Queued; });
+        var skipped = (result.Items || []).filter(function (i) { return !i.Queued; });
+
+        // The server's own count, not a count of the rows: the item list carries the near-misses
+        // too and is capped for display, so counting rows would drift from the answer.
+        var count = typeof result.Queued === 'number' ? result.Queued : taken.length;
+        host.appendChild(el('div', 'moptStatValue',
+          isPreview
+            ? count + ' file(s) would be converted'
+            : count + ' file(s) queued'));
+        host.appendChild(el('div', 'moptStatNote',
+          'Looked at ' + result.Considered + ' item(s). ' +
+          (result.EstimatedSavingBytes > 0
+            ? 'Predicted saving ' + bytes(result.EstimatedSavingBytes) + '.'
+            : 'No overall saving predicted.')));
+
+        // With more than one rule in the answer, which rule took a file is the whole point:
+        // they are applied in order and the first one to take a file keeps it.
+        var ruleNames = {};
+        (result.Items || []).forEach(function (i) { if (i.RuleName) { ruleNames[i.RuleName] = true; } });
+        var manyRules = Object.keys(ruleNames).length > 1;
+
+        taken.concat(skipped).slice(0, 40).forEach(function (i) {
+          var row = el('div', 'moptPreviewRow');
+          row.appendChild(el('span', null, i.Name || i.ItemId));
+          row.appendChild(el('span', null,
+            (manyRules && i.RuleName ? i.RuleName + ' · ' : '') +
+            (i.Queued
+              ? 'saves about ' + bytes(i.EstimatedSavingBytes)
+              : (i.SkippedReason || 'skipped'))));
+          host.appendChild(row);
+        });
+      }
+
+      var RULE_FIELDS = [
+        ['Name', 'Name', 'text', null],
+        ['Kinds', 'Applies to', 'select', [['Everything', 'Films and episodes'], ['MoviesOnly', 'Films only'], ['EpisodesOnly', 'Episodes only']]],
+        ['MinHeight', 'Minimum resolution', 'select', [['', 'Any'], ['2160', '4K and up'], ['1440', '1440p and up'], ['1080', '1080p and up'], ['720', '720p and up']]],
+        ['MinSizeMb', 'Minimum size', 'select', [['', 'Any'], ['20480', '20 GB and up'], ['10240', '10 GB and up'], ['5120', '5 GB and up'], ['2048', '2 GB and up'], ['1024', '1 GB and up']]],
+        ['LibraryName', 'Library', 'select', [['', 'Every library']]],
+        ['Container', 'Container', 'text', null],
+        ['VideoCodec', 'Video codec', 'text', null],
+        ['Watched', 'Watched', 'select', [['Any', 'Either'], ['Watched', 'Watched by someone'], ['Unwatched', 'Not watched by anyone']]],
+        ['AddedMoreThanDaysAgo', 'Only if added over (days) ago', 'number', null],
+        ['Strategy', 'Convert using', 'select', [['Standard', 'Standard — same resolution, better codec'], ['Medium', 'Medium — one step down'], ['HighReduction', 'High — one step down, lower bitrate'], ['LosslessOnly', 'Lossless only']]],
+        ['TargetHeight', 'Force a resolution', 'select', [['', 'Let the preset decide'], ['2160', '2160p'], ['1440', '1440p'], ['1080', '1080p'], ['720', '720p'], ['480', '480p']]],
+        ['OutputContainer', 'Container to write', 'select', [['', 'Best for each file'], ['mkv', 'MKV'], ['mp4', 'MP4']]],
+        ['Tune', 'Content', 'select', [['Auto', 'Leave it to the encoder'], ['Film', 'Live action'], ['Animation', 'Animation'], ['Grain', 'Film grain']]],
+        ['OutputPolicy', 'The original file', 'select', [['', 'Plugin default'], ['Replace', 'Replace it'], ['ReplaceAndDelete', 'Replace and delete now'], ['Sidecar', 'Keep, save alongside'], ['AlternateVersion', 'Keep, add as a version']]],
+        ['KeepAudioLanguages', 'Keep audio languages', 'text', null],
+        ['KeepSubtitleLanguages', 'Keep subtitle languages', 'text', null],
+        ['MaxItemsPerRun', 'Files per run (at most)', 'number', null],
+        ['MinSavingPercent', 'Only when it saves at least (%)', 'number', null]
+      ];
+
+      function openRuleEditor(existing) {
+        // The library list arrives with the facets. Building the form before it does would label
+        // a perfectly good library as "no longer on this server", so wait for it — it is almost
+        // always already there, since the facets load with the page.
+        if (!libraries.length && facetsLoaded) {
+          facetsLoaded.then(function () { buildRuleEditor(existing); });
+          return;
+        }
+
+        buildRuleEditor(existing);
+      }
+
+      function buildRuleEditor(existing) {
+        var host = page.querySelector('#moptRuleEditor');
+        host.innerHTML = '';
+        page.querySelector('#moptRulePreview').innerHTML = '';
+
+        var draft = existing
+          ? JSON.parse(JSON.stringify(existing))
+          : { Name: 'New rule', Enabled: false, Kinds: 'Everything', Watched: 'Any',
+              AddedMoreThanDaysAgo: 30, Strategy: 'Standard', MaxItemsPerRun: 3,
+              MinSavingPercent: 15, UseHardware: false };
+
+        var form = el('div', 'moptForm');
+        RULE_FIELDS.forEach(function (field) {
+          var key = field[0], label = field[1], kind = field[2], options = field[3];
+          var wrap = el('div', 'moptFilter');
+          wrap.appendChild(el('label', null, label));
+
+          var input;
+          if (kind === 'select') {
+            input = document.createElement('select');
+            input.setAttribute('is', 'emby-select');
+            input.className = 'emby-select';
+
+            // The libraries are whatever this server has, so they are added when the form is
+            // built rather than written into the field list.
+            if (key === 'LibraryName') {
+              options = options.concat(libraries.map(function (name) { return [name, name]; }));
+              if (draft.LibraryName && libraries.indexOf(draft.LibraryName) < 0) {
+                options.push([draft.LibraryName, draft.LibraryName + ' — no longer on this server']);
+              }
+            }
+
+            options.forEach(function (o) {
+              var opt = document.createElement('option');
+              opt.value = o[0];
+              opt.textContent = o[1];
+              if (String(draft[key] === null || draft[key] === undefined ? '' : draft[key]) === o[0]) {
+                opt.selected = true;
+              }
+              input.appendChild(opt);
+            });
+          } else {
+            input = document.createElement('input');
+            input.setAttribute('is', 'emby-input');
+            input.type = kind;
+            input.value = draft[key] === null || draft[key] === undefined ? '' : draft[key];
+          }
+
+          // Two of these are not filters and have no "unset": a rule always has a per-run limit
+          // and a saving floor. Posting null for them fails model binding before the server's own
+          // validation can explain anything, so clearing the box restores the default instead.
+          var required = { MaxItemsPerRun: 3, MinSavingPercent: 15 };
+
+          input.addEventListener('change', function () {
+            var value = input.value;
+            if (value === '' && Object.prototype.hasOwnProperty.call(required, key)) {
+              draft[key] = required[key];
+              input.value = required[key];
+              return;
+            }
+            // Everywhere else an empty field means "no filter", which the server reads as null
+            // rather than as 0 — a minimum height of 0 and no minimum height are different rules.
+            if (value === '') { draft[key] = null; return; }
+            draft[key] = (kind === 'number' || /^(MinHeight|MinSizeMb|TargetHeight)$/.test(key))
+              ? Number(value) : value;
+          });
+
+          wrap.appendChild(input);
+          form.appendChild(wrap);
+        });
+        host.appendChild(form);
+
+        var hw = el('label', 'moptSelectAll');
+        var hwInput = document.createElement('input');
+        hwInput.type = 'checkbox';
+        hwInput.checked = !!draft.UseHardware;
+        hwInput.addEventListener('change', function () { draft.UseHardware = hwInput.checked; });
+        hw.appendChild(hwInput);
+        hw.appendChild(el('span', null, 'Encode on the graphics card (faster, larger files)'));
+        host.appendChild(hw);
+
+        var bar = el('div', 'moptQueueBar');
+        var save = document.createElement('button');
+        save.setAttribute('is', 'emby-button');
+        save.type = 'button';
+        save.className = 'raised button-submit emby-button';
+        save.textContent = 'Save rule';
+        save.addEventListener('click', function () {
+          save.disabled = true;
+          saveRule(draft).then(function () { host.innerHTML = ''; save.disabled = false; });
+        });
+        bar.appendChild(save);
+
+        var cancel = document.createElement('button');
+        cancel.setAttribute('is', 'emby-button');
+        cancel.type = 'button';
+        cancel.className = 'raised emby-button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', function () { host.innerHTML = ''; });
+        bar.appendChild(cancel);
+        host.appendChild(bar);
+
+        host.appendChild(el('div', 'moptStatNote',
+          'A new rule is saved switched off. Preview it, then switch it on when it takes what you expected.'));
       }
 
       // ---- queue -----------------------------------------------------------------------
@@ -419,7 +821,16 @@
           if (j.IsLossless) { bits.push('lossless'); }
           if (j.LosslessVerified === true) { bits.push('hash verified'); }
           if (j.ResumeCount > 0) { bits.push('resumed after restart'); }
+          if (j.QueuedByRule) { bits.push('queued by "' + j.QueuedByRule + '"'); }
           box.appendChild(el('div', 'moptJobMeta', bits.join(' · ')));
+
+          // What it actually came out looking like, which is the one number here that was
+          // measured after the fact rather than predicted before it. Its own line: it is a
+          // sentence, and the metric has to be named because SSIM 0.98 and VMAF 98 are not the
+          // same claim.
+          if (j.QualityNote) {
+            box.appendChild(el('div', 'moptJobQuality', j.QualityNote));
+          }
 
           if (j.Status === 'Encoding' || j.Status === 'Verifying') {
             var bar = el('div', 'moptBar');
@@ -504,15 +915,34 @@
       }
 
       function refresh() {
-        api('GET', 'MediaOptimizer/Statistics').then(renderStats).catch(function () {});
-        return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function () {});
+        // Both of these used to fail silently, which for the queue is the worst possible
+        // outcome: a request that failed and an empty queue look exactly the same, so somebody
+        // waiting on an overnight run would be told nothing is happening.
+        api('GET', 'MediaOptimizer/Statistics').then(renderStats).catch(function (e) {
+          var host = page.querySelector('#moptStats');
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptErr',
+            'Could not read the totals: ' + ((e && e.statusText) || e) + '.'));
+        });
+
+        return api('GET', 'MediaOptimizer/Jobs').then(renderJobs).catch(function (e) {
+          var host = page.querySelector('#moptJobs');
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptErr',
+            'Could not read the conversion queue: ' + ((e && e.statusText) || e) +
+            '. The queue itself is unaffected — this page could not ask about it.'));
+        });
       }
 
-      page.addEventListener('pageshow', function () {
-        renderDiagnostics();
-        loadFacets();
-        search();
-        refresh();
+      // Jellyfin raises pageshow every time the user navigates back to this page, and the page
+      // element itself is kept. Binding here unconditionally added a second click handler each
+      // time, so after visiting twice "cancel everything pending" asked twice and the pause
+      // button toggled itself straight back off.
+      var bound = false;
+
+      function bindOnce() {
+        if (bound) { return; }
+        bound = true;
 
         page.querySelector('#moptSearch').addEventListener('input', function () {
           clearTimeout(searchTimer);
@@ -531,6 +961,31 @@
 
         page.querySelector('#moptBatch').addEventListener('click', openBatch);
 
+        page.querySelector('#moptAddRule').addEventListener('click', function () { openRuleEditor(null); });
+
+        // Previewing one rule answers "what does this rule do". This answers the question that
+        // matters the evening before they first run: what do all of them do to my library.
+        page.querySelector('#moptPreviewRules').addEventListener('click', function () {
+          var host = page.querySelector('#moptRulePreview');
+          host.innerHTML = '';
+          host.appendChild(el('div', 'moptStatNote',
+            'Working out what every switched-on rule would take tonight…'));
+          api('POST', 'MediaOptimizer/Rules/Preview')
+            .then(function (result) { showRuleResult(result, true); })
+            .catch(function (e) {
+              host.innerHTML = '';
+              host.appendChild(el('div', 'moptErr', 'Preview failed: ' + ((e && e.statusText) || e)));
+            });
+        });
+
+        page.querySelector('#moptRunRules').addEventListener('click', function () {
+          Dashboard.confirm('Run every rule that is switched on, now?', 'Run rules')
+            .then(function () { return api('POST', 'MediaOptimizer/Rules/Run'); })
+            .then(function (result) { showRuleResult(result, false); return loadRules(); })
+            .then(refresh)
+            .catch(failed('The rules were not run:'));
+        });
+
         page.querySelector('#moptPause').addEventListener('click', function (e) {
           var paused = e.target.dataset.paused === '1';
           api('POST', 'MediaOptimizer/Queue/' + (paused ? 'Resume' : 'Pause')).then(refresh)
@@ -541,7 +996,7 @@
           Dashboard.confirm('Cancel every job that has not started yet? Anything already running is left alone.',
             'Cancel pending jobs')
             .then(function () { return api('POST', 'MediaOptimizer/Queue/ClearPending'); })
-            .then(refresh).catch(function () {});
+            .then(refresh).catch(failed('Nothing was cancelled — the pending jobs are still queued:'));
         });
 
         page.querySelector('#moptRelease').addEventListener('click', function () {
@@ -552,8 +1007,18 @@
             .then(function (r) {
               Dashboard.alert({ message: 'Released ' + r.released + ' original(s), freeing ' + bytes(r.freedBytes) + '.' });
               return refresh();
-            }).catch(function () {});
+            }).catch(failed('No space was freed — the originals are all still there:'));
         });
+      }
+
+      page.addEventListener('pageshow', function () {
+        bindOnce();
+
+        renderDiagnostics();
+        loadFacets();
+        loadRules();
+        search();
+        refresh();
 
         clearInterval(timer);
         timer = setInterval(refresh, 2000);

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
+using Jellyfin.Plugin.MediaOptimizer.Core;
 using Jellyfin.Plugin.MediaOptimizer.Models;
 using MediaBrowser.Common.Configuration;
 using Microsoft.Extensions.Logging;
@@ -36,14 +37,27 @@ public interface IJobStore
     /// <returns>Active jobs.</returns>
     IReadOnlyList<EncodeJob> GetActive();
 
-    /// <summary>Takes the next queued job, marking it as claimed.</summary>
-    /// <returns>The next job, or null when the queue is empty or paused.</returns>
-    EncodeJob? TakeNextQueued();
+    /// <summary>Takes the next queued job that the caller is willing to start, marking it as claimed.</summary>
+    /// <param name="canStart">
+    /// Whether a given job may start now, or null to take the first one regardless. A job the
+    /// predicate turns down is left queued and the next is offered, so a small job can run while
+    /// a large one waits for room.
+    /// </param>
+    /// <returns>The next job, or null when the queue is empty, paused, or nothing fits.</returns>
+    EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null);
 
     /// <summary>Returns true when an item already has a queued or running job.</summary>
     /// <param name="itemId">Item id.</param>
     /// <returns>True when a job is already active for the item.</returns>
     bool HasActiveJobForItem(Guid itemId);
+
+    /// <summary>
+    /// Records that a job should stop. A job that has not been claimed yet is cancelled outright;
+    /// one already being worked on is flagged, for the worker to act on.
+    /// </summary>
+    /// <param name="id">Job id.</param>
+    /// <returns>True when a job was found that could still be stopped.</returns>
+    bool RequestCancel(Guid id);
 
     /// <summary>Removes a job from the store entirely.</summary>
     /// <param name="id">Job id.</param>
@@ -55,6 +69,13 @@ public interface IJobStore
     /// </summary>
     /// <returns>The jobs that were recovered, with their new status already applied.</returns>
     IReadOnlyList<EncodeJob> ReconcileInterrupted();
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the worker may claim new jobs. Persisted, so a
+    /// queue an administrator paused is still paused after a restart rather than quietly
+    /// encoding overnight.
+    /// </summary>
+    bool IsPaused { get; set; }
 }
 
 /// <summary>
@@ -83,11 +104,13 @@ public class JobStore : IJobStore
     private readonly string _directory;
     private readonly string _snapshotPath;
     private readonly string _journalPath;
+    private readonly string _pausedPath;
     private readonly ILogger<JobStore> _logger;
     private readonly Lock _lock = new Lock();
     private readonly Dictionary<Guid, EncodeJob> _jobs = new Dictionary<Guid, EncodeJob>();
 
     private int _journalRecords;
+    private bool _paused;
 
     /// <summary>Initializes a new instance of the <see cref="JobStore"/> class.</summary>
     /// <param name="appPaths">Application paths.</param>
@@ -107,12 +130,44 @@ public class JobStore : IJobStore
         Directory.CreateDirectory(_directory);
         _snapshotPath = Path.Combine(_directory, "queue.snapshot.json");
         _journalPath = Path.Combine(_directory, "queue.journal.jsonl");
+        _pausedPath = Path.Combine(_directory, "queue.paused");
+
+        _paused = File.Exists(_pausedPath);
 
         Load();
     }
 
-    /// <summary>Gets or sets a value indicating whether the worker may claim new jobs.</summary>
-    public static bool IsPaused { get; set; }
+    /// <inheritdoc />
+    public bool IsPaused
+    {
+        get => _paused;
+
+        set
+        {
+            lock (_lock)
+            {
+                _paused = value;
+                try
+                {
+                    // A marker file rather than a plugin setting: the queue state is operational
+                    // rather than configuration, and this way pausing cannot rewrite -- or be lost
+                    // by -- a configuration save happening at the same moment.
+                    if (value)
+                    {
+                        File.WriteAllText(_pausedPath, DateTime.UtcNow.ToString("u", CultureInfo.InvariantCulture));
+                    }
+                    else if (File.Exists(_pausedPath))
+                    {
+                        File.Delete(_pausedPath);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.LogWarning(ex, "[MediaOptimizer] Could not record the paused state; it will not survive a restart");
+                }
+            }
+        }
+    }
 
     /// <inheritdoc />
     public void Add(EncodeJob job)
@@ -163,9 +218,9 @@ public class JobStore : IJobStore
     }
 
     /// <inheritdoc />
-    public EncodeJob? TakeNextQueued()
+    public EncodeJob? TakeNextQueued(Predicate<EncodeJob>? canStart = null)
     {
-        if (IsPaused)
+        if (_paused)
         {
             return null;
         }
@@ -173,11 +228,23 @@ public class JobStore : IJobStore
         lock (_lock)
         {
             // Lower Priority numbers run first; ties fall back to arrival order.
-            var next = _jobs.Values
+            var ordered = _jobs.Values
                 .Where(j => j.Status == JobStatus.Queued)
                 .OrderBy(j => j.Priority)
                 .ThenBy(j => j.QueuedAt)
-                .FirstOrDefault();
+                .ToList();
+
+            // Which of those can start now is the caller's business, and the rules about passing
+            // one over for another live in ConcurrencyPolicy, where they can be tested on their
+            // own: a job may only be overtaken by one at least as urgent, and not indefinitely.
+            var next = canStart is null
+                ? ordered.FirstOrDefault()
+                : ConcurrencyPolicy.Choose(
+                    ordered,
+                    job => canStart(job),
+                    job => job.Priority,
+                    job => job.QueuedAt,
+                    DateTime.UtcNow);
 
             if (next is null)
             {
@@ -201,6 +268,34 @@ public class JobStore : IJobStore
     }
 
     /// <inheritdoc />
+    public bool RequestCancel(Guid id)
+    {
+        lock (_lock)
+        {
+            var job = _jobs.GetValueOrDefault(id);
+            if (job is null || !job.IsActive)
+            {
+                return false;
+            }
+
+            job.CancellationRequested = true;
+
+            // Nothing has picked it up, so it can simply be finished here. Anything further along
+            // is the worker's to stop: it may have an ffmpeg process running and a temporary file
+            // to remove, and only it knows that.
+            if (job.Status == JobStatus.Queued)
+            {
+                job.Status = JobStatus.Cancelled;
+                job.FinishedAt = DateTime.UtcNow;
+                job.Error = "Cancelled before it started. The original file was not modified.";
+            }
+
+            AppendJournal("put", job);
+            return true;
+        }
+    }
+
+    /// <inheritdoc />
     public bool Remove(Guid id)
     {
         lock (_lock)
@@ -214,6 +309,13 @@ public class JobStore : IJobStore
             return true;
         }
     }
+
+    /// <summary>
+    /// How many times a job is started again after the server stopped mid-encode before it is
+    /// held for a person to look at. Three is generous for bad luck — a power cut, a container
+    /// restart, an upgrade — and short of the point where the job is plainly the cause.
+    /// </summary>
+    internal const int MaxAutomaticResumes = 3;
 
     /// <inheritdoc />
     public IReadOnlyList<EncodeJob> ReconcileInterrupted()
@@ -236,6 +338,17 @@ public class JobStore : IJobStore
                         + "Check the file and the quarantine folder before requeueing.";
                     job.FinishedAt = DateTime.UtcNow;
                 }
+                else if (resume && job.ResumeCount >= MaxAutomaticResumes)
+                {
+                    // Resuming is right up to the point where this job is what stopped the
+                    // server. Something about this file or these settings is taking the machine
+                    // down, and requeueing it on every boot makes the plugin the cause of a
+                    // reboot loop rather than the victim of one. A person can still retry it.
+                    job.Status = JobStatus.Interrupted;
+                    job.Error = FormattableString.Invariant(
+                        $"This job has been interrupted {job.ResumeCount} times, so it is being held rather than started again. Something about this file or these settings is stopping the server mid-encode: try a different codec or preset, or switch off hardware encoding, before running it again. The original file was not modified.");
+                    job.FinishedAt = DateTime.UtcNow;
+                }
                 else if (resume)
                 {
                     // Encoding writes only to a temp file, so restarting the job is always safe.
@@ -246,6 +359,7 @@ public class JobStore : IJobStore
                     job.StartedAt = null;
                     job.ResumeCount++;
                     job.Error = null;
+                    job.CancellationRequested = false;
                 }
                 else
                 {

@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
-using Jellyfin.Plugin.MediaOptimizer.Output;
+using Jellyfin.Plugin.MediaOptimizer.Move;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -36,15 +36,6 @@ public class MoveCompanionTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    /// <summary>
-    /// Moving companion files touches the file system and the logger and nothing else, so the
-    /// Jellyfin services are not built here. A future change that makes the method reach for one
-    /// of them will fail loudly in this test, which is the right place to notice.
-    /// </summary>
-    /// <returns>A reconciler usable for companion moves only.</returns>
-    private static LibraryReconciler NewReconciler() =>
-        new LibraryReconciler(null!, null!, null!, null!, null!, NullLogger<LibraryReconciler>.Instance);
-
     private string Touch(string relative, string contents = "x")
     {
         var path = Path.Combine(_dir, relative);
@@ -63,9 +54,10 @@ public class MoveCompanionTests : IDisposable
         Touch("old/unrelated.txt");
         Directory.CreateDirectory(Path.Combine(_dir, "new"));
 
-        var moved = NewReconciler().MoveCompanionFiles(
+        var moved = CompanionFileMover.MoveAlongside(
             Path.Combine(_dir, "old", "film.mkv"),
-            Path.Combine(_dir, "new", "film.mkv"));
+            Path.Combine(_dir, "new", "film.mkv"),
+            NullLogger.Instance);
 
         Assert.Equal(3, moved.Count);
         Assert.True(File.Exists(Path.Combine(_dir, "new", "film.nfo")));
@@ -82,9 +74,10 @@ public class MoveCompanionTests : IDisposable
         Touch("old/film.mkv");
         Touch("old/film.nfo");
 
-        var moved = NewReconciler().MoveCompanionFiles(
+        var moved = CompanionFileMover.MoveAlongside(
             Path.Combine(_dir, "old", "film.mkv"),
-            Path.Combine(_dir, "old", "film.mkv"));
+            Path.Combine(_dir, "old", "film.mkv"),
+            NullLogger.Instance);
 
         Assert.Empty(moved);
         Assert.True(File.Exists(Path.Combine(_dir, "old", "film.nfo")));
@@ -97,9 +90,10 @@ public class MoveCompanionTests : IDisposable
         Touch("old/film.nfo", "the one being moved");
         Touch("new/film.nfo", "the one already there");
 
-        var moved = NewReconciler().MoveCompanionFiles(
+        var moved = CompanionFileMover.MoveAlongside(
             Path.Combine(_dir, "old", "film.mkv"),
-            Path.Combine(_dir, "new", "film.mkv"));
+            Path.Combine(_dir, "new", "film.mkv"),
+            NullLogger.Instance);
 
         Assert.Empty(moved);
         Assert.Equal("the one already there", File.ReadAllText(Path.Combine(_dir, "new", "film.nfo")));
@@ -114,9 +108,10 @@ public class MoveCompanionTests : IDisposable
         Touch("old/film.mkv");
         Touch("old/film.nfo");
 
-        var moved = NewReconciler().MoveCompanionFiles(
+        var moved = CompanionFileMover.MoveAlongside(
             Path.Combine(_dir, "old", "film.mkv"),
-            Path.Combine(_dir, "old", "film.mp4"));
+            Path.Combine(_dir, "old", "film.mp4"),
+            NullLogger.Instance);
 
         Assert.Empty(moved);
         Assert.Equal(
@@ -130,9 +125,10 @@ public class MoveCompanionTests : IDisposable
         Touch("old/film.mkv");
         Touch("old/film.nfo");
 
-        var moved = NewReconciler().MoveCompanionFiles(
+        var moved = CompanionFileMover.MoveAlongside(
             Path.Combine(_dir, "old", "film.mkv"),
-            Path.Combine(_dir, "old", "film - Optimized.mkv"));
+            Path.Combine(_dir, "old", "film - Optimized.mkv"),
+            NullLogger.Instance);
 
         Assert.Single(moved);
         Assert.True(File.Exists(Path.Combine(_dir, "old", "film - Optimized.nfo")));

@@ -74,6 +74,13 @@ public class EncodeJob
     /// <summary>Gets or sets when the job finished.</summary>
     public DateTime? FinishedAt { get; set; }
 
+    /// <summary>
+    /// Gets or sets the source video height, recorded when the job was created. The queue uses it
+    /// to decide what else may run alongside: two 4K encodes are not two jobs, they are a server
+    /// that has stopped responding.
+    /// </summary>
+    public int? SourceHeight { get; set; }
+
     /// <summary>Gets or sets the source size in bytes.</summary>
     public long? SourceSizeBytes { get; set; }
 
@@ -101,6 +108,19 @@ public class EncodeJob
     /// <summary>Gets or sets the result of the lossless hash comparison, when one ran.</summary>
     public bool? LosslessVerified { get; set; }
 
+    /// <summary>Gets or sets which metric measured the finished file: VMAF or SSIM.</summary>
+    public string? QualityMetric { get; set; }
+
+    /// <summary>
+    /// Gets or sets the worst score the finished file produced across the stretches compared with
+    /// the original. The worst rather than the average, because it is the one that decides whether
+    /// the conversion was good enough — an average hides the scene that went wrong.
+    /// </summary>
+    public double? QualityScore { get; set; }
+
+    /// <summary>Gets or sets what the measurement found, in words, or why there is none.</summary>
+    public string? QualityNote { get; set; }
+
     /// <summary>
     /// Gets or sets encoded pixels per second measured on this job. Feeds the time estimate for
     /// later jobs, so predictions come from this server's real speed rather than a guess.
@@ -112,8 +132,29 @@ public class EncodeJob
     /// </summary>
     public int Priority { get; set; }
 
+    /// <summary>
+    /// Gets or sets the name of the automatic rule that queued this job, when one did.
+    /// <para>
+    /// A conversion nobody started by hand should say where it came from. It is also the only way
+    /// to tell, weeks later, which of several rules is the one actually doing the work — and the
+    /// reason a rule is required to have a name at all.
+    /// </para>
+    /// </summary>
+    public string? QueuedByRule { get; set; }
+
     /// <summary>Gets or sets how many times this job has been resumed after a server restart.</summary>
     public int ResumeCount { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether somebody has asked for this job to stop.
+    /// <para>
+    /// A running job is stopped through its cancellation token, but there is a moment between the
+    /// worker claiming a job and registering that token in which there is no token to cancel. A
+    /// cancellation arriving in that window used to be swallowed and the job ran anyway; this flag
+    /// is what the worker checks the instant it has registered.
+    /// </para>
+    /// </summary>
+    public bool CancellationRequested { get; set; }
 
     /// <summary>Gets or sets the policy that was applied.</summary>
     public OutputPolicy OutputPolicy { get; set; }

@@ -230,7 +230,7 @@ public class MoveQueueService : BackgroundService, IMoveQueueService
                 job.Status = MoveStatus.Finalizing;
                 _store.Update(job);
 
-                job.CompanionFilesMoved = _reconciler.MoveCompanionFiles(job.SourcePath, job.DestinationPath).Count;
+                job.CompanionFilesMoved = CompanionFileMover.MoveAlongside(job.SourcePath, job.DestinationPath, _logger).Count;
             }
             finally
             {

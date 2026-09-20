@@ -1,3 +1,7 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using Jellyfin.Plugin.MediaOptimizer.Models;
 using MediaBrowser.Model.Plugins;
 
 namespace Jellyfin.Plugin.MediaOptimizer.Configuration;
@@ -49,6 +53,28 @@ public enum SpeedPreference
     SmallestFile = 2
 }
 
+/// <summary>
+/// How good a finished conversion has to measure before it is allowed to replace an original.
+/// <para>
+/// The bands are the ones the plugin describes results in, so the setting and the outcome are in
+/// the same words rather than in a number whose meaning depends on which metric was available.
+/// </para>
+/// </summary>
+public enum QualityFloor
+{
+    /// <summary>Measure and report, refuse nothing.</summary>
+    Off = 0,
+
+    /// <summary>Refuse anything worse than "noticeably softer on detailed scenes".</summary>
+    NoticeablySofter = 1,
+
+    /// <summary>Refuse anything worse than "slightly softer; visible only side by side".</summary>
+    SlightlySofter = 2,
+
+    /// <summary>Refuse anything worse than "very hard to tell apart from the source".</summary>
+    VeryClose = 3
+}
+
 /// <summary>Plugin settings, persisted by Jellyfin as XML.</summary>
 public class PluginConfiguration : BasePluginConfiguration
 {
@@ -98,7 +124,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public bool EncodeBesideMedia { get; set; } = true;
 
-    /// <summary>Gets or sets how many encodes may run at once.</summary>
+    /// <summary>
+    /// Gets or sets how much encoding may run at once, counted in ordinary (1080p or smaller)
+    /// jobs. A 4K job counts as two, so a limit of 2 allows two ordinary encodes or one 4K one —
+    /// two 4K encodes at once is not twice the work, it is a server that stops responding. One
+    /// job always starts on an idle server whatever it weighs.
+    /// </summary>
     public int MaxConcurrentJobs { get; set; } = 1;
 
     /// <summary>Gets or sets a value indicating whether the queue pauses while anyone is streaming.</summary>
@@ -211,4 +242,93 @@ public class PluginConfiguration : BasePluginConfiguration
     /// two copies competing for the same disk finish later than the same two run in sequence.
     /// </summary>
     public int MaxConcurrentMoves { get; set; } = 1;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether "Measure it" also compares the samples against the
+    /// source and reports how close they looked. On by default: it rides along with sample
+    /// encodes that are happening anyway, and it is the only honest answer to "how much worse
+    /// will this look?".
+    /// </summary>
+    public bool MeasureQualityWhenSampling { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a finished conversion is compared against the
+    /// original before anything is done with it, and the result recorded on the job. On by
+    /// default: it is three short comparisons against a file that took hours to make, and it is
+    /// the only thing that ever checks whether the quality this plugin predicted is the quality
+    /// it delivered.
+    /// </summary>
+    public bool MeasureQualityAfterEncoding { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets how good a conversion has to measure before it may replace an original.
+    /// Off by default, because a floor turns a conversion that came out badly into a failed job —
+    /// which is the right outcome, but only for somebody who asked for it.
+    /// </summary>
+    public QualityFloor RefuseBelowQuality { get; set; } = QualityFloor.Off;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a finished conversion is written to Jellyfin's
+    /// activity feed. On by default: the plugin's own history is not somewhere anyone keeps open,
+    /// and a conversion that replaced a file should leave a trace where a person will find it.
+    /// </summary>
+    public bool NotifyOnCompletion { get; set; } = true;
+
+    /// <summary>Gets or sets a value indicating whether failures are written to the activity feed.</summary>
+    public bool NotifyOnFailure { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets the automatic rules. Empty by default, and every rule starts switched off:
+    /// nothing in this plugin converts anything until somebody has said so explicitly.
+    /// </summary>
+    public List<AutomationRule> Rules { get; set; } = new List<AutomationRule>();
+
+    /// <summary>
+    /// Makes a copy of these settings, for callers that need to override one value for a single
+    /// operation without touching what is saved.
+    /// <para>
+    /// Copying property by property is what this replaces: the hand-written version quietly
+    /// omitted three settings, so a batch run that overrode the language list also reverted
+    /// "keep originals beside the media" to its default for that run. Reflection cannot forget a
+    /// property that is added later.
+    /// </para>
+    /// </summary>
+    /// <returns>An independent copy.</returns>
+    public PluginConfiguration Clone()
+    {
+        var copy = new PluginConfiguration();
+
+        foreach (var property in typeof(PluginConfiguration).GetProperties(
+            BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
+            {
+                property.SetValue(copy, property.GetValue(this));
+            }
+        }
+
+        // The rules are a mutable list. Copying the reference would mean an override made for one
+        // batch run could edit the saved rules, which is precisely what this method exists to
+        // prevent.
+        copy.Rules = Rules.Select(CloneRule).ToList();
+
+        return copy;
+    }
+
+    /// <summary>Copies one rule, property by property, by the same reflection rule.</summary>
+    /// <param name="rule">The rule to copy.</param>
+    /// <returns>An independent copy.</returns>
+    private static AutomationRule CloneRule(AutomationRule rule)
+    {
+        var copy = new AutomationRule();
+        foreach (var property in typeof(AutomationRule).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (property.CanRead && property.CanWrite && property.GetIndexParameters().Length == 0)
+            {
+                property.SetValue(copy, property.GetValue(rule));
+            }
+        }
+
+        return copy;
+    }
 }
