@@ -181,4 +181,34 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Gets or sets a value indicating whether trickplay images are rebuilt after a replace.</summary>
     public bool RegenerateTrickplayAfterReplace { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets extra folders offered as destinations when moving media between drives, one
+    /// per line. Every library folder is already offered; this is for a drive that has space but
+    /// is not part of a library yet.
+    /// </summary>
+    public string AdditionalMoveTargets { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether a file moved to another drive is compared against
+    /// the original by hash before the original is deleted.
+    /// <para>
+    /// On by default. The original is hashed for free while it is being read, so the extra cost
+    /// is one pass over the copy — worth it when the alternative is deleting the only copy of a
+    /// file a faulty cable silently corrupted. The size check runs either way.
+    /// </para>
+    /// </summary>
+    public bool VerifyMovesWithHash { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the folder a moved file came out of is deleted
+    /// when the move leaves it empty. Library folders themselves are never removed.
+    /// </summary>
+    public bool RemoveEmptyFoldersAfterMove { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets how many files may be moved at once. One at a time is almost always fastest:
+    /// two copies competing for the same disk finish later than the same two run in sequence.
+    /// </summary>
+    public int MaxConcurrentMoves { get; set; } = 1;
 }

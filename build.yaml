@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.4.4.0"
+version: "1.5.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -12,10 +12,32 @@ description: >
   FFmpeg using resolution, codec, bit depth, quality and audio presets. Includes a genuinely
   lossless mode whose bit-exactness is verified by hash after encoding. Conversions run in a
   background queue; the original file is never modified until the result passes verification.
+  Also moves media between drives: files are copied, checked against the original and only then
+  removed from the old drive, with the library entry following them.
 category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
+  ### 1.5.0.0
+  - New: moving media between drives, from Dashboard -> Move Media. It lists every library folder
+    with how full its drive is and how much of the library lives there, moves individual files or
+    a whole folder onto another drive, and says what would happen before anything does: how many
+    files, how much data, what would be left free and which files would be skipped and why.
+  - A move is a separate action from a conversion, with its own queue and its own history:
+    nothing is re-encoded and not a byte of the file changes. "Move to another drive..." is a
+    separate entry in the 3-dot menu for administrators.
+  - Each file is copied to a hidden staging name on the destination drive, checked against the
+    original by size and by hash, and only then renamed into place and the original deleted. A
+    failure or a cancellation before that leaves the library exactly as it was, and an original
+    that cannot be deleted takes the copy away again rather than leaving a duplicate. Within one
+    drive the file is renamed instead, which is instant.
+  - Artwork, .nfo files and external subtitles travel with the media file, the library entry is
+    repointed rather than rescanned so watched state and playlists survive, the folder layout
+    below the library folder is preserved, and an emptied folder is cleaned up.
+  - Moves pause while anyone is streaming, and a file someone is watching is never moved. The
+    housekeeping task now also clears partial copies left behind by a server that stopped
+    mid-move.
+
   ### 1.4.4.0
   - Fixed the dialog showing a file as having no video and no audio, with a blank duration and
     bitrate, and still offering to convert it. FFprobe's answer was only ever used to fill in

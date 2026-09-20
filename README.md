@@ -6,6 +6,11 @@ codec, bit depth, bitrate, audio tracks — one film at a time or hundreds at on
 Nothing is deleted until the new file has been checked, and every claim the interface makes about
 size, speed or quality is measured rather than guessed.
 
+It also **moves media between drives** — pick a destination from the list of your library folders
+and the files are copied, checked and only then removed from the old drive, with the library entry
+following them. That is a separate page and a separate queue from converting: nothing is
+re-encoded by a move.
+
 **Jellyfin 10.11.x** · .NET 9 · GPL-3.0 · uses the FFmpeg already bundled with your server
 
 ---
@@ -68,8 +73,9 @@ Optimizer**, which has its own library search and opens the identical conversion
 | Where | What |
 |---|---|
 | **Dashboard → Media Optimizer** | Status, library search, bulk selection, the queue and its history |
-| **Dashboard → Plugins → Media Optimizer** | Settings: languages, speed, output policy, safety |
-| **In the web client** | "Optimize file…" in any 3-dot menu, and a tune icon in the player |
+| **Dashboard → Move Media** | Which drive everything is on, and moving files between drives |
+| **Dashboard → Plugins → Media Optimizer** | Settings: languages, speed, output policy, moves, safety |
+| **In the web client** | "Optimize file…" and "Move to another drive…" in any 3-dot menu, and a tune icon in the player |
 
 ---
 
@@ -103,6 +109,55 @@ Search or filter your library — by size, resolution, bitrate, watched state, c
 tick the files you want, and apply one preset to all of them. Each file is still analysed
 individually, so the preset adapts to what it actually is, and anything unconvertible is listed as
 skipped with the reason.
+
+---
+
+## Moving media between drives
+
+One drive fills up long before the rest do. **Dashboard → Move Media** shows every library folder
+with how full its drive is and how much of your library lives there, and moves files from one to
+another.
+
+```
+D:\media\movies   84 files · 440 GB     12 GB free of 500 GB
+E:\media\movies   12 files · 260 GB   1.66 TB free of 1.95 TB
+F:\archive          empty               3.81 TB free of 3.91 TB
+```
+
+Pick what to move — individual files, or tick **Move the whole folder** to empty a drive — choose
+where it goes, and the page tells you exactly what would happen before anything does: how many
+files, how much data, what would be left free, and which files would be skipped and why. A file
+being watched, or one with a conversion queued, is never moved out from under it.
+
+The folder layout below the library folder is preserved, so `Movies/Dune (2021)/Dune.mkv` arrives
+as `Movies2/Dune (2021)/Dune.mkv` and the artwork, `.nfo` and external subtitles travel with it.
+The library entry is repointed rather than rescanned, so watched state, resume positions,
+favourites, playlists and collections all survive.
+
+The same thing is available for a single file from inside the web client: **"Move to another
+drive…"** in any 3-dot menu, which is a separate entry from "Optimize file…" because it does a
+different thing.
+
+### How a move is made safe
+
+1. The file is copied to a hidden staging name on the destination drive, with a progress bar and a
+   cancel button. The original is untouched.
+2. The copy is compared against the original — size always, and byte for byte by hash unless you
+   turn that off. The original is hashed for free while it is read, so the extra cost is one pass
+   over the copy.
+3. Only once the copy passes is it renamed into place and the original deleted.
+
+A failure or a cancellation at any point before step 3 leaves the library exactly as it was, and if
+the original cannot be deleted at step 3 the copy is taken away again rather than left behind as a
+duplicate. Within one drive there is nothing to copy: the file is renamed, which is instant however
+large it is.
+
+Moves pause while anyone is streaming — the same setting the conversion queue uses — and a file
+someone is watching is never moved out from under them.
+
+Settings live under **Dashboard → Plugins → Media Optimizer → Moving media between drives**: extra
+destination folders for a drive that is not part of a library yet, whether to verify by hash,
+whether to delete a folder the move leaves empty, and how many moves may run at once.
 
 ---
 

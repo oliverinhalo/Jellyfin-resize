@@ -151,7 +151,12 @@ public class LibraryReconciler : ILibraryReconciler
         var oldBase = Path.GetFileNameWithoutExtension(oldPath);
         var newBase = Path.GetFileNameWithoutExtension(newPath);
 
-        if (string.IsNullOrEmpty(oldDir) || string.IsNullOrEmpty(newDir) || oldBase == newBase)
+        // Nothing to do only when the companions would end up exactly where they already are.
+        // A relocation to another drive keeps the name and changes the folder, which is just as
+        // much a move as a rename in place.
+        if (string.IsNullOrEmpty(oldDir)
+            || string.IsNullOrEmpty(newDir)
+            || (oldBase == newBase && string.Equals(oldDir, newDir, StringComparison.Ordinal)))
         {
             return moved;
         }
@@ -169,7 +174,8 @@ public class LibraryReconciler : ILibraryReconciler
 
             try
             {
-                File.Move(candidate, destination);
+                // The destination may be on another drive, where a rename is not possible.
+                OutputPolicyService.MoveAcrossVolumes(candidate, destination, overwrite: false);
                 moved.Add(destination);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

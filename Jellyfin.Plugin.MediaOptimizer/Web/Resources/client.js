@@ -129,26 +129,60 @@
     // ------------------------------------------------------------- DOM grafting
 
     function addContextMenuEntry(sheet) {
-        if (sheet.querySelector('[data-id="mediaoptimizer"]')) { return; }
         var scroller = sheet.querySelector('.actionSheetScroller') || sheet.querySelector('.actionSheetContent');
         if (!scroller) { warnOnce('sheet', 'Action sheet layout not recognised.'); return; }
         if (!state.lastItemId) { return; }
 
         var itemId = state.lastItemId;
+
+        // Each entry is added independently: the move entry waits on the capability check, so a
+        // sheet that already carries the optimize entry may still be owed the move one.
+        if (!sheet.querySelector('[data-id="mediaoptimizer"]')) {
+            scroller.insertAdjacentHTML('beforeend',
+                '<button is="emby-button" type="button" class="listItem listItem-button actionSheetMenuItem" data-id="mediaoptimizer">' +
+                '<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons tune" aria-hidden="true"></span>' +
+                '<div class="listItemBody actionsheetListItemBody">' +
+                '<div class="listItemBodyText actionSheetItemText">Optimize file…</div>' +
+                '</div></button>');
+
+            var button = scroller.querySelector('[data-id="mediaoptimizer"]');
+            if (button) {
+                button.addEventListener('click', function (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeActionSheet(sheet);
+                    openDialog(itemId);
+                }, true);
+            }
+        }
+
+        addMoveEntry(sheet, scroller, itemId);
+    }
+
+    /**
+     * Relocating a file is a separate action from converting it — nothing is re-encoded — so it
+     * gets its own entry rather than a mode inside the optimize dialog. It is only offered to
+     * administrators, because the API behind it is: an ordinary user would get a 403 and no
+     * explanation of why the entry was there at all.
+     */
+    function addMoveEntry(sheet, scroller, itemId) {
+        if (!state.capabilities || !state.capabilities.CanConvert) { return; }
+        if (sheet.querySelector('[data-id="mediaoptimizer-move"]')) { return; }
+
         scroller.insertAdjacentHTML('beforeend',
-            '<button is="emby-button" type="button" class="listItem listItem-button actionSheetMenuItem" data-id="mediaoptimizer">' +
-            '<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons tune" aria-hidden="true"></span>' +
+            '<button is="emby-button" type="button" class="listItem listItem-button actionSheetMenuItem" data-id="mediaoptimizer-move">' +
+            '<span class="actionsheetMenuItemIcon listItemIcon listItemIcon-transparent material-icons drive_file_move" aria-hidden="true"></span>' +
             '<div class="listItemBody actionsheetListItemBody">' +
-            '<div class="listItemBodyText actionSheetItemText">Optimize file…</div>' +
+            '<div class="listItemBodyText actionSheetItemText">Move to another drive\u2026</div>' +
             '</div></button>');
 
-        var button = scroller.querySelector('[data-id="mediaoptimizer"]');
-        if (!button) { return; }
-        button.addEventListener('click', function (event) {
+        var move = scroller.querySelector('[data-id="mediaoptimizer-move"]');
+        if (!move) { return; }
+        move.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
             closeActionSheet(sheet);
-            openDialog(itemId);
+            openMoveDialog(itemId);
         }, true);
     }
 
@@ -1074,6 +1108,232 @@
         });
     }
 
+    // -------------------------------------------------------------------- move
+
+    /**
+     * Moving a file to another drive. Deliberately a separate dialog from the optimizer: this
+     * one never re-encodes anything, it only changes where the bytes live, and mixing the two
+     * would make a destructive re-encode one mis-click away from "I just wanted more space".
+     */
+    function openMoveDialog(itemId) {
+        var shell = createShell('Move to another drive');
+        shell.dialog.classList.add('mopt-dialog-narrow');
+        shell.dialog.appendChild(buildHeader(shell, 'Move to another drive', shell.close));
+
+        var pane = el('div', 'mopt-pane mopt-pane-solo');
+        pane.appendChild(skeleton(6));
+        shell.dialog.appendChild(pane);
+
+        Promise.all([
+            request('GET', 'MediaOptimizer/Move/Items/' + itemId),
+            request('GET', 'MediaOptimizer/Move/Locations?includeUsage=false')
+        ]).then(function (r) {
+            renderMoveDialog(shell, pane, r[0], r[1] || []);
+        }).catch(function (error) {
+            showError(shell.dialog, 'Could not read where this file lives', error.message);
+        });
+    }
+
+    function renderMoveDialog(shell, pane, info, locations) {
+        pane.innerHTML = '';
+
+        var foot = el('div', 'mopt-foot');
+        shell.dialog.appendChild(foot);
+
+        pane.appendChild(el('div', 'mopt-sec', 'This file'));
+        var kv = el('dl', 'mopt-kv');
+        function row(k, v) { kv.appendChild(el('dt', null, k)); kv.appendChild(el('dd', null, v)); }
+        row('Name', info.Name);
+        row('Size', bytes(info.SizeBytes));
+        kv.appendChild(el('dt', null, 'Now at'));
+        kv.appendChild(el('dd', null, info.Path));
+        pane.appendChild(kv);
+
+        if (info.HasActiveMove) {
+            pane.appendChild(warningBox('blocker', 'This file is already queued to move.'));
+            return;
+        }
+
+        pane.appendChild(el('div', 'mopt-sec', 'Move it to'));
+
+        // A folder the file is already in is not a destination; offering it would only produce
+        // an "it is already there" message once the plan came back.
+        var candidates = locations.filter(function (l) {
+            return l.Path !== info.CurrentRoot;
+        });
+
+        if (!candidates.length) {
+            pane.appendChild(warningBox('info',
+                'There is nowhere else to put it. Add another library folder under Dashboard → ' +
+                'Libraries, or list extra destinations in the Media Optimizer settings.'));
+            return;
+        }
+
+        var status = el('div', 'mopt-estimate');
+        var statusMain = el('div', 'mopt-estimate-main', 'Choose a drive');
+        var statusSub = el('div', 'mopt-estimate-sub', '');
+        status.appendChild(statusMain);
+        status.appendChild(statusSub);
+        foot.appendChild(status);
+
+        var cancel = el('button', 'mopt-btn', 'Cancel');
+        cancel.addEventListener('click', shell.close);
+        foot.appendChild(cancel);
+
+        var go = el('button', 'mopt-btn mopt-btn-primary', 'Move file');
+        go.disabled = true;
+        foot.appendChild(go);
+
+        var chosen = null;
+        var list = el('div');
+        pane.appendChild(list);
+
+        candidates.forEach(function (loc) {
+            var entry = el('button', 'mopt-loc');
+            entry.type = 'button';
+            entry.setAttribute('aria-pressed', 'false');
+            entry.appendChild(el('div', 'mopt-loc-path', loc.Path));
+            entry.appendChild(el('div', 'mopt-loc-meta', [
+                loc.LibraryName,
+                loc.FreeBytes !== null && loc.FreeBytes !== undefined ? bytes(loc.FreeBytes) + ' free' : null,
+                loc.Exists === false ? 'not reachable' : (loc.IsWritable === false ? 'read only' : null)
+            ].filter(Boolean).join(' · ')));
+
+            entry.addEventListener('click', function () {
+                Array.prototype.forEach.call(list.children, function (c) { c.setAttribute('aria-pressed', 'false'); });
+                entry.setAttribute('aria-pressed', 'true');
+                chosen = loc.Path;
+                preview();
+            });
+
+            list.appendChild(entry);
+        });
+
+        var notes = el('div');
+        pane.appendChild(notes);
+
+        function preview() {
+            go.disabled = true;
+            notes.innerHTML = '';
+            statusMain.textContent = 'Checking…';
+            statusSub.textContent = '';
+
+            request('POST', 'MediaOptimizer/Move/Preview', { ItemIds: [info.ItemId], DestinationPath: chosen })
+                .then(function (plan) {
+                    (plan.Blockers || []).forEach(function (b) { notes.appendChild(warningBox('blocker', b)); });
+
+                    var entry = (plan.Items || [])[0];
+                    if (entry && !entry.CanMove && entry.SkippedReason) {
+                        notes.appendChild(warningBox('blocker', entry.SkippedReason));
+                    }
+
+                    if (!plan.IsRunnable) {
+                        statusMain.textContent = 'Cannot move it there';
+                        statusSub.textContent = '';
+                        return;
+                    }
+
+                    (plan.Notes || []).forEach(function (n) { notes.appendChild(warningBox('info', n)); });
+
+                    statusMain.textContent = bytes(plan.TotalBytes) + ' → ' + chosen;
+                    statusSub.textContent = (entry && entry.DestinationPath ? entry.DestinationPath + ' · ' : '') +
+                        (plan.FreeBytesAfter !== null && plan.FreeBytesAfter !== undefined
+                            ? bytes(plan.FreeBytesAfter) + ' would be left free'
+                            : '');
+                    go.disabled = false;
+                })
+                .catch(function (e) {
+                    statusMain.textContent = 'Could not check that drive';
+                    statusSub.textContent = e.message;
+                });
+        }
+
+        go.addEventListener('click', function () {
+            go.disabled = true;
+            go.textContent = 'Starting…';
+            request('POST', 'MediaOptimizer/Move', { ItemIds: [info.ItemId], DestinationPath: chosen })
+                .then(function (result) {
+                    var job = (result.Jobs || [])[0];
+                    if (!job) {
+                        go.textContent = 'Move file';
+                        notes.appendChild(warningBox('blocker', 'The server accepted the request but queued nothing.'));
+                        return;
+                    }
+                    showMoveProgress(shell, pane, foot, job);
+                })
+                .catch(function (e) {
+                    go.disabled = false;
+                    go.textContent = 'Move file';
+                    notes.appendChild(warningBox('blocker', e.message));
+                });
+        });
+    }
+
+    function showMoveProgress(shell, pane, foot, job) {
+        pane.innerHTML = '';
+        foot.innerHTML = '';
+
+        pane.appendChild(el('div', 'mopt-sec', 'Move queued'));
+        var status = el('div', 'mopt-estimate-main', 'Waiting for a worker…');
+        var sub = el('div', 'mopt-estimate-sub', job.SourcePath + ' → ' + job.DestinationPath);
+        var bar = el('div', 'mopt-bar');
+        var fill = el('i');
+        fill.style.width = '0%';
+        bar.appendChild(fill);
+        pane.appendChild(status);
+        pane.appendChild(sub);
+        pane.appendChild(bar);
+
+        pane.appendChild(warningBox('info',
+            'This runs on the server. You can close this — progress stays visible under ' +
+            'Dashboard → Move Media, and the original is only deleted once the copy has been checked.'));
+
+        var cancelBtn = el('button', 'mopt-btn mopt-btn-danger', 'Cancel move');
+        cancelBtn.addEventListener('click', function () {
+            cancelBtn.disabled = true;
+            request('DELETE', 'MediaOptimizer/Move/Jobs/' + job.Id).catch(function () {});
+        });
+        foot.appendChild(cancelBtn);
+
+        var closeBtn = el('button', 'mopt-btn', 'Close');
+        closeBtn.addEventListener('click', function () { stop(); shell.close(); });
+        foot.appendChild(closeBtn);
+
+        var timer = setInterval(poll, 1500);
+        function stop() { clearInterval(timer); }
+        poll();
+
+        function poll() {
+            request('GET', 'MediaOptimizer/Move/Jobs/' + job.Id).then(function (j) {
+                var pct = Math.round(j.ProgressPercent || 0);
+                fill.style.width = pct + '%';
+                status.textContent = ({
+                    Queued: 'Waiting for a worker…', Preflight: 'Running safety checks…',
+                    Copying: 'Copying — ' + pct + '%', Verifying: 'Checking the copy…',
+                    Finalizing: 'Updating the library…', Completed: 'Done',
+                    Failed: 'Failed', Cancelled: 'Cancelled', Interrupted: 'Interrupted'
+                })[j.Status] || j.Status;
+
+                var bits = [j.DestinationPath];
+                if (j.Status === 'Copying' && j.BytesPerSecond) {
+                    bits.push(bytes(j.BytesPerSecond) + '/s');
+                    if (j.EtaSeconds) { bits.push(duration(j.EtaSeconds) + ' remaining'); }
+                }
+                if (j.Status === 'Completed') {
+                    if (j.WasInstantRename) { bits.push('renamed on the same drive'); }
+                    if (j.HashVerified === true) { bits.push('checked byte for byte'); }
+                }
+                if (j.Error) { bits.push(j.Error); }
+                sub.textContent = bits.join(' · ');
+
+                if (['Completed', 'Failed', 'Cancelled', 'Interrupted'].indexOf(j.Status) >= 0) {
+                    stop();
+                    cancelBtn.style.display = 'none';
+                }
+            }).catch(function () { /* transient; the next tick retries */ });
+        }
+    }
+
     // ---------------------------------------------------------------- progress
 
     function showProgress(shell, pane, foot, job) {
@@ -1144,6 +1404,7 @@
     window.MediaOptimizer = {
         open: openDialog,
         openBatch: openBatch,
+        openMove: openMoveDialog,
         ready: true,
         // Tests and the dashboard need a way through the shadow boundary.
         shadowRoot: function () {
@@ -1153,6 +1414,7 @@
         grafted: function () {
             return {
                 menu: !!document.querySelector('[data-id="mediaoptimizer"]'),
+                move: !!document.querySelector('[data-id="mediaoptimizer-move"]'),
                 player: !!document.querySelector('.btnMediaOptimizer')
             };
         }
@@ -1168,6 +1430,16 @@
             }
             setTimeout(start, 500);
             return;
+        }
+
+        // The move entry is admin-only, and the action sheet is built and thrown away too fast
+        // to ask the server at the moment it opens. One request at startup answers it for every
+        // sheet afterwards; the rescan puts the entry into a sheet that opened before it landed.
+        if (!state.capabilities) {
+            request('GET', 'MediaOptimizer/Capabilities').then(function (caps) {
+                state.capabilities = caps;
+                scan();
+            }).catch(function () { /* the optimize entry does not depend on this */ });
         }
 
         try {

@@ -99,6 +99,7 @@ public class MediaOptimizerController : ControllerBase
     /// <param name="minSizeMb">Only include files at least this large.</param>
     /// <param name="container">Only include this container extension.</param>
     /// <param name="codec">Only include this video codec.</param>
+    /// <param name="location">Only include files living under this folder.</param>
     /// <param name="limit">Maximum results returned.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Matching items.</returns>
@@ -112,6 +113,7 @@ public class MediaOptimizerController : ControllerBase
         [FromQuery] long? minSizeMb = null,
         [FromQuery] string? container = null,
         [FromQuery] string? codec = null,
+        [FromQuery] string? location = null,
         [FromQuery] int limit = 50,
         CancellationToken cancellationToken = default)
     {
@@ -139,6 +141,13 @@ public class MediaOptimizerController : ControllerBase
             cancellationToken.ThrowIfCancellationRequested();
 
             if (string.IsNullOrEmpty(item.Path))
+            {
+                continue;
+            }
+
+            // Used by the move page to ask "what is on this drive?", which the item query itself
+            // cannot answer: Jellyfin indexes items by library, not by the folder they sit in.
+            if (!string.IsNullOrWhiteSpace(location) && !Move.MovePathPlanner.IsUnder(item.Path, location))
             {
                 continue;
             }

@@ -65,6 +65,29 @@ window.ApiClient = {
                 VideoEncoders: [], AudioEncoders: [], Containers: ['mkv'], CanConvert: true
             }));
         }
+        if (options.url.includes('Move/Items/')) {
+            return Promise.resolve(JSON.stringify({
+                ItemId: itemId, Name: 'Test', Path: '/media/movies/t.mkv',
+                CurrentRoot: '/media/movies', SizeBytes: 1000, HasActiveMove: false
+            }));
+        }
+        if (options.url.includes('Move/Locations')) {
+            return Promise.resolve(JSON.stringify([
+                { Path: '/media/movies', LibraryName: 'Movies', Exists: true, IsWritable: true,
+                  TotalBytes: 4000, FreeBytes: 1000 },
+                { Path: '/mnt/disk2/movies', LibraryName: 'Movies', Exists: true, IsWritable: true,
+                  TotalBytes: 8000, FreeBytes: 7000 }
+            ]));
+        }
+        if (options.url.includes('Move/Preview')) {
+            return Promise.resolve(JSON.stringify({
+                DestinationPath: '/mnt/disk2/movies', MovableCount: 1, SkippedCount: 0,
+                TotalBytes: 1000, DestinationFreeBytes: 7000, FreeBytesAfter: 6000,
+                Blockers: [], Notes: [], IsRunnable: true,
+                Items: [{ ItemId: itemId, Name: 'Test', SourcePath: '/media/movies/t.mkv',
+                          DestinationPath: '/mnt/disk2/movies/t.mkv', SizeBytes: 1000, CanMove: true }]
+            }));
+        }
         return Promise.resolve('{}');
     }
 };
@@ -97,15 +120,24 @@ card.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
 doc.body.appendChild(sheet);
 await tick();
 
+// Capabilities are fetched once at boot, because the admin-only move entry has to be decided
+// before a sheet opens rather than after it has already been drawn.
+ok(calls.some(c => c.url.includes('MediaOptimizer/Capabilities')), 'server ffmpeg capabilities are requested at startup');
+
 const entry = sheet.querySelector('[data-id="mediaoptimizer"]');
 ok(!!entry, 'entry is grafted into .actionSheetScroller');
 ok(entry?.classList.contains('actionSheetMenuItem'), 'entry reuses jellyfin-web item classes, so themes apply');
 ok(!!entry?.querySelector('.listItemBodyText.actionSheetItemText'), 'entry matches the native inner structure');
 ok(entry?.textContent.includes('Optimize'), 'entry is labelled');
 
+const moveEntry = sheet.querySelector('[data-id="mediaoptimizer-move"]');
+ok(!!moveEntry, 'a separate move entry is grafted for administrators');
+ok(moveEntry?.textContent.includes('Move to another drive'), 'move entry is labelled');
+
 sheet.appendChild(doc.createElement('span'));
 await tick();
 ok(sheet.querySelectorAll('[data-id="mediaoptimizer"]').length === 1, 'further mutations do not duplicate the entry');
+ok(sheet.querySelectorAll('[data-id="mediaoptimizer-move"]').length === 1, 'the move entry is not duplicated either');
 
 // --- The player OSD, from the real v10.11.0 template -----------------------------------------
 console.log('\nPlayer OSD button');
@@ -133,11 +165,38 @@ const shadow = window.MediaOptimizer.shadowRoot();
 ok(!!shadow, 'dialog is rendered inside a shadow root, isolated from host styles');
 ok(!!shadow?.querySelector('.mopt-overlay'), 'clicking the entry opens the dialog');
 ok(calls.some(c => c.url.includes('MediaOptimizer/Analyze/' + itemId)), 'analysis is requested for the clicked item');
-ok(calls.some(c => c.url.includes('MediaOptimizer/Capabilities')), 'server ffmpeg capabilities are requested');
 
 doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 await tick(40);
 ok(!window.MediaOptimizer.shadowRoot(), 'Escape closes the dialog');
+
+// --- The move dialog -------------------------------------------------------------------------
+console.log('\nMove dialog');
+
+calls.length = 0;
+moveEntry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await tick(100);
+
+const moveShadow = window.MediaOptimizer.shadowRoot();
+ok(!!moveShadow?.querySelector('.mopt-overlay'), 'clicking the move entry opens its own dialog');
+ok(calls.some(c => c.url.includes('MediaOptimizer/Move/Items/' + itemId)), 'the file\'s current home is requested');
+ok(calls.some(c => c.url.includes('MediaOptimizer/Move/Locations')), 'the list of drives is requested');
+ok(!calls.some(c => c.url.includes('MediaOptimizer/Analyze')), 'moving does not pay for an ffprobe it has no use for');
+
+const destinations = moveShadow?.querySelectorAll('.mopt-loc') ?? [];
+ok(destinations.length === 1, 'the folder the file is already in is not offered as a destination');
+ok(destinations[0]?.textContent.includes('/mnt/disk2/movies'), 'the other drive is offered');
+
+destinations[0]?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await tick(80);
+const moveButton = Array.from(moveShadow?.querySelectorAll('.mopt-btn') ?? [])
+    .find(b => b.textContent === 'Move file');
+ok(calls.some(c => c.url.includes('MediaOptimizer/Move/Preview')), 'choosing a drive asks what the move would do');
+ok(moveButton && !moveButton.disabled, 'a runnable plan enables the move button');
+
+doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+await tick(40);
+ok(!window.MediaOptimizer.shadowRoot(), 'Escape closes the move dialog');
 
 console.log(failures === 0 ? '\nAll DOM checks passed.' : `\n${failures} DOM check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
