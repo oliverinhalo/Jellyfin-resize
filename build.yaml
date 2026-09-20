@@ -1,7 +1,7 @@
 ---
 name: "Media Optimizer"
 guid: "919929b2-0857-4c61-8647-c05fbbdc62fa"
-version: "1.5.0.0"
+version: "1.6.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "oliverinhalo"
@@ -18,7 +18,7 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.MediaOptimizer.dll"
 changelog: |
-  ### 1.5.0.0
+  ### 1.6.0.0
   - New: moving media between drives, from Dashboard -> Move Media. It lists every library folder
     with how full its drive is and how much of the library lives there, moves individual files or
     a whole folder onto another drive, and says what would happen before anything does: how many
